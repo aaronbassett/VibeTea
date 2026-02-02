@@ -12,7 +12,8 @@
 //! # Privacy
 //!
 //! All parsing is privacy-first: only metadata (tool names, timestamps, file basenames)
-//! is extracted, never code content, prompts, or assistant responses.
+//! is extracted, never code content, prompts, or assistant responses. The [`privacy`]
+//! module provides additional sanitization before events are transmitted.
 //!
 //! # Modules
 //!
@@ -21,15 +22,18 @@
 //! - [`parser`]: Claude Code JSONL parsing
 //! - [`config`]: Configuration from environment variables
 //! - [`error`]: Error types for monitor operations
+//! - [`privacy`]: Privacy pipeline for sanitizing event payloads
 
 pub mod config;
 pub mod error;
 pub mod parser;
+pub mod privacy;
 pub mod types;
 pub mod watcher;
 
 pub use config::Config;
 pub use error::{MonitorError, Result};
 pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
+pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 pub use watcher::{FileWatcher, WatchEvent, WatcherError};
