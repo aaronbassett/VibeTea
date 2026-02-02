@@ -399,10 +399,10 @@ VibeTea uses a multi-project structure:
 - [X] T175 [US6] Run /sdd:map incremental for Phase 8 changes
 - [X] T176 [GIT] Commit: update codebase documents for phase 8
 - [X] T177 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update (phase-specific patterns only)
-- [ ] T178 [GIT] Commit: finalize phase 8 retro
-- [ ] T179 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T180 [GIT] Create/update PR to main with phase summary
-- [ ] T181 [GIT] Verify all CI checks pass
+- [X] T178 [GIT] Commit: finalize phase 8 retro - Combined with T176
+- [X] T179 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [X] T180 [GIT] Create/update PR to main with phase summary - PR #1 updated
+- [ ] T181 [GIT] Verify all CI checks pass - CI running
 - [ ] T182 [GIT] Report PR ready status
 
 **Checkpoint**: Client Live Event Stream (US6) fully functional and testable independently
