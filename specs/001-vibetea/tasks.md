@@ -438,10 +438,10 @@ VibeTea uses a multi-project structure:
 
 ### Phase 9 Completion
 
-- [ ] T198 [US7] Run /sdd:map incremental for Phase 9 changes
-- [ ] T199 [GIT] Commit: update codebase documents for phase 9
-- [ ] T200 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T201 [GIT] Commit: finalize phase 9 retro
+- [X] T198 [US7] Run /sdd:map incremental for Phase 9 changes - Updated STACK.md, CONVENTIONS.md, TESTING.md
+- [X] T199 [GIT] Commit: update codebase documents for phase 9
+- [X] T200 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update (phase-specific patterns only)
+- [X] T201 [GIT] Commit: finalize phase 9 retro - Combined with T199
 - [ ] T202 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [ ] T203 [GIT] Create/update PR to main with phase summary
 - [ ] T204 [GIT] Verify all CI checks pass
