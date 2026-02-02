@@ -12,8 +12,8 @@
 |------|---------------|---------|
 | Prettier (TypeScript/Client) | `.prettierrc` | `npm run format` |
 | ESLint (TypeScript/Client) | `.eslintrc.cjs` | `npm run lint` |
-| rustfmt (Rust/Monitor) | Default settings | `cargo fmt` |
-| clippy (Rust/Monitor) | Default lints | `cargo clippy` |
+| rustfmt (Rust/Server/Monitor) | Default settings | `cargo fmt` |
+| clippy (Rust/Server/Monitor) | Default lints | `cargo clippy` |
 
 ### Style Rules
 
@@ -28,7 +28,7 @@
 | Trailing commas | ES5 style | Arrays/objects only (not function args) |
 | JSX curly braces | Single-line only | `<Component />` or multi-line |
 
-#### Rust/Monitor
+#### Rust/Server/Monitor
 
 | Rule | Convention | Example |
 |------|------------|---------|
@@ -65,15 +65,15 @@
 | Types | PascalCase | `VibeteaEvent<T>`, `EventPayload` |
 | Enums | PascalCase | N/A (use union types instead) |
 
-### Rust/Monitor
+### Rust/Server/Monitor
 
 #### Files & Directories
 
 | Type | Convention | Example |
 |------|------------|---------|
 | Modules | snake_case | `config.rs`, `error.rs`, `types.rs` |
-| Types | PascalCase | `Config`, `Event`, `MonitorError` |
-| Constants | SCREAMING_SNAKE_CASE | `EVENT_ID_PREFIX`, `DEFAULT_BUFFER_SIZE` |
+| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
 
 #### Code Elements
@@ -81,10 +81,10 @@
 | Type | Convention | Example |
 |------|------------|---------|
 | Functions | snake_case | `from_env()`, `generate_event_id()` |
-| Constants | SCREAMING_SNAKE_CASE | `EVENT_ID_SUFFIX_LEN = 20` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080` |
 | Structs | PascalCase | `Config`, `Event` |
-| Enums | PascalCase | `EventType`, `SessionAction`, `MonitorError` |
-| Methods | snake_case | `.new()`, `.to_string()` |
+| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError` |
+| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
 ## Error Handling
@@ -98,15 +98,27 @@ Client error handling will use:
 - Zod for schema validation with `.parse()` and `.safeParse()`
 - Custom error classes for business logic errors
 
+#### Rust/Server
+
+| Scenario | Pattern | Example Location |
+|----------|---------|------------------|
+| Configuration errors | Custom enum with `#[derive(Error)]` | `server/src/config.rs` defines `ConfigError` |
+| Authentication errors | String-based variant in `ServerError` | `ServerError::Auth(String)` |
+| Validation errors | String-based variant in `ServerError` | `ServerError::Validation(String)` |
+| Rate limiting | Struct variant with fields | `ServerError::RateLimit { source, retry_after }` |
+| WebSocket errors | String-based variant in `ServerError` | `ServerError::WebSocket(String)` |
+| Internal errors | String-based variant in `ServerError` | `ServerError::Internal(String)` |
+
 #### Rust/Monitor
 
 | Scenario | Pattern | Example Location |
 |----------|---------|------------------|
-| Configuration errors | Custom enum with `#[derive(Error)]` | `config.rs` defines `ConfigError` |
+| Configuration errors | Custom enum with `#[derive(Error)]` | `monitor/src/config.rs` defines `ConfigError` |
 | I/O errors | Use `#[from]` for automatic conversion | `MonitorError::Io(#[from] std::io::Error)` |
 | JSON errors | Automatic conversion via `serde_json` | `MonitorError::Json(#[from] serde_json::Error)` |
 | HTTP errors | String-based variants | `MonitorError::Http(String)` |
 | Cryptographic errors | String-based variants | `MonitorError::Crypto(String)` |
+| File watching errors | String-based variants | `MonitorError::Watch(String)` |
 
 ### Error Response Format
 
@@ -126,14 +138,39 @@ Client error handling will use:
 
 Errors use `thiserror::Error` with `#[error]` attributes for automatic `Display` impl:
 
+**Server Example** (`server/src/error.rs`):
+
+```rust
+#[derive(Debug)]
+pub enum ServerError {
+    Config(ConfigError),
+    Auth(String),
+    Validation(String),
+    RateLimit { source: String, retry_after: u64 },
+    WebSocket(String),
+    Internal(String),
+}
+
+impl Display for ServerError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Config(err) => write!(f, "configuration error: {err}"),
+            Self::Auth(msg) => write!(f, "authentication failed: {msg}"),
+            // ... other variants
+        }
+    }
+}
+```
+
+**Monitor Example** (`monitor/src/error.rs`):
+
 ```rust
 #[derive(Error, Debug)]
-pub enum ConfigError {
-    #[error("missing required environment variable: {0}")]
-    MissingEnvVar(String),
-
-    #[error("invalid value for {key}: {message}")]
-    InvalidValue { key: String, message: String },
+pub enum MonitorError {
+    #[error("configuration error: {0}")]
+    Config(#[from] ConfigError),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
 }
 ```
 
@@ -143,16 +180,18 @@ Not yet implemented in codebase. When logging is added:
 
 | Level | When to Use | Example |
 |-------|-------------|---------|
-| error | Unrecoverable failures | Configuration load failure |
-| warn | Recoverable issues | Retry attempt, missing optional config |
-| info | Important events | Session start, monitor startup |
-| debug | Development details | Event payload serialization |
+| error | Unrecoverable failures | Configuration load failure, server startup error |
+| warn | Recoverable issues | Retry attempt, unsafe auth mode enabled |
+| info | Important events | Server started, session created |
+| debug | Development details | Event payload serialization, connection established |
 
 ## Common Patterns
 
 ### Event-Driven Architecture
 
 The codebase uses discriminated unions for type-safe event handling:
+
+#### TypeScript
 
 ```typescript
 // Type-safe event handling in TypeScript
@@ -170,18 +209,33 @@ function isSessionEvent(event: VibeteaEvent): event is VibeteaEvent<'session'> {
 }
 ```
 
+#### Rust
+
 ```rust
-// Rust equivalent with tagged enums
+// Rust equivalent with untagged enums
 #[derive(Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(untagged)]
 pub enum EventPayload {
+    Tool { session_id: Uuid, tool: String, status: ToolStatus, ... },
     Session { session_id: Uuid, action: SessionAction, project: String },
     Activity { session_id: Uuid, project: Option<String> },
-    // ... other variants
+    // ... other variants, ordered from most specific to least specific
+}
+
+// Tagged wrapper for the full event
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Event {
+    pub id: String,
+    pub source: String,
+    pub timestamp: DateTime<Utc>,
+    #[serde(rename = "type")]
+    pub event_type: EventType,
+    pub payload: EventPayload,
 }
 ```
 
-### Zustand Store Pattern
+### Zustand Store Pattern (TypeScript)
 
 Client state management uses Zustand with selector functions:
 
@@ -213,20 +267,77 @@ export function selectActiveSessions(state: EventStore): Session[] {
 
 Config loads from environment variables with sensible defaults:
 
+**Server Example** (`server/src/config.rs`):
+
 ```rust
+pub struct Config {
+    pub public_keys: HashMap<String, String>,
+    pub subscriber_token: Option<String>,
+    pub port: u16,
+    pub unsafe_no_auth: bool,
+}
+
 impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
-        // Required vars (no default)
+        let port = parse_port()?;
+        let public_keys = parse_public_keys()?;
+        let subscriber_token = env::var("VIBETEA_SUBSCRIBER_TOKEN").ok();
+        let unsafe_no_auth = parse_bool_env("VIBETEA_UNSAFE_NO_AUTH");
+
+        let config = Self { public_keys, subscriber_token, port, unsafe_no_auth };
+        config.validate()?;
+        Ok(config)
+    }
+}
+```
+
+**Monitor Example** (`monitor/src/config.rs`):
+
+```rust
+pub struct Config {
+    pub server_url: String,
+    pub source_id: String,
+    pub key_path: PathBuf,
+    pub claude_dir: PathBuf,
+    pub buffer_size: usize,
+    pub basename_allowlist: Option<Vec<String>>,
+}
+
+impl Config {
+    pub fn from_env() -> Result<Self, ConfigError> {
         let server_url = env::var("VIBETEA_SERVER_URL")
-            .map_err(|_| ConfigError::MissingEnvVar("VIBETEA_SERVER_URL".to_string()))?;
+            .map_err(|_| ConfigError::MissingEnvVar("VIBETEA_SERVER_URL".into()))?;
+        // ... parse other vars with defaults
+    }
+}
+```
 
-        // Optional with defaults
-        let buffer_size = env::var("VIBETEA_BUFFER_SIZE")
-            .ok()
-            .and_then(|val| val.parse().ok())
-            .unwrap_or(DEFAULT_BUFFER_SIZE);
+### Error Handling Pattern (Rust)
 
-        Ok(Self { server_url, buffer_size, /* ... */ })
+Create typed error enums with helper constructors:
+
+```rust
+impl ServerError {
+    pub fn auth(message: impl Into<String>) -> Self {
+        Self::Auth(message.into())
+    }
+
+    pub fn validation(message: impl Into<String>) -> Self {
+        Self::Validation(message.into())
+    }
+
+    pub fn rate_limit(source: impl Into<String>, retry_after: u64) -> Self {
+        Self::RateLimit {
+            source: source.into(),
+            retry_after,
+        }
+    }
+
+    pub fn is_client_error(&self) -> bool {
+        matches!(
+            self,
+            Self::Auth(_) | Self::Validation(_) | Self::RateLimit { .. }
+        )
     }
 }
 ```
@@ -258,11 +369,13 @@ Standard ordering:
 2. `use` statements for internal modules
 3. `use` statements for types and traits
 
-Example from `error.rs`:
+Example from `server/src/error.rs`:
 
 ```rust
-use thiserror::Error;
-use crate::config::ConfigError;
+use std::error::Error;
+use std::fmt;
+
+use thiserror::Error as ThisError;
 ```
 
 ## Comments & Documentation
@@ -297,28 +410,46 @@ Example from `useEventStore.ts`:
 | Line comments | Internal logic | `// explanation` |
 | Example blocks | Complex public APIs | `/// # Examples` section |
 | Panics section | Functions that can panic | `/// # Panics` section |
+| Errors section | Fallible functions | `/// # Errors` section |
 
-Example from `config.rs`:
+Example from `server/src/config.rs`:
 
 ```rust
-/// Configuration for the VibeTea Monitor.
+/// Server configuration parsed from environment variables.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Server URL for the VibeTea server (e.g., `https://vibetea.fly.dev`).
-    pub server_url: String,
+    /// Map of source_id to base64-encoded Ed25519 public key.
+    pub public_keys: HashMap<String, String>,
+
+    /// Authentication token for subscriber clients.
+    pub subscriber_token: Option<String>,
+
+    /// HTTP server port.
+    pub port: u16,
 }
 
-/// Creates a new `Config` by parsing environment variables.
-///
-/// # Errors
-/// Returns a `ConfigError` if required variables are missing.
-///
-/// # Example
-/// ```no_run
-/// use vibetea_monitor::config::Config;
-/// let config = Config::from_env().unwrap();
-/// ```
-pub fn from_env() -> Result<Self, ConfigError> { /* ... */ }
+impl Config {
+    /// Parse configuration from environment variables.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ConfigError` if:
+    /// - Required environment variables are missing
+    /// - Environment variables have invalid format
+    /// - Port number is not a valid u16
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_server::config::Config;
+    ///
+    /// let config = Config::from_env().expect("Failed to load config");
+    /// println!("Server will listen on port {}", config.port);
+    /// ```
+    pub fn from_env() -> Result<Self, ConfigError> {
+        // ...
+    }
+}
 ```
 
 ## Git Conventions
@@ -330,7 +461,7 @@ Format: `type(scope): description`
 | Type | Usage | Example |
 |------|-------|---------|
 | feat | New feature | `feat(client): add event store` |
-| fix | Bug fix | `fix(monitor): handle missing env var` |
+| fix | Bug fix | `fix(server): handle missing env var` |
 | docs | Documentation | `docs: update conventions` |
 | style | Formatting changes | `style: fix ESLint warnings` |
 | refactor | Code restructure | `refactor(config): simplify validation` |

@@ -14,6 +14,14 @@
 | Integration | Vitest | Same as unit | Ready |
 | E2E | Not selected | TBD | Not started |
 
+### Rust/Server
+
+| Type | Framework | Configuration | Status |
+|------|-----------|---------------|--------|
+| Unit | Rust built-in | `#[cfg(test)]` inline | In use |
+| Integration | Rust built-in | `tests/` directory | Ready |
+| E2E | Not selected | TBD | Not started |
+
 ### Rust/Monitor
 
 | Type | Framework | Configuration | Status |
@@ -34,7 +42,7 @@
 | `npm run format:check` | Check code formatting without fixing |
 | `npm run lint` | Run ESLint |
 
-#### Rust/Monitor
+#### Rust/Server and Monitor
 
 | Command | Purpose |
 |---------|---------|
@@ -59,6 +67,20 @@ client/
 │   └── main.tsx
 └── tests/                       # Placeholder (empty with .gitkeep)
     └── .gitkeep
+```
+
+### Rust/Server Directory Structure
+
+```
+server/
+├── src/
+│   ├── config.rs               # Config module with inline tests (12 tests)
+│   ├── error.rs                # Error module with inline tests (18+ tests)
+│   ├── types.rs                # Types module with inline tests (10+ tests)
+│   ├── lib.rs                  # Library entrypoint
+│   └── main.rs                 # Binary entrypoint
+└── tests/                       # Integration tests (to be created)
+    └── (none yet)
 ```
 
 ### Rust/Monitor Directory Structure
@@ -94,47 +116,113 @@ Tests for a function go in the same file, grouped in a `tests` module at the end
 
 Tests follow the Arrange-Act-Assert pattern and are organized inline:
 
+#### Example from server/src/config.rs
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+
+    struct EnvGuard {
+        vars: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvGuard {
+        fn new() -> Self { Self { vars: Vec::new() } }
+        fn set(&mut self, key: &str, value: &str) {
+            let old_value = env::var(key).ok();
+            self.vars.push((key.to_string(), old_value));
+            env::set_var(key, value);
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (key, value) in &self.vars {
+                match value {
+                    Some(v) => env::set_var(key, v),
+                    None => env::remove_var(key),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_config_with_unsafe_no_auth() {
+        // Arrange
+        let mut guard = EnvGuard::new();
+        guard.set("VIBETEA_UNSAFE_NO_AUTH", "true");
+        guard.remove("VIBETEA_PUBLIC_KEYS");
+
+        // Act
+        let config = Config::from_env();
+
+        // Assert
+        assert!(config.is_ok());
+        assert!(config.unwrap().unsafe_no_auth);
+    }
+
+    #[test]
+    fn test_parse_public_keys_invalid_format() {
+        let mut guard = EnvGuard::new();
+        guard.set("VIBETEA_PUBLIC_KEYS", "invalid-no-colon");
+
+        let result = parse_public_keys();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidFormat { var, .. } if var == "VIBETEA_PUBLIC_KEYS"));
+    }
+}
+```
+
+Key patterns observed in server crate:
+
+1. **Environment isolation**: Uses `EnvGuard` helper to save/restore environment variables
+2. **Descriptive names**: Test names describe the behavior (e.g., `test_config_with_unsafe_no_auth`)
+3. **Result types**: Tests verify both success and error cases using `assert!` and `matches!`
+4. **Parsing tests**: Dedicated tests for parsing functions with various inputs
+
+#### Example from server/src/error.rs
+
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn config_error_missing_env_var_display() {
+    fn config_error_missing_displays_correctly() {
         // Arrange
-        let err = ConfigError::MissingEnvVar("VIBETEA_SERVER_URL".to_string());
+        let err = ConfigError::missing("API_KEY");
 
         // Act
         let message = err.to_string();
 
         // Assert
-        assert_eq!(
-            message,
-            "missing required environment variable: VIBETEA_SERVER_URL"
-        );
+        assert_eq!(message, "missing required configuration: API_KEY");
+    }
+
+    #[test]
+    fn server_error_is_client_error_returns_true() {
+        assert!(ServerError::auth("bad token").is_client_error());
+        assert!(ServerError::validation("bad input").is_client_error());
+        assert!(ServerError::rate_limit("client", 60).is_client_error());
+    }
+
+    #[test]
+    fn config_error_converts_to_server_error() {
+        let config_err = ConfigError::missing("PORT");
+        let server_err: ServerError = config_err.into();
+        assert!(matches!(server_err, ServerError::Config(_)));
     }
 }
 ```
 
-Key patterns observed in monitor crate:
+Key patterns:
 
-1. **Isolation**: Tests use helper functions (e.g., `with_clean_env()`) to isolate environment state
-2. **Descriptive names**: Test names describe the behavior (e.g., `test_missing_server_url`)
-3. **Result types**: Tests verify both success and error cases
-
-Example from `config.rs`:
-
-```rust
-#[test]
-fn test_missing_server_url() {
-    with_clean_env(|| {
-        let result = Config::from_env();
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, ConfigError::MissingEnvVar(ref s) if s == "VIBETEA_SERVER_URL"));
-    });
-}
-```
+1. **Error display**: Tests verify error messages format correctly
+2. **Conversions**: Tests validate `impl From` and `impl Into` conversions
+3. **Utility methods**: Tests verify helper methods like `is_client_error()`
 
 ### Unit Tests (TypeScript - Not Yet Implemented)
 
@@ -171,25 +259,25 @@ describe('selectEventsBySession', () => {
 
 Both TypeScript and Rust emphasize testing error cases:
 
-**Rust Error Type Tests** (from `error.rs`):
+**Rust Error Type Tests** (from `server/src/error.rs`):
 
 ```rust
 #[test]
-fn monitor_error_config_display() {
-    let config_err = ConfigError::MissingEnvVar("VIBETEA_SERVER_URL".to_string());
-    let err = MonitorError::Config(config_err);
+fn config_error_invalid_displays_correctly() {
+    let err = ConfigError::invalid("port", "must be a positive integer");
     assert_eq!(
         err.to_string(),
-        "configuration error: missing required environment variable: VIBETEA_SERVER_URL"
+        "invalid configuration value for 'port': must be a positive integer"
     );
 }
 
 #[test]
-fn monitor_error_io_conversion() {
-    let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-    let err: MonitorError = io_err.into();
-    assert!(matches!(err, MonitorError::Io(_)));
-    assert!(err.to_string().contains("I/O error"));
+fn server_error_rate_limit_displays_correctly() {
+    let err = ServerError::rate_limit("192.168.1.100", 30);
+    assert_eq!(
+        err.to_string(),
+        "rate limit exceeded for 192.168.1.100, retry after 30 seconds"
+    );
 }
 ```
 
@@ -210,61 +298,43 @@ When needed, mocking will use:
 
 No mocking framework is used currently. Tests use:
 
-1. **Test helpers**: Helper functions to create test instances
-2. **Fixtures**: Constants for common test data (e.g., `with_clean_env()`)
-3. **Environment isolation**: Tests clean environment variables before and after
-
-Example isolation from `config.rs`:
-
-```rust
-fn with_clean_env<F, R>(f: F) -> R
-where
-    F: FnOnce() -> R,
-{
-    // Save existing vars
-    let saved_vars: Vec<(String, String)> = env::vars()
-        .filter(|(k, _)| k.starts_with("VIBETEA_"))
-        .collect();
-
-    for (key, _) in &saved_vars {
-        env::remove_var(key);
-    }
-
-    let result = f();
-
-    // Restore vars
-    for (key, value) in saved_vars {
-        env::set_var(key, value);
-    }
-
-    result
-}
-```
+1. **Environment isolation**: `EnvGuard` pattern to manage env vars
+2. **Helper functions**: `parse_bool_env()`, `parse_port()` tested independently
+3. **Direct instantiation**: Create test instances with test data
 
 ## Test Data
 
 ### Rust Fixtures
 
-Test data is created directly in test modules. Example from `types.rs`:
+Test data is created directly in test modules. Example from `server/src/types.rs`:
 
 ```rust
 #[test]
-fn event_serializes_with_camel_case_fields() {
-    let session_id = Uuid::nil();  // Known value for testing
+fn test_event_serialization_tool() {
+    let session_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+    let timestamp = DateTime::parse_from_rfc3339("2026-02-02T14:30:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
     let event = Event {
-        id: "evt_12345678901234567890".to_string(),
-        source: "test-monitor".to_string(),
-        timestamp: DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc),
-        event_type: EventType::Session,
-        payload: EventPayload::Session {
+        id: "evt_k7m2n9p4q1r6s3t8u5v0".to_string(),
+        source: "macbook-pro".to_string(),
+        timestamp,
+        event_type: EventType::Tool,
+        payload: EventPayload::Tool {
             session_id,
-            action: SessionAction::Started,
-            project: "test".to_string(),
+            tool: "Read".to_string(),
+            status: ToolStatus::Completed,
+            context: Some("main.rs".to_string()),
+            project: Some("vibetea".to_string()),
         },
     };
-    // ...
+
+    let json = serde_json::to_string_pretty(&event).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    assert_eq!(parsed["id"], "evt_k7m2n9p4q1r6s3t8u5v0");
+    assert_eq!(parsed["type"], "tool");
 }
 ```
 
@@ -323,31 +393,39 @@ Tests that must pass before any deploy:
 |------|---------|----------|
 | Type checking | TypeScript compilation | `npm run typecheck` |
 | Linting | Code style compliance | `npm run lint` |
-| Config tests | Configuration loading | `monitor/src/config.rs` tests |
-| Serialization tests | JSON round-trips | `monitor/src/types.rs` tests |
+| Config tests | Configuration loading | `server/src/config.rs` and `monitor/src/config.rs` tests |
+| Error tests | Error type safety | `server/src/error.rs` tests |
+| Serialization tests | JSON round-trips | `server/src/types.rs` tests |
 
-### Unit Tests By Module
+### Unit Tests by Module
 
-#### Rust/Monitor
+#### Rust/Server
 
 **config.rs** (12 tests)
 - Configuration parsing from environment variables
 - Default value handling
+- Public key parsing with whitespace tolerance
 - Validation and error cases
-- Path resolution with home directory
+- Port number parsing and range validation
 
-**error.rs** (7 tests)
-- Error display formatting
-- Error type conversions (`.into()`)
+**error.rs** (18+ tests)
+- Error display formatting for all variants
+- Error type conversions (`.into()`, `.from()`)
 - Error source chain preservation
-- String-based error variants
+- Utility methods (`is_client_error()`, `is_server_error()`)
+- Helper constructors (`ServerError::auth()`, `ServerError::rate_limit()`, etc.)
 
 **types.rs** (10+ tests)
-- Event ID generation and format
-- Serialization to camelCase JSON
+- Event type and enum serialization
+- Serialization to camelCase JSON for event payloads
 - Serialization of enums to snake_case
 - Round-trip serialization (serialize → deserialize)
-- Payload-specific serialization
+- Payload-specific serialization with optional fields
+- Field omission when None
+
+#### Rust/Monitor
+
+Tests follow similar patterns to server modules.
 
 ### Integration Tests
 
@@ -356,7 +434,8 @@ None yet. Will test:
 - Full event creation and serialization pipeline
 - Configuration loading + usage together
 - File watching workflow
-- HTTP request building
+- HTTP request building with signatures
+- End-to-end monitor → server communication
 
 ## CI Integration
 
@@ -388,24 +467,31 @@ test:
 
 ## Current Test Coverage
 
-### Rust Modules
+### Rust Modules - Server
 
-- **config.rs**: 12 test cases covering env parsing, defaults, validation
-- **error.rs**: 7 test cases covering error formatting and conversions
-- **types.rs**: 10+ test cases covering event serialization
+- **config.rs**: 12 test cases covering env parsing, defaults, validation, public key parsing
+- **error.rs**: 18+ test cases covering error formatting, conversions, utility methods
+- **types.rs**: 10+ test cases covering event serialization and round-trips
+
+### Rust Modules - Monitor
+
+- **config.rs**: Test cases covering env parsing, path resolution, defaults
+- **error.rs**: Test cases covering error formatting and conversions
+- **types.rs**: Test cases covering event serialization
 
 ### TypeScript
 
 - No tests yet (test directory is empty placeholder)
 - Test framework (Vitest) is installed and ready
+- Types and hooks ready for test coverage
 
 ## Next Steps for Testing
 
-1. **TypeScript**: Create test fixtures and first unit tests for Zustand store
-2. **Rust**: Add integration test directory and full-pipeline tests
+1. **TypeScript**: Create test fixtures and first unit tests for Zustand store and selector functions
+2. **Rust**: Add integration test directory and full-pipeline tests for both server and monitor
 3. **E2E**: Evaluate Playwright or Cypress for client workflow testing
-4. **Coverage**: Set up coverage reporting in CI/CD pipeline
-5. **Snapshot testing**: Consider for event serialization if needed
+4. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
+5. **Snapshot testing**: Consider for event serialization if JSON formats become complex
 
 ---
 

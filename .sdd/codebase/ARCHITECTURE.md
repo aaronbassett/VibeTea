@@ -35,12 +35,15 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 - `config.rs` - Environment variable parsing for monitor configuration (server URL, keys, buffer size)
 - `types.rs` - Event definitions shared with server (EventType, EventPayload, Event)
 - `error.rs` - Error hierarchy covering configuration, I/O, JSON, HTTP, cryptographic, and file watch errors
+- `lib.rs` - Public API (re-exports Event, EventPayload, EventType, SessionAction, ToolStatus)
 - `main.rs` - Application entry point (placeholder for Phase 3)
 
 **Dependencies**:
 - `types` ← defined in `monitor/src/types.rs`
-- `config` ← defined in `monitor/src/config.rs`
-- `error` ← defined in `monitor/src/error.rs`
+- `config` ← defined in `monitor/src/config.rs` (internal use only)
+- `error` ← defined in `monitor/src/error.rs` (internal use only)
+
+**Public API**: Only the event types are exported (Event, EventPayload, EventType, SessionAction, ToolStatus). Configuration and error handling are internal implementation details not exposed to external consumers.
 
 ### Server Component
 
@@ -52,13 +55,15 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 - `config.rs` - Environment variable parsing (public keys, subscriber tokens, port)
 - `error.rs` - Error hierarchy for config, auth, validation, rate limiting, WebSocket, and internal errors
 - `types.rs` - Event definitions with untagged serde deserialization (EventType, EventPayload, Event)
-- `lib.rs` - Module declarations for public API
+- `lib.rs` - Module declarations for public API (config, error, types all exported)
 - `main.rs` - Application entry point (placeholder for Phase 3)
 
 **Dependencies**:
 - `types` ← defined in `server/src/types.rs`
 - `config` ← defined in `server/src/config.rs`
 - `error` ← defined in `server/src/error.rs`
+
+**Public API**: All three core modules (config, error, types) are part of the public library API, allowing other crates to integrate server functionality.
 
 ### Client Component
 
@@ -157,6 +162,7 @@ Authenticated Event
 - **Asymmetric auth**: Monitors authenticate with cryptographic signatures; clients authenticate with bearer tokens
 - **Type safety**: All three languages use strong typing; event schema is enforced at compile time
 - **Layered imports**: Higher layers (HTTP) depend on lower layers (Config, Types, Error), not vice versa
+- **API boundaries**: Monitor's config and error are internal; Server's are public; Client follows module organization pattern
 
 ## Key Interfaces & Contracts
 
@@ -249,12 +255,12 @@ pub struct Event {
 ```
 
 **EventPayload Variants**:
-- **Session**: `session_id`, `action` (started/ended), `project`
-- **Activity**: `session_id`, `project` (optional)
-- **Tool**: `session_id`, `tool` (name), `status` (started/completed), `context` (optional), `project` (optional)
-- **Agent**: `session_id`, `state` (string)
-- **Summary**: `session_id`, `summary` (string)
-- **Error**: `session_id`, `category` (string)
+- **Session**: `sessionId`, `action` (started/ended), `project`
+- **Activity**: `sessionId`, `project` (optional)
+- **Tool**: `sessionId`, `tool` (name), `status` (started/completed), `context` (optional), `project` (optional)
+- **Agent**: `sessionId`, `state` (string)
+- **Summary**: `sessionId`, `summary` (string)
+- **Error**: `sessionId`, `category` (string)
 
 ---
 

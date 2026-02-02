@@ -22,18 +22,25 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 | **Protocol** | HTTPS POST with signed payload | Event signatures in request |
 | **Key Management** | Source-specific public key registration | `VIBETEA_PUBLIC_KEYS` env var |
 | **Key Format** | Base64-encoded Ed25519 public keys | `source1:pubkey1,source2:pubkey2` |
-| **Flow** | Monitor signs event → Server validates signature | `src/config.rs`, `src/types.rs` |
+| **Flow** | Monitor signs event → Server validates signature | `server/src/config.rs`, `server/src/types.rs` |
 | **Fallback** | Unsafe no-auth mode (dev only) | `VIBETEA_UNSAFE_NO_AUTH=true` |
 
 **Configuration Location**: `server/src/config.rs`
 - Parses `VIBETEA_PUBLIC_KEYS` (required unless unsafe mode enabled)
 - Parses `VIBETEA_UNSAFE_NO_AUTH` (dev-only authentication bypass)
-- Validates on every server startup
+- Validates on every server startup with comprehensive error messages
+- Supports multiple comma-separated source:key pairs
 
 **Example Key Format**:
 ```
 VIBETEA_PUBLIC_KEYS=monitor-prod:dGVzdHB1YmtleTEx,monitor-dev:dGVzdHB1YmtleTIy
 ```
+
+**Implementation Details**:
+- Uses `HashMap<String, String>` to map source_id to base64-encoded keys
+- Public keys stored in plain text (no decryption needed)
+- Empty public_keys map allowed if unsafe_no_auth is enabled
+- Error handling with ConfigError enum for missing/invalid formats
 
 ### Client Authentication (Server → Client)
 
@@ -49,6 +56,7 @@ VIBETEA_PUBLIC_KEYS=monitor-prod:dGVzdHB1YmtleTEx,monitor-dev:dGVzdHB1YmtleTIy
 - Parses `VIBETEA_SUBSCRIBER_TOKEN` (required unless unsafe mode enabled)
 - Token required for all WebSocket connections
 - No token refresh mechanism in Phase 2
+- Stored as `Option<String>` in Config struct
 
 **Future Enhancements**: Per-user tokens, token expiration, refresh tokens
 
@@ -84,7 +92,45 @@ Event {
 - TypeScript types: `client/src/types/events.ts`
 - Event validation: Serde deserialization with untagged union handling
 
-### Serialization Formats
+**Phase 2 TypeScript Enhancements** (`client/src/types/events.ts`):
+- Discriminated union type for type-safe payload access
+- `EventPayload` union with type discriminators
+- `EventPayloadMap` interface mapping event types to payloads
+- Generic `VibeteaEvent<T>` with type parameter for type narrowing
+- Type guards: `isSessionEvent()`, `isActivityEvent()`, `isToolEvent()`, `isAgentEvent()`, `isSummaryEvent()`, `isErrorEvent()`
+- Runtime validation: `isValidEventType()` checks against VALID_EVENT_TYPES array
+- All payload fields marked as readonly for immutability
+
+### Client Event Store Integration
+
+**Location**: `client/src/hooks/useEventStore.ts`
+
+**Zustand Store State**:
+```typescript
+export interface EventStore {
+  status: ConnectionStatus;              // 'connecting' | 'connected' | 'disconnecting' | 'reconnecting'
+  events: readonly VibeteaEvent[];       // Last 1000 events, newest first
+  sessions: Map<string, Session>;        // Active sessions keyed by sessionId
+
+  addEvent: (event: VibeteaEvent) => void;
+  setStatus: (status: ConnectionStatus) => void;
+  clearEvents: () => void;
+}
+```
+
+**Event Processing**:
+- FIFO eviction: Keeps last 1000 events, newest first
+- Session aggregation: Derives Session objects from events
+- Session status transitions: 'active' → 'ended' on summary event
+- Event counting: Increments eventCount per session
+- Project tracking: Updates project field if present in event payload
+
+**Selector Utilities**:
+- `selectEventsBySession(state, sessionId)` - Filter events by session
+- `selectActiveSessions(state)` - Get sessions with status !== 'ended'
+- `selectSession(state, sessionId)` - Get single session by ID
+
+**Serialization Formats**
 
 | Component | Format | Field Naming | Location |
 |-----------|--------|--------------|----------|
@@ -112,6 +158,7 @@ Event {
 **Configuration**: `monitor/src/config.rs`
 - `VIBETEA_SERVER_URL` - Server endpoint (required)
 - `VIBETEA_SOURCE_ID` - Source identifier for event attribution (default: hostname)
+- Uses gethostname crate to get system hostname if not provided
 
 ### Server → Client (Event Broadcasting)
 
@@ -124,19 +171,21 @@ Event {
 1. Client initiates WebSocket connection with Bearer token
 2. Server validates token and establishes connection
 3. Server sends events as they arrive from monitors
-4. Client processes and stores events in Zustand state
+4. Client processes and stores events in Zustand state via `addEvent()`
 5. Client UI renders session information from state
 
 **Client-Side Handling**:
-- WebSocket proxy configured in `client/vite.config.ts`
+- WebSocket proxy configured in `client/vite.config.ts` (target: ws://localhost:8080)
 - State management via `useEventStore` hook (Zustand)
 - Event type guards for safe type access in `client/src/types/events.ts`
+- ConnectionStatus transitions: disconnected → connecting → connected → reconnecting
 
 **Connection Details**:
 - Address/port: Configured via `PORT` environment variable (default: 8080)
 - Persistent connection model
 - No automatic reconnection (Phase 2)
 - No message queuing (direct streaming)
+- Events processed with selective subscriptions to prevent unnecessary re-renders
 
 ## Development & Local Configuration
 
@@ -156,6 +205,13 @@ When `VIBETEA_UNSAFE_NO_AUTH=true`:
 - All client authentication is bypassed
 - Suitable for local development only
 - Never use in production
+- Warning logged on startup when enabled
+
+**Validation Behavior**:
+- With unsafe_no_auth=false: Requires both VIBETEA_PUBLIC_KEYS and VIBETEA_SUBSCRIBER_TOKEN
+- With unsafe_no_auth=true: Both auth variables become optional
+- PORT defaults to 8080 if not specified
+- Invalid PORT formats rejected with ParseIntError
 
 ### Local Monitor Setup
 
@@ -170,9 +226,18 @@ VIBETEA_BASENAME_ALLOWLIST=ts,tsx,rs             # Optional file extension filte
 ```
 
 **Configuration Loading**: `monitor/src/config.rs`
-- Supports home directory expansion (`~/.vibetea`)
-- Uses `directories` crate for platform-specific paths
-- Validates required variables on startup
+- Required: VIBETEA_SERVER_URL (no default)
+- Optional defaults use directories crate for platform-specific paths
+- Home directory determined via BaseDirs::new()
+- Hostname fallback when VIBETEA_SOURCE_ID not set
+- Buffer size parsed as usize, validated for positive integers
+- Allowlist split by comma, whitespace trimmed, empty entries filtered
+
+**File System Monitoring**:
+- Watches directory: VIBETEA_CLAUDE_DIR
+- Captures file creation, modification, deletion, and directory changes
+- Uses `notify` crate (version 8.0) for cross-platform inotify/FSEvents
+- Optional extension filtering via VIBETEA_BASENAME_ALLOWLIST
 
 ### Local Client Setup
 
@@ -196,6 +261,13 @@ server: {
 }
 ```
 
+**Vite Build Features**:
+- React Fast Refresh via @vitejs/plugin-react
+- Tailwind CSS integration via @tailwindcss/vite
+- Brotli compression for production builds
+- Code splitting: react-vendor, state, virtual chunks
+- Target: ES2020
+
 ## Error Handling & Validation
 
 ### Server-Side Error Handling
@@ -206,9 +278,18 @@ server: {
 
 **Validation Points**:
 1. Configuration validation on startup (`config.rs`)
+   - Port number must be valid u16
+   - If unsafe_no_auth is false, both public_keys and subscriber_token required
+   - Public keys format: `source_id:pubkey` pairs
 2. Event signature validation on POST
 3. Event schema validation (serde untagged enum)
 4. Bearer token validation on WebSocket connect
+
+**Config Error Types** (comprehensive):
+- MissingEnvVar(String) - Required variable not found
+- InvalidFormat { var: String, message: String } - Format/parsing error
+- InvalidPort(ParseIntError) - Port not valid u16
+- ValidationError(String) - Config validation failed
 
 ### Monitor-Side Error Handling
 
@@ -218,10 +299,16 @@ server: {
 - HTTP request errors (connection refused, timeout)
 - Cryptographic errors (invalid private key)
 
+**Config Error Types**:
+- MissingEnvVar(String) - VIBETEA_SERVER_URL required
+- InvalidValue { key: String, message: String } - Invalid parsed value
+- NoHomeDirectory - Cannot determine home directory
+
 **Resilience**:
 - Continues watching even if individual file operations fail
 - Retries HTTP requests with exponential backoff (future enhancement)
-- Logs errors via `tracing` crate
+- Logs errors via `tracing` crate with structured context
+- Validates VIBETEA_BUFFER_SIZE as positive integer
 
 ## File System Monitoring
 
@@ -257,6 +344,7 @@ server: {
 **Components**:
 - Server: Logs configuration, connection events, errors
 - Monitor: Logs file system events, HTTP requests, signing operations
+- Warning logged when VIBETEA_UNSAFE_NO_AUTH is enabled
 
 **No External Service Integration** (Phase 2):
 - Logs to stdout/stderr only
@@ -267,7 +355,7 @@ server: {
 ### Cryptographic Authentication
 
 **Ed25519 Signatures**:
-- Library: `ed25519-dalek` crate
+- Library: `ed25519-dalek` crate (version 2.1)
 - Key generation: 32-byte seed
 - Signature verification: Base64-encoded public keys per source
 - Private key storage: User's filesystem (unencrypted)
@@ -333,3 +421,25 @@ server: {
 ### Client Environment Variables
 
 None required for production (future configuration planned).
+
+## Phase 2 Changes
+
+**Server Config Enhancement**:
+- Added comprehensive validation with detailed error messages
+- Support for unsafe_no_auth mode for development
+- Proper HashMap-based key storage for multiple sources
+
+**Monitor Config Enhancement**:
+- Home directory detection via directories crate
+- Hostname fallback using gethostname crate
+- Path expansion support (~/.vibetea, ~/.claude)
+- Buffer size validation
+- Allowlist parsing with whitespace handling
+
+**Client Event Integration**:
+- Zustand store with selective subscriptions
+- Discriminated union types for events
+- Type-safe event payload access
+- Session aggregation from events
+- ConnectionStatus tracking
+- Event filtering utilities

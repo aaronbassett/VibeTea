@@ -12,19 +12,19 @@ VibeTea/
 │   ├── src/
 │   │   ├── main.rs            # Server entry point (placeholder)
 │   │   ├── lib.rs             # Public API exports
-│   │   ├── config.rs          # Environment variable configuration (200+ lines)
-│   │   ├── error.rs           # Error types and conversions (460+ lines)
-│   │   ├── types.rs           # Event definitions and tests (410+ lines)
+│   │   ├── config.rs          # Environment variable configuration (415 lines)
+│   │   ├── error.rs           # Error types and conversions (460 lines)
+│   │   ├── types.rs           # Event definitions and tests (410 lines)
 │   │   └── Cargo.toml         # Rust dependencies
 │   └── tests/                 # Integration tests (empty in Phase 2)
 │
 ├── monitor/                    # Rust file watcher and event producer
 │   ├── src/
 │   │   ├── main.rs            # Monitor entry point (placeholder)
-│   │   ├── lib.rs             # Public exports (types, config)
-│   │   ├── config.rs          # Environment variable configuration (300+ lines)
-│   │   ├── error.rs           # Error types and conversions (170+ lines)
-│   │   ├── types.rs           # Event definitions and tests (340+ lines)
+│   │   ├── lib.rs             # Public API (types module only)
+│   │   ├── config.rs          # Environment variable configuration (303 lines)
+│   │   ├── error.rs           # Error types and conversions (173 lines)
+│   │   ├── types.rs           # Event definitions and tests (341 lines)
 │   │   └── Cargo.toml         # Rust dependencies
 │   └── tests/                 # Integration tests (empty in Phase 2)
 │
@@ -34,9 +34,9 @@ VibeTea/
 │   │   ├── App.tsx            # Root component (7 lines, placeholder)
 │   │   ├── index.css          # Global styles
 │   │   ├── types/
-│   │   │   └── events.ts      # TypeScript event types (249 lines)
+│   │   │   └── events.ts      # TypeScript event types (248 lines)
 │   │   ├── hooks/
-│   │   │   └── useEventStore.ts # Zustand event store (172 lines)
+│   │   │   └── useEventStore.ts # Zustand event store (171 lines)
 │   │   ├── components/        # Feature-specific components (empty in Phase 2)
 │   │   └── utils/             # Shared utilities (empty in Phase 2)
 │   ├── tests/                 # Vitest unit tests (empty in Phase 2)
@@ -112,9 +112,9 @@ VibeTea/
 | `src/main.tsx` | React DOM render entry point | Single file |
 | `src/App.tsx` | Root component | Single file |
 | `src/types/` | Type definitions | `{domain}.ts` |
-| `src/types/events.ts` | Event types and type guards | Single file (249 lines) |
+| `src/types/events.ts` | Event types and type guards | Single file (248 lines) |
 | `src/hooks/` | Custom React hooks | `use{Hook}.ts` |
-| `src/hooks/useEventStore.ts` | Zustand event store (status, events, sessions) | Single file (172 lines) |
+| `src/hooks/useEventStore.ts` | Zustand event store (status, events, sessions) | Single file (171 lines) |
 | `src/components/` | React components by feature | `{Feature}/{Component}.tsx` |
 | `src/utils/` | Utility functions | `{purpose}.ts` |
 | `tests/` | Vitest unit tests | `{module}.test.ts` |
@@ -153,24 +153,24 @@ pub mod types;
 
 **Public API** (`src/lib.rs`):
 ```rust
-pub mod config;
-pub mod error;
 pub mod types;
 
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 ```
 
 **Module Dependencies**:
-- `config` - No dependencies on other modules
-- `error` - Imports from `config` only
+- `config` - No dependencies on other modules (internal only)
+- `error` - Imports from `config` (internal only)
 - `types` - No dependencies on other modules
 - `main` - Imports from `config`, `error`, `types`
 
 **Responsibility Separation**:
-- `config` ← Configuration loading and validation
-- `error` ← Error type definitions and conversions
-- `types` ← Event schema and ID generation
+- `config` ← Configuration loading and validation (internal to crate)
+- `error` ← Error type definitions and conversions (internal to crate)
+- `types` ← Event schema and ID generation (public API)
 - `main` ← File watching and event transmission (Phase 3)
+
+**Design Note**: Unlike the server, the monitor's config and error modules are not part of the public API. These are implementation details used only within the monitor crate. The public API only exports the event types and payload enums for use in external type definitions.
 
 ### Client Module Structure
 
@@ -249,7 +249,7 @@ import { formatDate } from '@utils/formatDate';
 | `server/src/main.rs` | Server application bootstrap | Placeholder (Phase 3) |
 | `server/src/lib.rs` | Server public library API | Exports config, error, types |
 | `monitor/src/main.rs` | Monitor application bootstrap | Placeholder (Phase 3) |
-| `monitor/src/lib.rs` | Monitor public library API | Exports types and re-exports key types |
+| `monitor/src/lib.rs` | Monitor public library API | Exports types only (config, error internal) |
 | `client/src/main.tsx` | React DOM render | Renders App into #root |
 | `client/src/App.tsx` | Root React component | Placeholder (Phase 3) |
 | `client/index.html` | HTML template | Vite entry point |
@@ -270,18 +270,18 @@ Files that are auto-generated or compile-time artifacts:
 The following modules were added in Phase 2 for all components:
 
 **Server**:
-- `src/config.rs` - Full environment variable parsing with tests
-- `src/error.rs` - Comprehensive error hierarchy with display implementations
-- `src/types.rs` - Complete event schema with serialization/deserialization tests
+- `src/config.rs` - Full environment variable parsing with tests (415 lines)
+- `src/error.rs` - Comprehensive error hierarchy with display implementations (460 lines)
+- `src/types.rs` - Complete event schema with serialization/deserialization tests (410 lines)
 
 **Monitor**:
-- `src/config.rs` - Full environment variable parsing with tests
-- `src/error.rs` - Error types covering config, IO, JSON, HTTP, crypto, and file watching
-- `src/types.rs` - Event schema with ID generation and serialization tests
+- `src/config.rs` - Full environment variable parsing with tests (303 lines)
+- `src/error.rs` - Error types covering config, IO, JSON, HTTP, crypto, and file watching (173 lines)
+- `src/types.rs` - Event schema with ID generation and serialization tests (341 lines)
 
 **Client**:
-- `src/types/events.ts` - Full TypeScript event types with type guards
-- `src/hooks/useEventStore.ts` - Zustand store with event buffering and session aggregation
+- `src/types/events.ts` - Full TypeScript event types with type guards (248 lines)
+- `src/hooks/useEventStore.ts` - Zustand store with event buffering and session aggregation (171 lines)
 
 ## Phase 3 Additions (Planned)
 

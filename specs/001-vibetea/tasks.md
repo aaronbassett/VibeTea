@@ -88,7 +88,7 @@ VibeTea uses a multi-project structure:
 
 ### Phase 2 Completion
 
-- [ ] T029 Run /sdd:map incremental for Phase 2 changes
+- [X] T029 Run /sdd:map incremental for Phase 2 changes
 - [ ] T030 [GIT] Commit: update codebase documents for phase 2
 - [X] T031 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update
 - [X] T032 [GIT] Commit: finalize phase 2 retro

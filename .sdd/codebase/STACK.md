@@ -82,7 +82,7 @@
 
 | File | Framework | Purpose |
 |------|-----------|---------|
-| `client/vite.config.ts` | Vite | Build configuration, WebSocket proxy to server |
+| `client/vite.config.ts` | Vite | Build configuration, WebSocket proxy to server on port 8080 |
 | `client/tsconfig.json` | TypeScript | Strict mode, ES2020 target |
 | `Cargo.toml` (workspace) | Cargo | Rust workspace configuration and shared dependencies |
 | `server/Cargo.toml` | Cargo | Server package configuration |
@@ -98,6 +98,7 @@
 | Node.js | Required for development and client build only |
 | Async Model | Tokio (Rust), Promises (TypeScript) |
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
+| WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 
 ## Communication Protocols & Formats
 
@@ -127,22 +128,22 @@
 
 ### Client (`client/src`)
 - `components/` - React components
-- `hooks/` - Custom hooks (including `useEventStore` for Zustand state)
-- `types/events.ts` - Event type definitions matching Rust schema
+- `hooks/useEventStore.ts` - Zustand store for WebSocket event state with selective subscriptions
+- `types/events.ts` - Event type definitions with discriminated union types matching Rust schema
 - `utils/` - Utility functions
 - `App.tsx` - Root component
 - `main.tsx` - Entry point
 - `index.css` - Global styles
 
 ### Server (`server/src`)
-- `config.rs` - Environment variable parsing and validation
+- `config.rs` - Environment variable parsing and validation (public keys, subscriber token, port)
 - `error.rs` - Error types and handling
 - `types.rs` - Event types and data models
 - `lib.rs` - Public library interface
 - `main.rs` - Server entry point
 
 ### Monitor (`monitor/src`)
-- `config.rs` - Configuration from environment variables
+- `config.rs` - Configuration from environment variables (server URL, source ID, key path, buffer size)
 - `error.rs` - Error types
 - `types.rs` - Event types
 - `lib.rs` - Public interface
@@ -156,11 +157,21 @@
 | Client | CDN | Static files | Optimized builds with compression |
 | Monitor | Local | Native binary | Users download and run locally |
 
+## Phase 2 Additions
+
+- **Event Store**: Zustand-based state management (`useEventStore`) with 1000-event buffer and FIFO eviction
+- **Type Guards**: TypeScript type guards for event discrimination (`isSessionEvent`, `isActivityEvent`, etc.)
+- **Event Payload Mapping**: Discriminated union types for type-safe event payload access
+- **Session Tracking**: Client-side session derivation from event aggregation
+- **Configuration Validation**: Comprehensive environment variable validation for all components
+
 ## Not Yet Implemented
 
 - Database/persistence layer
-- Advanced state management patterns (currently Context + Zustand)
+- Advanced state management patterns (beyond Context + Zustand)
 - Session persistence beyond memory
 - Rate limiting middleware
 - Request/response logging to external services
 - Enhanced error tracking
+- Automatic reconnection on WebSocket disconnection
+- Per-user authentication tokens

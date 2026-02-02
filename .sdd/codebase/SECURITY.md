@@ -10,8 +10,8 @@
 
 | Method | Implementation | Configuration | Status |
 |--------|----------------|---------------|--------|
-| Ed25519 Signatures | ed25519-dalek library | `VIBETEA_PUBLIC_KEYS` env var | Implemented (Phase 2) |
-| Bearer Token | Custom string token | `VIBETEA_SUBSCRIBER_TOKEN` env var | Implemented (Phase 2) |
+| Ed25519 Signatures | ed25519-dalek library | `VIBETEA_PUBLIC_KEYS` env var | Integrated (Phase 2) |
+| Bearer Token | Custom string token | `VIBETEA_SUBSCRIBER_TOKEN` env var | Integrated (Phase 2) |
 | Development bypass | `VIBETEA_UNSAFE_NO_AUTH=true` | Environment variable | Development only |
 
 ### Authentication Flow
@@ -28,16 +28,17 @@
 - Token value from `VIBETEA_SUBSCRIBER_TOKEN` configuration
 - Server validates token presence and value
 - No token expiration mechanism implemented
+- No per-client token scope differentiation
 
 ### Development Mode Bypass
 
 | Setting | Impact | Location |
 |---------|--------|----------|
 | `VIBETEA_UNSAFE_NO_AUTH=true` | Disables all auth (dev only) | `server/src/config.rs:57-58` |
-| Behavior | Accepts any client, any source | Validated in `Config::validate()` |
+| Behavior | Accepts any client, any source | Validated in `Config::validate()` at `server/src/config.rs:108-126` |
 | Logging | Warning logged on startup | `server/src/config.rs:94-98` |
 
-**Warning**: This setting logs a warning but is not otherwise restricted. Production deployments must never enable this.
+**Warning**: This setting logs a warning but is not otherwise restricted. Production deployments must never enable this. Configuration validation is enforced with comprehensive tests in `server/src/config.rs:205-415`.
 
 ## Authorization
 
@@ -46,7 +47,7 @@
 | Model | Implementation | Scope |
 |-------|----------------|-------|
 | Token-based | Bearer token presence check | Client access |
-| Source verification | Public key verification | Monitor identity |
+| Source verification | Public key verification via Ed25519 | Monitor identity |
 | No granular RBAC | Not implemented | - |
 
 ### Permission Structure
@@ -55,6 +56,7 @@
 - **Client receives from**: Any client with valid bearer token
 - **Server publishes to**: All connected WebSocket clients
 - **No resource-level permissions**: All clients see all events
+- **No user-level isolation**: No per-user filtering of events
 
 ### Authorization Gaps
 
@@ -62,6 +64,7 @@
 - No role-based access control (RBAC)
 - No scope limitation on token capabilities
 - All authenticated clients access identical data streams
+- No event filtering based on source or topic
 
 ## Input Validation
 
@@ -74,34 +77,38 @@
 | API input | Type safety | Rust compiler enforces |
 | Field format validation | Manual checks | In config parsing functions |
 
-### Event Validation (Types)
+### Event Validation (Server Types)
 
-Event structure from `server/src/types.rs`:
+Event structure from `server/src/types.rs:1-163`:
 
 - **EventType**: Enum-based (`session`, `activity`, `tool`, `agent`, `summary`, `error`)
 - **EventPayload**: Untagged union with variant ordering for correct deserialization
 - **Timestamp**: RFC 3339 UTC (`DateTime<Utc>`)
-- **Session ID**: UUID format
+- **Session ID**: UUID format validated by chrono
 - **Event ID**: Prefixed format (`evt_` + 20 alphanumeric chars)
 
-All event fields are type-checked at deserialization. Invalid JSON fails before reaching application logic.
+All event fields are type-checked at deserialization via serde. Invalid JSON fails before reaching application logic.
 
-### Configuration Validation
+### Configuration Validation (Server)
 
-From `server/src/config.rs`:
+From `server/src/config.rs:79-202`:
 
-- Port: Parsed as `u16` (1-65535)
-- Public keys: Format validation `source:base64key`
-- Empty field checks for source_id and pubkey
+- Port: Parsed as `u16` (1-65535) with error handling at `server/src/config.rs:142-151`
+- Public keys: Format validation `source:base64key` at `server/src/config.rs:157-203`
+- Empty field checks for source_id and pubkey at `server/src/config.rs:182-197`
 - Whitespace trimming in key pairs
-- Conditional validation: auth fields required unless `VIBETEA_UNSAFE_NO_AUTH=true`
+- Conditional validation: auth fields required unless `VIBETEA_UNSAFE_NO_AUTH=true` at `server/src/config.rs:108-126`
+- Comprehensive test coverage: `server/src/config.rs:205-415`
 
-From `monitor/src/config.rs`:
+### Configuration Validation (Monitor)
 
-- Server URL: Required, must be present
-- Buffer size: Parsed as `usize`
+From `monitor/src/config.rs:79-143`:
+
+- Server URL: Required, must be present (no format validation)
+- Buffer size: Parsed as `usize` with error handling at `monitor/src/config.rs:119-125`
 - File paths: Converted to PathBuf
-- Allowlist: Comma-separated, filtered for empty entries
+- Allowlist: Comma-separated, filtered for empty entries at `monitor/src/config.rs:128-133`
+- Source ID: Uses hostname as default fallback via `gethostname` crate
 
 ### Sanitization
 
@@ -123,7 +130,7 @@ From `monitor/src/config.rs`:
 | Private key | File permissions | `~/.vibetea/key.priv` | Monitor loads from disk |
 | Public key | Base64-encoded | Environment variable | On server |
 | Bearer token | Environment variable | `VIBETEA_SUBSCRIBER_TOKEN` | In-memory, passed by clients |
-| Event payloads | No encryption | Memory/transit | Sent over HTTPS only |
+| Event payloads | No encryption | Memory/transit | Sent over HTTPS/WSS only |
 
 ### Encryption in Transit
 
@@ -145,7 +152,7 @@ From `monitor/src/config.rs`:
 **Note**: VibeTea does not implement application-level encryption. Sensitive credentials are protected by:
 1. Environment variable isolation
 2. File system permissions (private key in `~/.vibetea/key.priv`)
-3. HTTPS transport security
+3. HTTPS/WSS transport security
 
 ## Cryptography
 
@@ -156,8 +163,9 @@ From `monitor/src/config.rs`:
 | Algorithm | Ed25519 | `ed25519-dalek` 2.1 |
 | Key format | Base64-encoded public key | In `VIBETEA_PUBLIC_KEYS` |
 | Signature verification | Per-event batch | Location TBD (implementation pending) |
+| Dependencies | ed25519-dalek, base64, rand | Integrated in Phase 2 |
 
-**Status**: Ed25519 dependencies are integrated and configured. Actual signature verification logic is pending implementation in Phase 2 completion.
+**Status**: Ed25519 dependencies are integrated and configured. Actual signature verification logic is pending implementation.
 
 ### Key Generation (Monitor)
 
@@ -185,7 +193,7 @@ From `monitor/src/config.rs`:
 | WebSocket connections | Not implemented | - |
 | Global | Not implemented | - |
 
-**Status**: Error type supports rate limiting (`ServerError::RateLimit`) but middleware is not yet implemented.
+**Status**: Error type supports rate limiting (`ServerError::RateLimit` at `server/src/error.rs:84-94`) but middleware is not yet implemented.
 
 ## Secrets Management
 
@@ -230,14 +238,25 @@ From `monitor/src/config.rs`:
 
 ### Error Response Handling
 
-Errors from `server/src/error.rs`:
+Errors from `server/src/error.rs:67-236`:
 
 - `ServerError::Auth` - Indicates auth failure without exposing mechanism details
 - `ServerError::Validation` - Safe for clients to see
 - `ServerError::RateLimit` - Includes source identifier for debugging
 - `ServerError::Internal` - Generic message, details logged server-side
+- `ServerError::WebSocket` - Connection issues without exposing internals
 
 No SQL errors, path traversal details, or stack traces exposed to clients.
+
+### Monitor Error Handling
+
+Errors from `monitor/src/error.rs:26-60`:
+
+- `MonitorError::Crypto` - Covers key loading and signature errors
+- `MonitorError::Http` - HTTP communication failures
+- `MonitorError::Io` - File system errors
+- `MonitorError::Watch` - File watcher errors
+- Clear error messages for debugging without exposing sensitive paths
 
 ## Audit Logging
 
@@ -246,6 +265,7 @@ No SQL errors, path traversal details, or stack traces exposed to clients.
 | Auth failures | Via error messages | In error variants |
 | Rate limiting | source identifier | In `RateLimit` variant |
 | Configuration errors | At startup | Via `tracing::warn!` |
+| Development mode enabled | Warning message | In `server/src/config.rs:94-98` |
 
 **Status**: Basic error logging present. Comprehensive audit logging (user IP, timestamp, detailed action logs) not yet implemented.
 
@@ -273,6 +293,9 @@ Not yet configured. Recommended headers for production:
 | reqwest | 0.12 | HTTPS client | Current |
 | serde | 1.0 | Safe deserialization | Current |
 | rand | 0.9 | Random number gen | Current |
+| thiserror | Latest | Error handling | Current |
+| uuid | Latest | Session IDs | Current |
+| chrono | Latest | Timestamps | Current |
 
 ### Dependency Audit
 
@@ -283,6 +306,34 @@ Not yet configured. Recommended headers for production:
 cd /home/ubuntu/Projects/VibeTea && cargo audit
 ```
 
+## Client-Side Security (TypeScript)
+
+### Event Types and Validation
+
+From `client/src/types/events.ts:1-248`:
+
+- **EventType**: String discriminator union validated via `isValidEventType()`
+- **VibeteaEvent**: Generic interface with type-safe payload mapping
+- **Type guards**: Runtime validators for all event types
+- **readonly fields**: Immutability for all payload interfaces
+
+### State Management
+
+From `client/src/hooks/useEventStore.ts:1-172`:
+
+- **Zustand store**: Centralized state with selective subscriptions
+- **Event buffer**: Last 1000 events with FIFO eviction (no size limit security risk)
+- **Session tracking**: Derived from event stream aggregation
+- **No authentication state**: Bearer token not stored in client-side store
+- **No sensitive data**: Events are passed through without validation
+
+### Client Authorization Gaps
+
+- No token management implementation
+- No authorization checks in event filtering
+- No rate limiting on client side
+- No CORS origin validation (server responsibility)
+
 ## Known Vulnerabilities & Gaps
 
 - No rate limiting middleware implemented (pending)
@@ -291,6 +342,8 @@ cd /home/ubuntu/Projects/VibeTea && cargo audit
 - No audit logging beyond error messages (pending)
 - No CORS header configuration (pending)
 - Base64 public key validation happens during use, not parsing
+- No client-side token management (pending)
+- No per-client isolation or scoping
 
 ---
 
