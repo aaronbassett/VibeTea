@@ -138,10 +138,7 @@ EXAMPLES:
 
 /// Prints version information.
 fn print_version() {
-    println!(
-        "vibetea-monitor {}",
-        env!("CARGO_PKG_VERSION")
-    );
+    println!("vibetea-monitor {}", env!("CARGO_PKG_VERSION"));
 }
 
 /// Runs the init command to generate a new keypair.
@@ -167,9 +164,7 @@ fn run_init(force: bool) -> Result<()> {
     // Generate and save keypair
     println!("Generating Ed25519 keypair...");
     let crypto = Crypto::generate();
-    crypto
-        .save(&key_dir)
-        .context("Failed to save keypair")?;
+    crypto.save(&key_dir).context("Failed to save keypair")?;
 
     println!();
     println!("Keypair saved to: {}", key_dir.display());
@@ -234,10 +229,15 @@ async fn run_monitor() -> Result<()> {
 
     // Graceful shutdown
     info!("Shutting down...");
-    let unflushed = sender.shutdown(Duration::from_secs(SHUTDOWN_TIMEOUT_SECS)).await;
+    let unflushed = sender
+        .shutdown(Duration::from_secs(SHUTDOWN_TIMEOUT_SECS))
+        .await;
 
     if unflushed > 0 {
-        error!(unflushed_events = unflushed, "Some events could not be sent");
+        error!(
+            unflushed_events = unflushed,
+            "Some events could not be sent"
+        );
     }
 
     info!("Monitor stopped");
@@ -246,8 +246,7 @@ async fn run_monitor() -> Result<()> {
 
 /// Initializes the logging subsystem.
 fn init_logging() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)

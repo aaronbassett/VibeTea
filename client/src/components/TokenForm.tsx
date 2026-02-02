@@ -73,10 +73,7 @@ function hasStoredToken(): boolean {
  * }
  * ```
  */
-export function TokenForm({
-  onTokenChange,
-  className = '',
-}: TokenFormProps) {
+export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
   const [tokenInput, setTokenInput] = useState<string>('');
   const [status, setStatus] = useState<TokenStatus>(() =>
     hasStoredToken() ? 'saved' : 'not-saved'
@@ -154,7 +151,9 @@ export function TokenForm({
             type="password"
             value={tokenInput}
             onChange={handleInputChange}
-            placeholder={isSaved ? 'Enter new token to update' : 'Enter your token'}
+            placeholder={
+              isSaved ? 'Enter new token to update' : 'Enter your token'
+            }
             autoComplete="off"
             className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             aria-describedby="token-status"
