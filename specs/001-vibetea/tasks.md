@@ -94,8 +94,8 @@ VibeTea uses a multi-project structure:
 - [X] T032 [GIT] Commit: finalize phase 2 retro
 - [X] T033 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [X] T034 [GIT] Create/update PR to main with phase summary - PR #1 created
-- [ ] T035 [GIT] Verify all CI checks pass
-- [ ] T036 [GIT] Report PR ready status
+- [X] T035 [GIT] Verify all CI checks pass
+- [X] T036 [GIT] Report PR ready status - All CI checks passing, PR #1 ready for review
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
