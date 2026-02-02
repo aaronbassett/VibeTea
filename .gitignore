@@ -11,6 +11,11 @@ client/node_modules/
 client/dist/
 client/.vite/
 
+# TypeScript build artifacts
+*.tsbuildinfo
+*.d.ts
+!client/src/**/*.d.ts
+
 # IDE
 .idea/
 .vscode/
