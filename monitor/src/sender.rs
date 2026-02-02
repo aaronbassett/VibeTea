@@ -503,7 +503,7 @@ mod tests {
             let secs = jittered.as_secs_f64();
             // Should be within ±25% of 10 seconds
             assert!(
-                secs >= 7.5 && secs <= 12.5,
+                (7.5..=12.5).contains(&secs),
                 "Jitter out of bounds: {}",
                 secs
             );
