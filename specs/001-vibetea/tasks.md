@@ -205,10 +205,10 @@ VibeTea uses a multi-project structure:
 - [X] T082 [GIT] Commit: update codebase documents for phase 4
 - [X] T083 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update (phase-specific patterns only)
 - [X] T084 [GIT] Commit: finalize phase 4 retro - N/A, no CLAUDE.md changes needed
-- [ ] T085 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T086 [GIT] Create/update PR to main with phase summary
-- [ ] T087 [GIT] Verify all CI checks pass
-- [ ] T088 [GIT] Report PR ready status
+- [X] T085 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [X] T086 [GIT] Create/update PR to main with phase summary - PR #1 already exists
+- [X] T087 [GIT] Verify all CI checks pass - CI passing
+- [X] T088 [GIT] Report PR ready status - PR #1 ready
 
 **Checkpoint**: Monitor Claude Code Watcher (US2) fully functional and testable independently
 
@@ -222,38 +222,38 @@ VibeTea uses a multi-project structure:
 
 ### Start Phase 5
 
-- [ ] T089 [GIT] Verify working tree is clean before starting Phase 5
-- [ ] T090 [GIT] Pull and rebase on origin/main if needed
-- [ ] T091 [US3] Create retro/P5.md for this phase
+- [X] T089 [GIT] Verify working tree is clean before starting Phase 5
+- [X] T090 [GIT] Pull and rebase on origin/main if needed - Already on latest
+- [X] T091 [US3] Create retro/P5.md for this phase
 
 ### Privacy Pipeline Implementation
 
-- [ ] T092 [US3] Implement privacy pipeline in monitor/src/privacy.rs with path-to-basename conversion (use devs:rust-dev agent)
-- [ ] T093 [GIT] Commit: add path stripping
-- [ ] T094 [US3] Implement content stripping (file contents, diffs, prompts, responses) in monitor/src/privacy.rs (use devs:rust-dev agent)
-- [ ] T095 [GIT] Commit: add content stripping
-- [ ] T096 [US3] Implement command stripping for Bash tool (only transmit description) in monitor/src/privacy.rs (use devs:rust-dev agent)
-- [ ] T097 [GIT] Commit: add command stripping
-- [ ] T098 [US3] Implement pattern stripping for Grep/Glob tools in monitor/src/privacy.rs (use devs:rust-dev agent)
-- [ ] T099 [GIT] Commit: add pattern stripping
-- [ ] T100 [US3] Implement VIBETEA_BASENAME_ALLOWLIST filtering in monitor/src/privacy.rs (use devs:rust-dev agent)
-- [ ] T101 [GIT] Commit: add basename allowlist filtering
+- [X] T092 [US3] Implement privacy pipeline in monitor/src/privacy.rs with path-to-basename conversion (use devs:rust-dev agent)
+- [X] T093 [GIT] Commit: add path stripping - Combined in single commit
+- [X] T094 [US3] Implement content stripping (file contents, diffs, prompts, responses) in monitor/src/privacy.rs (use devs:rust-dev agent) - Already handled by parser.rs (never extracted)
+- [X] T095 [GIT] Commit: add content stripping - N/A, part of main commit
+- [X] T096 [US3] Implement command stripping for Bash tool (only transmit description) in monitor/src/privacy.rs (use devs:rust-dev agent)
+- [X] T097 [GIT] Commit: add command stripping - Combined in single commit
+- [X] T098 [US3] Implement pattern stripping for Grep/Glob tools in monitor/src/privacy.rs (use devs:rust-dev agent)
+- [X] T099 [GIT] Commit: add pattern stripping - Combined in single commit
+- [X] T100 [US3] Implement VIBETEA_BASENAME_ALLOWLIST filtering in monitor/src/privacy.rs (use devs:rust-dev agent)
+- [X] T101 [GIT] Commit: add basename allowlist filtering - Combined in feat(monitor): add privacy pipeline commit
 
 ### Privacy Compliance Testing (Constitution I)
 
-- [ ] T101a [US3] Create privacy compliance test suite in monitor/tests/privacy_test.rs: verify no file contents, full paths, commands, patterns, or prompts in emitted events - must explicitly test all prohibited fields from spec (use devs:rust-dev agent)
-- [ ] T101b [GIT] Commit: add privacy compliance tests
+- [X] T101a [US3] Create privacy compliance test suite in monitor/tests/privacy_test.rs: verify no file contents, full paths, commands, patterns, or prompts in emitted events - must explicitly test all prohibited fields from spec (use devs:rust-dev agent) - 17 tests
+- [X] T101b [GIT] Commit: add privacy compliance tests
 
 ### Phase 5 Completion
 
-- [ ] T102 [US3] Run /sdd:map incremental for Phase 5 changes
-- [ ] T103 [GIT] Commit: update codebase documents for phase 5
-- [ ] T104 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T105 [GIT] Commit: finalize phase 5 retro
-- [ ] T106 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T107 [GIT] Create/update PR to main with phase summary
-- [ ] T108 [GIT] Verify all CI checks pass
-- [ ] T109 [GIT] Report PR ready status
+- [X] T102 [US3] Run /sdd:map incremental for Phase 5 changes
+- [X] T103 [GIT] Commit: update codebase documents for phase 5
+- [X] T104 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update (phase-specific patterns only)
+- [X] T105 [GIT] Commit: finalize phase 5 retro
+- [X] T106 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [X] T107 [GIT] Create/update PR to main with phase summary
+- [X] T108 [GIT] Verify all CI checks pass
+- [X] T109 [GIT] Report PR ready status
 
 **Checkpoint**: Monitor Privacy Pipeline (US3) fully functional and testable independently
 
