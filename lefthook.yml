@@ -1,0 +1,41 @@
+# Lefthook Git Hooks Configuration
+# https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    rust-fmt:
+      glob: "*.rs"
+      run: cargo fmt --check
+      stage_fixed: true
+
+    rust-clippy:
+      glob: "*.rs"
+      run: cargo clippy --all-targets -- -D warnings
+
+    client-lint:
+      root: "client/"
+      glob: "*.{ts,tsx}"
+      run: cd client && pnpm lint
+
+    client-typecheck:
+      root: "client/"
+      glob: "*.{ts,tsx}"
+      run: cd client && pnpm typecheck
+
+    client-format:
+      root: "client/"
+      glob: "*.{ts,tsx,css}"
+      run: cd client && pnpm format:check
+
+pre-push:
+  parallel: true
+  commands:
+    rust-test:
+      glob: "*.rs"
+      run: cargo test
+
+    client-test:
+      root: "client/"
+      glob: "*.{ts,tsx}"
+      run: cd client && pnpm test
