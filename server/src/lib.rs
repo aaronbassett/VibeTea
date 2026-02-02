@@ -11,6 +11,9 @@
 //! (event consumers). Events are validated and broadcast in real-time without
 //! persistent storage.
 
+pub mod auth;
+pub mod broadcast;
 pub mod config;
 pub mod error;
+pub mod rate_limit;
 pub mod types;
