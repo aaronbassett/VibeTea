@@ -324,39 +324,39 @@ VibeTea uses a multi-project structure:
 
 ### Start Phase 7
 
-- [ ] T137 [GIT] Verify working tree is clean before starting Phase 7
-- [ ] T138 [GIT] Pull and rebase on origin/main if needed
-- [ ] T139 [US5] Create retro/P7.md for this phase
+- [X] T137 [GIT] Verify working tree is clean before starting Phase 7
+- [X] T138 [GIT] Pull and rebase on origin/main if needed - Already on latest
+- [X] T139 [US5] Create retro/P7.md for this phase
 
 ### WebSocket Hook
 
-- [ ] T140 [US5] Implement useWebSocket hook in client/src/hooks/useWebSocket.ts with connection management (use devs:react-dev agent)
-- [ ] T141 [GIT] Commit: add useWebSocket hook
-- [ ] T142 [US5] Implement exponential backoff reconnection in client/src/hooks/useWebSocket.ts (use devs:react-dev agent)
-- [ ] T143 [GIT] Commit: add reconnection logic
-- [ ] T144 [US5] Implement token handling (URL param, localStorage) in client/src/hooks/useWebSocket.ts (use devs:react-dev agent)
-- [ ] T145 [GIT] Commit: add token handling
+- [X] T140 [US5] Implement useWebSocket hook in client/src/hooks/useWebSocket.ts with connection management (use devs:react-dev agent)
+- [X] T141 [GIT] Commit: add useWebSocket hook - Combined with T142, T144
+- [X] T142 [US5] Implement exponential backoff reconnection in client/src/hooks/useWebSocket.ts (use devs:react-dev agent)
+- [X] T143 [GIT] Commit: add reconnection logic - Combined with T141
+- [X] T144 [US5] Implement token handling (URL param, localStorage) in client/src/hooks/useWebSocket.ts (use devs:react-dev agent)
+- [X] T145 [GIT] Commit: add token handling - Combined with T141
 
 ### Connection UI
 
-- [ ] T146 [US5] Implement ConnectionStatus component in client/src/components/ConnectionStatus.tsx (green/yellow/red indicator) (use devs:react-dev agent)
-- [ ] T147 [GIT] Commit: add ConnectionStatus component
-- [ ] T148 [US5] Implement TokenForm component in client/src/components/TokenForm.tsx (use devs:react-dev agent)
-- [ ] T149 [GIT] Commit: add TokenForm component
+- [X] T146 [US5] Implement ConnectionStatus component in client/src/components/ConnectionStatus.tsx (green/yellow/red indicator) (use devs:react-dev agent)
+- [X] T147 [GIT] Commit: add ConnectionStatus component
+- [X] T148 [US5] Implement TokenForm component in client/src/components/TokenForm.tsx (use devs:react-dev agent)
+- [X] T149 [GIT] Commit: add TokenForm component
 
 ### Event Store Integration
 
-- [ ] T150 [US5] Complete useEventStore implementation in client/src/hooks/useEventStore.ts with WebSocket integration (use devs:react-dev agent)
-- [ ] T151 [GIT] Commit: complete event store
-- [ ] T152 [US5] Implement event buffering (1000 events max) in client/src/hooks/useEventStore.ts (use devs:react-dev agent)
-- [ ] T153 [GIT] Commit: add event buffering
+- [X] T150 [US5] Complete useEventStore implementation in client/src/hooks/useEventStore.ts with WebSocket integration (use devs:react-dev agent) - Already implemented in Phase 2
+- [X] T151 [GIT] Commit: complete event store - N/A, already committed in Phase 2
+- [X] T152 [US5] Implement event buffering (1000 events max) in client/src/hooks/useEventStore.ts (use devs:react-dev agent) - Already implemented (MAX_EVENTS = 1000)
+- [X] T153 [GIT] Commit: add event buffering - N/A, already committed in Phase 2
 
 ### Phase 7 Completion
 
-- [ ] T154 [US5] Run /sdd:map incremental for Phase 7 changes
-- [ ] T155 [GIT] Commit: update codebase documents for phase 7
-- [ ] T156 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T157 [GIT] Commit: finalize phase 7 retro
+- [X] T154 [US5] Run /sdd:map incremental for Phase 7 changes
+- [X] T155 [GIT] Commit: update codebase documents for phase 7
+- [X] T156 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update (phase-specific patterns only)
+- [X] T157 [GIT] Commit: finalize phase 7 retro
 - [ ] T158 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [ ] T159 [GIT] Create/update PR to main with phase summary
 - [ ] T160 [GIT] Verify all CI checks pass
