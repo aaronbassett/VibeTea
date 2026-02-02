@@ -158,11 +158,11 @@ VibeTea uses a multi-project structure:
 - [X] T060 [US1] Run /sdd:map incremental for Phase 3 changes
 - [X] T061 [GIT] Commit: update codebase documents for phase 3
 - [X] T062 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T063 [GIT] Commit: finalize phase 3 retro
-- [ ] T064 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T065 [GIT] Create/update PR to main with phase summary
-- [ ] T066 [GIT] Verify all CI checks pass
-- [ ] T067 [GIT] Report PR ready status
+- [X] T063 [GIT] Commit: finalize phase 3 retro
+- [X] T064 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [X] T065 [GIT] Create/update PR to main with phase summary
+- [X] T066 [GIT] Verify all CI checks pass
+- [X] T067 [GIT] Report PR ready status
 
 **Checkpoint**: Server Event Hub (US1) fully functional and testable independently
 
