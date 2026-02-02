@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 8 Implementation - Virtual scrolling event display with formatting utilities
+**Status**: Phase 10 Implementation - Session overview with activity indicators and timeout management
 **Last Updated**: 2026-02-02
 
 ## Summary
@@ -456,7 +456,7 @@ pub struct SenderConfig {
 4. User adds to server configuration
 5. User runs: `vibetea-monitor run`
 
-## Client-Side Integrations (Phase 7-8)
+## Client-Side Integrations (Phase 7-10)
 
 ### Browser WebSocket Connection
 
@@ -704,7 +704,153 @@ interface TokenFormProps {
    - Gets `events` array (newest-first ordering)
    - Reverses array for display (oldest at top, newest at bottom)
 
-### Formatting Utilities Integration (Phase 8)
+### Session Overview Component (Phase 10)
+
+**Module Location**: `client/src/components/SessionOverview.tsx` (484 lines)
+
+**Features**:
+
+1. **Session Cards Display**
+   - Real-time activity indicators with pulsing dots
+   - Project name as title
+   - Source identifier
+   - Session duration (formatted)
+   - Status badges (Active, Idle, Ended)
+   - Event count for active sessions
+   - "Last active" timestamp for inactive sessions
+
+2. **Activity Indicators**
+   - Pulsing dot showing activity level (variable speed)
+   - 1-5 events in 60s: 1Hz pulse (slow)
+   - 6-15 events in 60s: 2Hz pulse (medium)
+   - 16+ events in 60s: 3Hz pulse (fast)
+   - Inactive sessions: Gray dot, no pulse
+
+3. **Status Badges**
+   - Active: Green badge with "Active" label
+   - Inactive: Yellow badge with "Idle" label
+   - Ended: Gray badge with "Ended" label
+
+4. **Session Sorting**
+   - Active sessions first
+   - Then by last event time descending
+   - Maintains consistent ordering across renders
+
+5. **Recent Event Counting**
+   - 60-second window for activity calculation
+   - Uses most recent event timestamp as reference
+   - Pure render behavior with memoization
+
+6. **Click Handlers & Filtering**
+   - Optional `onSessionClick` callback
+   - Future feature: filter events by session
+   - Keyboard support (Enter/Space)
+
+7. **Accessibility**
+   - `role="region"` for container
+   - `role="list"` and `role="listitem"` for cards
+   - `aria-label` describing session info
+   - Keyboard focus support
+   - Full keyboard navigation
+
+8. **Styling**
+   - Dark mode Tailwind CSS
+   - Opacity changes for inactive sessions
+   - Hover effects for active cards
+   - Color-coded status badges
+
+9. **Sub-components**:
+   - `ActivityIndicator`: Pulsing dot with animation
+   - `StatusBadge`: Color-coded status label
+   - `SessionCard`: Individual session display
+   - `EmptyState`: Message when no sessions
+
+### Session Timeout Management (Phase 10)
+
+**Module Location**: `client/src/hooks/useSessionTimeouts.ts` (48 lines)
+
+**Hook Features**:
+
+1. **Session State Transitions**
+   - Active → Inactive: After 5 minutes without events
+   - Inactive/Ended → Removed: After 30 minutes without events
+   - Managed by `useEventStore` action `updateSessionStates()`
+
+2. **Periodic Checking**
+   - Interval: 30 seconds (SESSION_CHECK_INTERVAL_MS)
+   - Called once per interval
+   - Non-blocking check with minimal overhead
+
+3. **Integration**
+   - Calls `updateSessionStates()` from Zustand store
+   - No state management in hook itself
+   - Uses only store action
+
+4. **Lifecycle Management**
+   - Cleanup on unmount
+   - Clears interval when component unmounts
+   - Prevents memory leaks
+   - No dependencies on props
+
+5. **App-level Usage**
+   - Should be called once at root level (App.tsx)
+   - Sets up monitoring for all sessions
+   - No parameters required
+
+**Store Integration**:
+```typescript
+const updateSessionStates = useEventStore(
+  (state) => state.updateSessionStates
+);
+
+useEffect(() => {
+  const intervalId = setInterval(() => {
+    updateSessionStates();
+  }, SESSION_CHECK_INTERVAL_MS);
+
+  return () => {
+    clearInterval(intervalId);
+  };
+}, [updateSessionStates]);
+```
+
+### Zustand Store Enhancement (Phase 10)
+
+**Location**: `client/src/hooks/useEventStore.ts`
+
+**Session State Machine**:
+- New events → Active (fresh session)
+- Active + no events for 5min → Inactive
+- Inactive + event → Active
+- Any state + summary → Ended
+- Ended/Inactive + no events for 30min → Removed
+
+**Session Interface**:
+```typescript
+interface Session {
+  readonly sessionId: string;      // Unique identifier
+  readonly source: string;         // Monitor source ID
+  readonly project: string;        // Project name
+  readonly startedAt: Date;        // Session start
+  readonly lastEventAt: Date;      // Last event time
+  readonly eventCount: number;     // Total events
+  readonly status: SessionStatus;  // 'active' | 'inactive' | 'ended'
+}
+```
+
+**New Action - updateSessionStates()**:
+- Transitions sessions based on time thresholds
+- Called every 30 seconds by useSessionTimeouts
+- Updates lastEventAt for new events in addEvent()
+- Removes sessions after 30 minutes inactivity
+- Maintains state machine invariants
+
+**Constants**:
+- `INACTIVE_THRESHOLD_MS = 300,000` (5 minutes)
+- `REMOVAL_THRESHOLD_MS = 1,800,000` (30 minutes)
+- `SESSION_CHECK_INTERVAL_MS = 30,000` (30 seconds)
+
+### Formatting Utilities (Phase 8)
 
 **Module Location**: `client/src/utils/formatting.ts` (331 lines)
 
@@ -746,97 +892,11 @@ interface TokenFormProps {
    - No exceptions thrown
    - No side effects (pure functions)
 
-7. **Usage in EventStream**
-   - `formatTimestamp()` converts event.timestamp for display
-   - Timestamps shown as "HH:MM:SS" in EventRow
-   - Can be extended with `formatTimestampFull()` or `formatRelativeTime()`
-
-### Formatting Tests (Phase 8)
-
-**Module Location**: `client/src/__tests__/formatting.test.ts` (229 lines)
-
-**Test Coverage**:
-
-1. **formatTimestamp Tests** (6 tests)
-   - Valid RFC 3339 timestamps with various formats
-   - Timezone offset handling (UTC+05:30, -08:00)
-   - Empty string fallback
-   - Invalid timestamp handling
-   - Whitespace-only input fallback
-
-2. **formatTimestampFull Tests** (4 tests)
-   - Full datetime formatting (YYYY-MM-DD HH:MM:SS)
-   - Timezone offset handling
-   - Empty string and invalid input fallbacks
-
-3. **formatRelativeTime Tests** (8 tests)
-   - "just now" for recent timestamps (<1 minute)
-   - "just now" for future timestamps
-   - Minutes ago ("1m", "5m", "59m")
-   - Hours ago ("1h", "2h", "23h")
-   - "yesterday" detection (timezone-aware)
-   - Days ago ("3d", "6d")
-   - Weeks ago ("1w", "2w", "9w")
-   - Invalid input handling
-
-4. **formatDuration Tests** (10 tests)
-   - Hours and minutes ("1h 30m", "2h 1m")
-   - Minutes and seconds ("5m 30s", "1m 30s")
-   - Seconds only ("30s", "59s")
-   - Omits seconds when hours present
-   - Zero value handling
-   - Negative value handling
-   - NaN handling
-   - Large durations (48h, 100h)
-
-5. **formatDurationShort Tests** (5 tests)
-   - H:MM:SS format for >= 1 hour (with leading zeros on minutes/seconds)
-   - M:SS format for < 1 hour (with leading zeros on seconds)
-   - Zero value handling
-   - Negative value handling
-   - NaN handling
-   - Large durations with leading zeros
-
-**Test Framework**: Vitest with `describe` and `it` blocks
-**Total Tests**: 33 comprehensive test cases
-**Coverage**: 100% of exported functions and critical code paths
-
-### Integration Flow (Phase 7-8)
-
-**Typical Usage Pattern**:
-```typescript
-function App() {
-  const { connect, disconnect, isConnected } = useWebSocket();
-
-  return (
-    <div>
-      <TokenForm
-        onTokenChange={() => {
-          // Reconnect when token changes
-          connect();
-        }}
-      />
-      <ConnectionStatus showLabel />
-      <EventStream className="h-96 border border-gray-700 rounded-lg" />
-      {/* Rest of app */}
-    </div>
-  );
-}
-```
-
-**Connection Flow**:
-1. User enters token in TokenForm
-2. Token saved to `localStorage.vibetea_token`
-3. User clicks connect (or app calls `connect()`)
-4. `useWebSocket` reads token from localStorage
-5. WebSocket connects to server with token in URL
-6. Server validates token and upgrades connection
-7. ConnectionStatus shows "Connected" with green dot
-8. Events flow from server to client via WebSocket
-9. Events added to Zustand store via `addEvent()`
-10. EventStream displays events with virtual scrolling
-11. User can scroll, auto-scroll pauses if scrolled up
-12. Jump to Latest button appears when new events arrive
+7. **Usage in Components**
+   - SessionOverview uses formatDuration() for session duration
+   - SessionOverview uses formatRelativeTime() for last active time
+   - EventStream uses formatTimestamp() for event timestamps
+   - Heatmap uses formatCellDateTime() for cell labels
 
 ## Event Validation & Types
 
@@ -900,6 +960,12 @@ Event {
 - Color-coded badges and icons for event types
 - Event descriptions extracted from payloads
 
+**Phase 10 Session Management** (new):
+- Sessions created from first event with sessionId
+- Session state transitions based on event timing
+- Activity indicators updated from event frequency
+- Session timeout management with periodic checking
+
 ### Client Event Store Integration
 
 **Location**: `client/src/hooks/useEventStore.ts`
@@ -914,6 +980,7 @@ export interface EventStore {
   addEvent: (event: VibeteaEvent) => void;
   setStatus: (status: ConnectionStatus) => void;
   clearEvents: () => void;
+  updateSessionStates: () => void;       // Phase 10 addition
 }
 ```
 
@@ -923,6 +990,7 @@ export interface EventStore {
 - Session status transitions: 'active' → 'ended' on summary event
 - Event counting: Increments eventCount per session
 - Project tracking: Updates project field if present in event payload
+- Timeout management: Session state transitions via updateSessionStates()
 
 **Selector Utilities**:
 - `selectEventsBySession(state, sessionId)` - Filter events by session
@@ -1002,7 +1070,7 @@ export interface EventStore {
 - Returns 101 Switching Protocols on success
 - Returns 401 Unauthorized on token validation failure
 
-**Client-Side Handling** (Phase 7-8):
+**Client-Side Handling** (Phase 7-10):
 - WebSocket proxy configured in `client/vite.config.ts` (target: ws://localhost:8080)
 - State management via `useEventStore` hook (Zustand)
 - Event type guards for safe type access in `client/src/types/events.ts`
@@ -1010,6 +1078,7 @@ export interface EventStore {
 - Token management via `TokenForm` component
 - Connection control via `useWebSocket` hook
 - Virtual scrolling display via EventStream component (Phase 8)
+- Session management via SessionOverview component (Phase 10)
 
 **Connection Details**:
 - Address/port: Configured via `PORT` environment variable (default: 8080)
@@ -1234,13 +1303,16 @@ server: {
 - Code splitting: react-vendor, state, virtual chunks
 - Target: ES2020
 
-**Phase 7-8 Client Features**:
+**Phase 7-10 Client Features**:
 - Token management via TokenForm component
 - Connection status visualization via ConnectionStatus component
 - WebSocket connection management via useWebSocket hook
 - Event display and session tracking via Zustand store
 - Virtual scrolling with EventStream component (Phase 8)
 - Timestamp and duration formatting with utilities (Phase 8)
+- Activity heatmap with Heatmap component (Phase 9)
+- Session overview with SessionOverview component (Phase 10)
+- Session timeout management via useSessionTimeouts hook (Phase 10)
 - localStorage persistence for authentication token
 
 ## Error Handling & Validation
@@ -1315,13 +1387,14 @@ server: {
 - MaxRetriesExceeded - All retry attempts exhausted
 - Json - Event serialization failure
 
-**Client-Side Error Handling** (Phase 7-8):
+**Client-Side Error Handling** (Phase 7-10):
 - WebSocket connection errors logged to console
 - Message parsing failures handled gracefully
 - Invalid events silently discarded
 - No crashes on connection drops (auto-reconnect)
 - Token missing handled with warning log
 - Formatting functions handle invalid timestamps/durations with fallback strings
+- Session timeout checking handles missing sessions gracefully
 - No runtime errors from formatting utility functions
 
 **Resilience**:
@@ -1334,6 +1407,7 @@ server: {
 - Sender buffers events if network unavailable, retries with backoff
 - Client maintains event store even if connection drops
 - Virtual scrolling gracefully handles empty event lists and large datasets
+- Session management handles edge cases (removed sessions, missing data)
 
 ## File System Monitoring
 
@@ -1527,166 +1601,39 @@ None required for production (future configuration planned).
 
 ## Phase Changes Summary
 
-### Phase 4 Changes
+### Phase 10 Changes
 
-**Monitor Parser Module** (`monitor/src/parser.rs`):
-- Claude Code JSONL parsing with privacy-first approach
-- Event mapping for tool invocations and completions
-- SessionParser for multi-line file processing
-- Comprehensive error handling
+**Client Session Timeout Hook** (`client/src/hooks/useSessionTimeouts.ts` - 48 lines):
+- Sets up periodic interval (30 seconds) to check and update session states
+- Transitions sessions: Active → Inactive (5min), Inactive/Ended → Removed (30min)
+- Integrates with Zustand store's `updateSessionStates()` action
+- Proper cleanup on unmount
 
-**Monitor File Watcher Module** (`monitor/src/watcher.rs`):
-- File system watching with position tracking
-- Efficient tailing without re-reading
-- WatchEvent enum for file system notifications
-- Thread-safe Arc<RwLock<>> state management
+**Session Overview Component** (`client/src/components/SessionOverview.tsx` - 484 lines):
+- Displays session cards with project, source, duration, activity indicator, status badge
+- Real-time activity indicators with variable pulse rates (1Hz, 2Hz, 3Hz based on event volume)
+- Status badges: Active (green), Idle (yellow), Ended (gray)
+- Session sorting: Active first, then by last event time
+- Recent event counting over 60-second window
+- Click handlers for session filtering (future feature)
+- Full accessibility support with ARIA labels and keyboard navigation
 
-**New Dependencies**:
-- `futures` 0.3 - Async utilities for monitor
-- `tempfile` 3.15 - Testing support
+**Zustand Store Enhancement** (`client/src/hooks/useEventStore.ts`):
+- New constants: INACTIVE_THRESHOLD_MS, REMOVAL_THRESHOLD_MS, SESSION_CHECK_INTERVAL_MS
+- Session interface with sessionId, source, project, startedAt, lastEventAt, eventCount, status
+- New action: `updateSessionStates()` for periodic state transitions
+- Enhanced `addEvent()` to update lastEventAt and handle session creation
+- Map-based session storage keyed by sessionId
 
-**Module Organization**:
-- `monitor/src/lib.rs` - Enhanced exports for parser and watcher
-- `monitor/src/parser.rs` - JSONL parsing logic
-- `monitor/src/watcher.rs` - File system watching logic
-
-**Integration Status**: Parser and watcher modules complete; integration with main event loop in progress.
-
-### Phase 5 Changes
-
-**Monitor Privacy Module** (`monitor/src/privacy.rs` - 1039 lines):
-- **PrivacyConfig**: Configuration management for privacy filtering
-- **PrivacyPipeline**: Event sanitization processor
-- **extract_basename()**: Path-to-basename conversion utility
-- **Sensitive tool detection**: Hardcoded list (Bash, Grep, Glob, WebSearch, WebFetch)
-- **Extension allowlist**: Optional filtering by file extension
-- **Summary stripping**: Session summary neutralization
-- **Comprehensive documentation**: Privacy guarantees and usage examples
-
-**Privacy Test Suite** (`monitor/tests/privacy_test.rs` - 951 lines):
-- 18+ comprehensive privacy compliance tests
-- Validates Constitution I (Privacy by Design)
-- Path sanitization, sensitive tool stripping, content filtering
-- Extension allowlist verification, pattern detection
-- Sensitive data exclusion validation
-
-**Configuration** (`VIBETEA_BASENAME_ALLOWLIST`):
-- Comma-separated extensions (e.g., `.rs,.ts,.md`)
-- Auto-adds dots: `rs,ts,md` → `.rs,.ts,.md`
-- Whitespace-tolerant: ` .rs , .ts ` normalized
-- Empty entries filtered: `.rs,,.ts,,,` → `.rs,.ts`
-- When not set: All extensions allowed
-
-**Integration Status**: Privacy module complete and ready for main event loop integration.
-
-### Phase 6 Changes
-
-**Monitor Crypto Module** (`monitor/src/crypto.rs` - 438 lines):
-- Ed25519 keypair generation and management
-- Key persistence with proper file permissions (0600/0644)
-- Key loading with validation
-- Public key base64 encoding for server registration
-- Event signing with base64-encoded signatures
-- Comprehensive error handling
-
-**Monitor Sender Module** (`monitor/src/sender.rs` - 544 lines):
-- HTTP client with connection pooling and timeouts
-- Event buffering with FIFO eviction strategy
-- Exponential backoff retry (1s → 60s with ±25% jitter)
-- Rate limit handling (429 with Retry-After)
-- Batch event sending with signature support
-- Graceful shutdown with event flushing
-
-**Monitor CLI Module** (`monitor/src/main.rs` - 301 lines):
-- `vibetea-monitor init` - Generate Ed25519 keypair
-- `vibetea-monitor run` - Start monitor daemon
-- `vibetea-monitor help` - Show documentation
-- `vibetea-monitor version` - Show version
-- Signal handling (SIGINT/SIGTERM)
-- Graceful shutdown with timeout
-
-**Module Exports** (`monitor/src/lib.rs`):
-- Public: Crypto, CryptoError, Sender, SenderConfig, SenderError
-- Documentation updated
-
-**Integration Status**: Crypto, sender, and CLI modules complete. Main event loop integration next (Phase 7).
-
-### Phase 7 Changes
-
-**Client WebSocket Hook** (`client/src/hooks/useWebSocket.ts` - 321 lines):
-- Custom React hook for WebSocket connection management
-- Auto-reconnection with exponential backoff (1s → 60s, ±25% jitter)
-- Token management from localStorage
-- Integration with Zustand event store
-- Manual `connect()` and `disconnect()` control
-- Message validation and event dispatch
-- Proper cleanup and lifecycle management
-
-**Connection Status Component** (`client/src/components/ConnectionStatus.tsx` - 106 lines):
-- Visual status indicator (colored dot)
-- Optional status label text
-- Selective Zustand subscription for performance
-- Accessibility support (ARIA roles, labels)
-- Dark mode support with Tailwind CSS
-- Responsive and composable design
-
-**Token Form Component** (`client/src/components/TokenForm.tsx` - 201 lines):
-- Password-protected token input field
-- localStorage persistence for token
-- Save/Clear button controls
-- Status indicator (saved/not-saved)
-- Cross-window synchronization via storage events
-- Optional `onTokenChange` callback
-- Full accessibility support
-- Dark mode Tailwind styling
+**CSS Animations** (`client/src/index.css`):
+- Pulse animations already defined in Phase 9:
+  - pulse-slow: 1Hz (1 second cycle)
+  - pulse-medium: 2Hz (0.5 second cycle)
+  - pulse-fast: 3Hz (0.33 second cycle)
+- Used by ActivityIndicator component for activity level visualization
 
 **Integration Points**:
-- useWebSocket reads token from localStorage (set by TokenForm)
-- ConnectionStatus displays real-time status from useEventStore
-- TokenForm provides UI for user authentication
-- All components use selective subscriptions for performance
-- TypeScript strict mode compliance throughout
-
-**Client Type System**:
-- Complete VibeteaEvent type definitions
-- Discriminated union types for payload safety
-- Type guards for runtime validation
-- Session interface for UI state
-- EventPayloadMap for type-safe access
-
-**Integration Status**: Phase 7 client-side features complete. Ready for main event loop integration and session visualization UI.
-
-### Phase 8 Changes
-
-**Client Event Stream Component** (`client/src/components/EventStream.tsx` - 425 lines):
-- **Virtual scrolling**: Uses @tanstack/react-virtual for 1000+ event rendering
-- **Auto-scroll**: Intelligent auto-scroll with pause when user scrolls up 50px
-- **Jump to latest**: Button appears when auto-scroll disabled, shows new event count
-- **Event type icons**: Unique emoji for each event type (session, activity, tool, agent, summary, error)
-- **Color-coded badges**: Tailwind CSS utility classes for visual differentiation
-- **Event descriptions**: Extracted from payloads, concise summaries displayed
-- **Sub-components**: EventRow (single event), JumpToLatestButton, EmptyState
-- **Accessibility**: ARIA labels, roles, live regions for screen readers
-- **Performance**: Selective Zustand subscriptions prevent unnecessary re-renders
-
-**Formatting Utilities Module** (`client/src/utils/formatting.ts` - 331 lines):
-- **formatTimestamp()**: RFC 3339 → "HH:MM:SS" (local timezone)
-- **formatTimestampFull()**: RFC 3339 → "YYYY-MM-DD HH:MM:SS"
-- **formatRelativeTime()**: Relative time display ("5m ago", "yesterday")
-- **formatDuration()**: Duration → human-readable ("1h 30m", "5m 30s")
-- **formatDurationShort()**: Duration → compact format ("1:30:00", "5:30")
-- **Helper functions**: parseTimestamp(), padZero(), isSameDay(), isYesterday()
-- **Error handling**: Graceful fallback strings for invalid input
-- **Pure functions**: No side effects, entirely deterministic
-- **Comprehensive docs**: JSDoc with examples for each function
-
-**Formatting Tests** (`client/src/__tests__/formatting.test.ts` - 229 lines):
-- **33 comprehensive test cases**: Full coverage of all formatting functions
-- **formatTimestamp tests** (6): Valid timestamps, timezone handling, fallbacks
-- **formatTimestampFull tests** (4): Full datetime, timezone, fallbacks
-- **formatRelativeTime tests** (8): Recent, minutes, hours, yesterday, days, weeks
-- **formatDuration tests** (10): Hours/mins, mins/secs, secs, edge cases
-- **formatDurationShort tests** (5): H:MM:SS, M:SS, zero, negative, large values
-- **Test framework**: Vitest with descriptive test organization
-
-**Integration Status**: Phase 8 complete with virtual scrolling event display, timestamp/duration formatting, and comprehensive tests.
+- SessionOverview subscribes to sessions and events from store
+- useSessionTimeouts manages periodic state transitions
+- formatDuration() and formatRelativeTime() used for display formatting
+- Session status machine: Active → Inactive → Removed, with transitions on summary event

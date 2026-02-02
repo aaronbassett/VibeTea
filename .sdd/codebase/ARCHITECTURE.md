@@ -1,6 +1,6 @@
 # Architecture
 
-**Status**: Phase 8 incremental update - Virtual scrolling event stream and formatting utilities
+**Status**: Phase 10 incremental update - Session Overview component and session state machine
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -30,6 +30,9 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 | **Client Connection Management** | WebSocket hook with auto-reconnect, exponential backoff, and bearer token authentication (Phase 7) |
 | **Client State Management** | Zustand store for event buffer and session aggregation with selective subscriptions (Phase 7) |
 | **Virtual Scrolling** | Efficient rendering of 1000+ events using @tanstack/react-virtual with auto-scroll behavior (Phase 8) |
+| **Session State Machine** | Sessions transition through states (Active → Inactive → Ended → Removed) based on event activity and time thresholds (Phase 10) |
+| **Session Overview Display** | Dedicated component showing active sessions with real-time activity indicators and status badges (Phase 10) |
+| **Activity Heatmap** | Visualization of event frequency over time using CSS Grid with color intensity mapping (Phase 9) |
 
 ## Core Components
 
@@ -551,14 +554,21 @@ function EventMonitor() {
 **Location**: `client/src/hooks/useEventStore.ts`
 **Responsibility**: Event state management with session aggregation and selective subscriptions
 
-**Phase 7 Integration**:
+**Phase 10 Integration - Session State Machine**:
 
-The Zustand store manages WebSocket events with session-level aggregation:
+The Zustand store now includes session state machine with automatic transitions:
+
+**Session State Machine**:
+- **New File Detected** → `Active` (first event)
+- **Active** → `Inactive` (no events for 5 minutes)
+- **Inactive** → `Active` (event received)
+- **Active/Inactive** → `Ended` (summary event received)
+- **Ended/Inactive** → `Removed` (30 minutes since last event)
 
 **Store State**:
 - `status` - Current connection status (connecting, connected, disconnected, reconnecting)
 - `events` - Event buffer (last 1000 events, newest first, FIFO eviction)
-- `sessions` - Session map keyed by sessionId, tracking project, activity, event count
+- `sessions` - Session map keyed by sessionId, tracking project, activity, event count, status
 
 **Actions**:
 - `addEvent(event)` - Add event to buffer, update session state
@@ -566,13 +576,21 @@ The Zustand store manages WebSocket events with session-level aggregation:
   - Creates new session entry on first event
   - Updates session with latest project, timestamp, status, event count
   - Marks session as 'ended' on summary event type
+  - Reactivates inactive session on new non-summary event
 - `setStatus(status)` - Update connection status
 - `clearEvents()` - Clear event buffer and sessions (for testing/reset)
+- `updateSessionStates()` - Transition sessions based on time thresholds (called periodically by useSessionTimeouts)
 
 **Selector Utilities**:
 - `selectEventsBySession(state, sessionId)` - Get events for specific session
 - `selectActiveSessions(state)` - Get sessions with status !== 'ended'
 - `selectSession(state, sessionId)` - Get single session by ID
+
+**Session Status Values**:
+- `'active'` - Session has received events in last 5 minutes
+- `'inactive'` - Session has not received events for 5+ minutes
+- `'ended'` - Summary event received for session
+- Sessions are removed from store 30+ minutes after last event
 
 **Key Types**:
 - `ConnectionStatus` - Union: 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
@@ -587,15 +605,198 @@ The Zustand store manages WebSocket events with session-level aggregation:
 
 **Example Usage**:
 ```tsx
-// Subscribe to status only (re-renders only on status change)
-const status = useEventStore((state) => state.status);
+// Subscribe to sessions only (re-renders only on session changes)
+const sessions = useEventStore((state) => state.sessions);
 
-// Subscribe to events only
-const events = useEventStore((state) => state.events);
+// Get session state update function
+const updateSessionStates = useEventStore((state) => state.updateSessionStates);
 
 // Get actions (don't trigger re-renders)
 const addEvent = useEventStore((state) => state.addEvent);
-const setStatus = useEventStore((state) => state.setStatus);
+```
+
+### Client Session Timeout Hook
+
+**Purpose**: Initialize and manage session state machine transitions
+**Location**: `client/src/hooks/useSessionTimeouts.ts`
+**Responsibility**: Periodic session state updates based on time thresholds
+
+**Phase 10 New - Session Timeout Hook**:
+
+The hook sets up a periodic interval to check and transition session states:
+
+**Functionality**:
+- Calls `updateSessionStates()` every 30 seconds (SESSION_CHECK_INTERVAL_MS)
+- Transitions active sessions to inactive after 5 minutes without events
+- Removes inactive/ended sessions after 30 minutes without events
+- Cleans up interval on component unmount
+
+**Usage Pattern**:
+- Must be called once at app root level (App.tsx)
+- Non-rendering hook (returns void)
+- Sets up cleanup on unmount
+
+**Example Usage**:
+```tsx
+// In App.tsx (call once at root level)
+export default function App() {
+  useSessionTimeouts();
+  return <Dashboard />;
+}
+```
+
+**Integration with useEventStore**:
+- Uses selective subscription to get `updateSessionStates` action
+- Does not trigger re-renders (action subscription)
+- Clean dependency management
+
+### Client Session Overview Component
+
+**Purpose**: Display active AI assistant sessions with real-time activity indicators
+**Location**: `client/src/components/SessionOverview.tsx`
+**Responsibility**: Session display, activity visualization, filtering, accessibility
+
+**Phase 10 New - Session Overview Component**:
+
+The component provides a comprehensive view of all sessions with activity-based animations:
+
+**Features**:
+- Real-time activity indicators with variable pulse rates
+- Session duration and last active time tracking
+- Status badges (Active, Idle, Ended)
+- Dimmed styling for inactive/ended sessions
+- Click to filter events by session
+- Accessible with ARIA labels and keyboard navigation
+
+**Activity Indicator System**:
+- Pulse rate varies based on event volume:
+  - 1-5 events/min: 1Hz pulse (slow)
+  - 6-15 events/min: 2Hz pulse (medium)
+  - 16+ events/min: 3Hz pulse (fast)
+  - No events for 60s: no pulse
+
+**Component Hierarchy**:
+- `SessionOverview` - Main component displaying all sessions
+- `SessionCard` - Individual session card with metadata
+- `ActivityIndicator` - Pulsing dot showing activity level
+- `StatusBadge` - Status label (Active, Idle, Ended)
+- `EmptyState` - Placeholder when no sessions available
+
+**Key Functions**:
+- `getActivityLevel()` - Determine pulse rate from event count
+- `getSessionDuration()` - Calculate elapsed time since session start
+- `sortSessions()` - Sort by status (active first) then by most recent activity
+- `countRecentEventsBySession()` - Count events in last 60 seconds per session
+
+**Props**:
+- `className` (string, optional) - Additional CSS classes for container
+- `onSessionClick` (callback, optional) - Called when session card is clicked with sessionId
+
+**Styling**:
+- Dark theme with Tailwind classes (bg-gray-800/900)
+- Color-coded status badges (green/yellow/gray)
+- Opacity scaling for inactive sessions
+- Hover effects on clickable cards
+- Focus ring styling for keyboard navigation
+
+**Accessibility**:
+- `role="region"` on main container
+- `aria-label` with session info for card
+- `role="list"` and `role="listitem"` for semantic list structure
+- Keyboard navigation (Tab, Enter, Space)
+- ARIA attributes for activity indicator
+- Decorative elements marked `aria-hidden="true"`
+
+**Performance**:
+- Selective Zustand subscription to sessions and events
+- Memoized helper functions and constants
+- Efficient event counting with time-based windowing
+- Map-based session lookup
+
+**Example Usage**:
+```tsx
+// Basic usage
+<SessionOverview />
+
+// With click handler for filtering
+<SessionOverview
+  onSessionClick={(sessionId) => {
+    console.log(`Filter to session: ${sessionId}`);
+  }}
+/>
+
+// With custom styling
+<SessionOverview className="p-4 bg-gray-800 rounded-lg" />
+```
+
+### Client Activity Heatmap Component
+
+**Purpose**: Visualize event frequency over time with color intensity mapping
+**Location**: `client/src/components/Heatmap.tsx`
+**Responsibility**: Heatmap grid rendering, cell interaction, timezone-aware bucketing
+
+**Phase 9 New - Activity Heatmap Component**:
+
+The component provides a visual representation of session activity patterns:
+
+**Features**:
+- CSS Grid layout with hours on X-axis and days on Y-axis
+- Color scale from dark (0 events) to bright green (51+ events)
+- Toggle between 7-day and 30-day views
+- Timezone-aware hour bucketing using local time
+- Cell click filtering to select events from specific hour
+- Accessible with proper ARIA labels and keyboard navigation
+
+**Heatmap Grid**:
+- X-axis: 24 hours (0-23)
+- Y-axis: 7 or 30 days
+- Hour labels displayed at 0, 6, 12, 18 for readability
+- Day names abbreviated (Sun, Mon, Tue, etc.)
+
+**Color Scale**:
+- 0 events: Dark gray (opacity)
+- 1-5 events: Light green
+- 6-10 events: Medium green
+- 11-20 events: Bright green
+- 21-50 events: Very bright green
+- 51+ events: Intense bright green
+
+**Key Functions**:
+- `calculateDateRange()` - Get dates for 7 or 30-day view
+- `countEventsInHourBucket()` - Count events for specific date/hour
+- `getColorIntensity()` - Map event count to color class
+
+**Props**:
+- `className` (string, optional) - Additional CSS classes for container
+- `onCellClick` (callback, optional) - Called when cell is clicked with start/end time
+
+**Styling**:
+- CSS Grid layout for aligned heatmap
+- Tailwind color classes for intensity mapping
+- Hover effects on cells
+- Focus ring styling for keyboard navigation
+
+**Accessibility**:
+- `role="region"` on main container
+- `aria-label` with grid information
+- Cell tooltips showing date, hour, count
+- Keyboard navigation support
+- ARIA live region for selected time range
+
+**Example Usage**:
+```tsx
+// Basic 7-day heatmap
+<Heatmap />
+
+// 30-day view with click handler
+<Heatmap
+  onCellClick={(startTime, endTime) => {
+    console.log(`Selected: ${startTime} to ${endTime}`);
+  }}
+/>
+
+// Custom styling
+<Heatmap className="p-4 border border-gray-700 rounded-lg" />
 ```
 
 ### Client Connection Status Component
@@ -879,13 +1080,16 @@ const shortDuration = formatDurationShort(totalMs);
 
 **Key Modules**:
 - `types/events.ts` - TypeScript definitions matching Rust types with type guards
-- `hooks/useEventStore.ts` - Zustand store for event state management (Phase 7)
+- `hooks/useEventStore.ts` - Zustand store for event state management with session machine
 - `hooks/useWebSocket.ts` - WebSocket connection hook with auto-reconnect (Phase 7)
-- `components/EventStream.tsx` - Virtual scrolling event list with auto-scroll (Phase 8 NEW)
+- `hooks/useSessionTimeouts.ts` - Session state transition hook (Phase 10 NEW)
+- `components/SessionOverview.tsx` - Session cards with activity indicators (Phase 10 NEW)
+- `components/Heatmap.tsx` - Activity visualization grid (Phase 9)
+- `components/EventStream.tsx` - Virtual scrolling event list with auto-scroll (Phase 8)
 - `components/ConnectionStatus.tsx` - Connection status visual indicator (Phase 7)
 - `components/TokenForm.tsx` - Token input and persistence form (Phase 7)
-- `utils/formatting.ts` - Timestamp and duration formatting utilities (Phase 8 NEW)
-- `App.tsx` - Root component (Phase 3 placeholder)
+- `utils/formatting.ts` - Timestamp and duration formatting utilities (Phase 8)
+- `App.tsx` - Root component (Phase 3+ with Phase 10 integration)
 - `main.tsx` - React entry point
 
 ## Data Flow
@@ -962,7 +1166,7 @@ Claude Code Session Activity
 18. On 429: parse Retry-After header, exponential backoff with jitter
 19. On failure: retry up to 10 times, max 60s delay between attempts
 
-### Server → Client Flow (Phase 8)
+### Server → Client Flow (Phase 10)
 
 ```
 Authenticated Event
@@ -985,18 +1189,24 @@ Authenticated Event
         ↓
    addEvent() dispatches to Zustand store
         ↓
-   useEventStore updates state
+   useEventStore processes event
         ↓
-   Session aggregation (create/update session)
+   Session creation or update (state machine)
+        ↓
+   updateSessionStates() transitions states (periodic)
         ↓
    Component re-render (selective subscription)
+        ↓
+   SessionOverview displays updated session
+        ↓
+   ActivityIndicator shows current pulse rate
         ↓
    EventStream virtual rendering
         ↓
    Display in UI with auto-scroll
 ```
 
-**Flow Steps (Phase 8 Client)**:
+**Flow Steps (Phase 10 Client)**:
 1. Server's EventBroadcaster sends event to all WebSocket subscriptions
 2. Client WebSocket receives message with serialized event JSON
 3. useWebSocket hook's `onmessage` handler is triggered
@@ -1004,17 +1214,27 @@ Authenticated Event
 5. If valid, `addEvent()` is called, dispatching to Zustand store
 6. `useEventStore.addEvent()` processes event:
    - Adds to event buffer (oldest evicted if >1000)
-   - Creates or updates session entry
-   - Updates session project, timestamps, status
-7. Zustand triggers selective notifications to subscribers
-8. EventStream component receives updated events array
-9. Virtual scrolling recalculates item positions
-10. Auto-scroll checks if enabled; if yes, jumps to latest
-11. EventRow components render only visible items + overscan
-12. User sees new event at bottom with smooth scroll
-13. If user scrolls up, auto-scroll disables and jump button appears
-14. Jump button shows count of pending new events
-15. User clicks button to jump to latest and re-enable auto-scroll
+   - Creates new session on first event (status='active')
+   - Updates existing session with latest project, timestamps, event count
+   - Marks session as 'ended' on summary event
+   - Reactivates session if event received while 'inactive'
+7. useSessionTimeouts calls updateSessionStates() every 30 seconds:
+   - Transitions active sessions to 'inactive' after 5 minutes without events
+   - Removes sessions after 30 minutes without any events
+8. Zustand triggers selective notifications to subscribers
+9. SessionOverview component receives updated sessions
+10. SessionOverview counts recent events (last 60 seconds) per session
+11. ActivityIndicator determines pulse rate based on event count
+12. Activity indicators update with appropriate CSS animation class
+13. Status badges update based on session state
+14. Duration and last-active time display updated
+15. EventStream component receives updated events array
+16. Virtual scrolling recalculates item positions
+17. Auto-scroll checks if enabled; if yes, jumps to latest
+18. EventRow components render only visible items + overscan
+19. User sees new event at bottom with smooth scroll
+20. If user scrolls up, auto-scroll disables and jump button appears
+21. Jump button shows count of pending new events
 
 ## Layer Boundaries
 
@@ -1031,7 +1251,9 @@ Authenticated Event
 | **Monitor Cryptographic** | Keypair management, message signing | types (public key format) | Sender (crypto is stateless) |
 | **Monitor Sender** | HTTP transmission, buffering, retry logic | Config (server URL), Crypto (signing), Types (events) | Filesystem, watcher, parser directly |
 | **Client WebSocket Hook** | Connection management, reconnection, message parsing | localStorage (token), Browser WebSocket API | Direct component state |
-| **Client Event Store** | State management, session aggregation, selective subscriptions | Event types | Direct API calls, localStorage (read-only) |
+| **Client Event Store** | State management, session aggregation, state machine | Event types | Direct API calls, localStorage (read-only) |
+| **Client Session Timeouts** | Periodic session state transitions | useEventStore (updateSessionStates) | Event fetching, direct time tracking |
+| **Client Session Overview** | Session display with activity indicators | useEventStore (sessions, events) | Direct API calls, WebSocket |
 | **Client Virtual Scrolling** | Efficient rendering, auto-scroll, jump-to-latest | useEventStore (events), @tanstack/react-virtual | Direct API calls |
 | **Client Formatting Utilities** | Timestamp/duration display formatting | Nothing (pure functions) | Component state, stores |
 | **Client Components** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
@@ -1052,6 +1274,7 @@ Authenticated Event
 - **CLI bootstraps all**: main.rs coordinates config, crypto, sender, watcher, parser initialization
 - **Client WebSocket manages connection**: Only useWebSocket hook manages WebSocket instance and reconnection
 - **Store owns event state**: Only useEventStore manages events and sessions, not individual components
+- **Session state transitions are automatic**: useSessionTimeouts ensures periodic state machine updates
 - **Token managed separately**: Authentication token kept in localStorage, accessed by useWebSocket and TokenForm
 - **Virtual scrolling is view layer**: EventStream owns rendering; formatting utilities are pure dependencies
 - **Formatting utilities are pure**: No side effects, no state, pure input → output transformations
@@ -1271,7 +1494,7 @@ useEffect(() => {
 }, [connect, disconnect]);
 ```
 
-### Client Event Store Contract (Phase 7)
+### Client Event Store Contract (Phase 10)
 
 **TypeScript Interface**:
 ```typescript
@@ -1283,6 +1506,7 @@ export interface EventStore {
   readonly addEvent: (event: VibeteaEvent) => void;
   readonly setStatus: (status: ConnectionStatus) => void;
   readonly clearEvents: () => void;
+  readonly updateSessionStates: () => void;  // Phase 10 NEW
 }
 
 export const useEventStore = create<EventStore>()((set) => ({ ... }));
@@ -1290,14 +1514,55 @@ export const useEventStore = create<EventStore>()((set) => ({ ... }));
 
 **Selective Subscription Pattern**:
 ```tsx
-// Only re-render when status changes
-const status = useEventStore((state) => state.status);
+// Only re-render when sessions change
+const sessions = useEventStore((state) => state.sessions);
 
 // Only re-render when events change
 const events = useEventStore((state) => state.events);
 
 // Get actions (don't trigger re-renders)
 const addEvent = useEventStore((state) => state.addEvent);
+const updateSessionStates = useEventStore((state) => state.updateSessionStates);
+```
+
+### Client Session Timeouts Contract (Phase 10)
+
+**TypeScript Interface**:
+```typescript
+export function useSessionTimeouts(): void
+```
+
+**Usage Pattern**:
+```tsx
+// Call once at app root level
+export default function App() {
+  useSessionTimeouts();
+  return <Dashboard />;
+}
+```
+
+### Client SessionOverview Component Contract (Phase 10)
+
+**TypeScript Interface**:
+```typescript
+interface SessionOverviewProps {
+  readonly className?: string;
+  readonly onSessionClick?: (sessionId: string) => void;
+}
+
+export function SessionOverview(props: SessionOverviewProps): JSX.Element
+```
+
+### Client Heatmap Component Contract (Phase 9)
+
+**TypeScript Interface**:
+```typescript
+interface HeatmapProps {
+  readonly className?: string;
+  readonly onCellClick?: (startTime: Date, endTime: Date) => void;
+}
+
+export function Heatmap(props: HeatmapProps): JSX.Element
 ```
 
 ### Client EventStream Component Contract (Phase 8)
@@ -1351,6 +1616,7 @@ export function formatDurationShort(milliseconds: number): string  // → "1:30:
 | **Client WebSocket Instance** | useWebSocket Hook (ref) | Single WS per hook instance | Hook lifetime |
 | **Client Events** | Zustand store | Event buffer + session derivation | Client session lifetime |
 | **Client Connection Status** | Zustand store | Discrete state enum | Until disconnect |
+| **Client Session States** | Zustand store with state machine | Active/Inactive/Ended/Removed transitions | Sessions duration + 30min |
 | **Client Authentication Token** | Browser localStorage | Persisted between sessions | User clears or overwrites |
 | **Client Virtual Scrolling** | EventStream (local state) | isAutoScrollEnabled, newEventCount | Component lifetime |
 | **Client Event Display Order** | EventStream (computed) | Reversed from store (newest-first internally) | Component render |
@@ -1375,6 +1641,9 @@ export function formatDurationShort(milliseconds: number): string  // → "1:30:
 | **Client Connection Management** | WebSocket reconnection with exponential backoff | `useWebSocket.ts` (Phase 7) |
 | **Client State Persistence** | Token storage in localStorage | `TokenForm.tsx` (Phase 7) |
 | **Client UI Rendering** | Selective Zustand subscriptions | `ConnectionStatus.tsx`, `TokenForm.tsx` (Phase 7) |
+| **Session State Machine** | Automatic state transitions with time thresholds | `useEventStore.ts`, `useSessionTimeouts.ts` (Phase 10) |
+| **Session Display** | Activity indicators and status badges | `SessionOverview.tsx` (Phase 10) |
+| **Activity Visualization** | Heatmap grid with color intensity mapping | `Heatmap.tsx` (Phase 9) |
 | **Virtual Scrolling Rendering** | @tanstack/react-virtual for 1000+ item lists | `EventStream.tsx` (Phase 8) |
 | **Auto-Scroll Management** | Scroll position tracking and auto-scroll toggle | `EventStream.tsx` (Phase 8) |
 | **Timestamp Formatting** | RFC3339 → display formats with fallbacks | `formatting.ts` (Phase 8) |
@@ -1415,8 +1684,10 @@ export function formatDurationShort(milliseconds: number): string  // → "1:30:
 **Client Tests**: Located in `client/src/__tests__/`
 - Event type guard tests (events.test.ts)
 - WebSocket hook tests (useWebSocket integration, reconnection logic)
-- Event store tests (useEventStore session aggregation)
-- Component tests (ConnectionStatus, TokenForm)
+- Event store tests (useEventStore session aggregation, state machine)
+- Session timeout tests (useSessionTimeouts state transitions)
+- Session overview tests (SessionOverview component rendering)
+- Component tests (ConnectionStatus, TokenForm, Heatmap)
 - Virtual scrolling tests (EventStream rendering and auto-scroll)
 - Formatting utility tests (timestamp and duration formatting)
 

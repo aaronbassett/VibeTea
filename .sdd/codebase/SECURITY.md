@@ -120,6 +120,70 @@ From `server/src/auth.rs:269-295`:
 - All authenticated clients access identical data streams
 - No server-side enforcement of client-specified filters
 
+## Session State Management (Phase 10)
+
+### Client-Side Session State
+
+From `client/src/hooks/useEventStore.ts`:
+
+**Session State Machine**:
+- **New File Detected** → **Active**: First event received creates session
+- **Active** → **Inactive**: No events for 5 minutes (300,000 ms)
+- **Inactive** → **Active**: Non-summary event received (reactivates session)
+- **Active/Inactive** → **Ended**: Summary event received (marks session complete)
+- **Ended/Inactive** → **Removed**: 30 minutes (1,800,000 ms) since last event
+
+**Session Data Structure**:
+```typescript
+interface Session {
+  sessionId: string;
+  source: string;
+  project: string;
+  startedAt: Date;
+  lastEventAt: Date;
+  status: 'active' | 'inactive' | 'ended' | 'removed';
+  eventCount: number;
+}
+```
+
+**Timeout Implementation**:
+
+From `client/src/hooks/useSessionTimeouts.ts`:
+
+- **Periodic check interval**: 30 seconds (`SESSION_CHECK_INTERVAL_MS = 30 * 1000`)
+- **Inactive threshold**: 5 minutes without events (`INACTIVE_THRESHOLD_MS = 5 * 60 * 1000`)
+- **Removal threshold**: 30 minutes without events (`REMOVAL_THRESHOLD_MS = 30 * 60 * 1000`)
+- **Cleanup mechanism**: `updateSessionStates()` called every 30 seconds via `setInterval()`
+- **Isolation**: Session-only, no sensitive data stored
+
+**Security Properties**:
+
+- **No sensitive data in session**: Sessions store only metadata (id, source, project, timestamps, counts)
+- **No authentication tokens**: Bearer token kept separate in localStorage (`vibetea_token` key)
+- **No event payloads**: Events stored separately in event buffer (read-only)
+- **Automatic cleanup**: Expired sessions (30+ minutes) automatically removed from state
+- **Client-side only**: All session management happens in browser memory, not persisted
+- **No server validation**: Session timeouts are client-side advisory (not enforced by server)
+- **Visible only to user**: Sessions displayed in UI only for connected client
+
+### Session Overview Component (Phase 10)
+
+From `client/src/components/SessionOverview.tsx`:
+
+- **Purpose**: Display list of sessions with status indicators and metadata
+- **Data source**: Derives session list from Zustand `useEventStore` hook
+- **Status colors**: Visual feedback for active (green), inactive (yellow), ended (gray)
+- **Metrics**: Shows session duration, event count, last activity time
+- **Interactivity**: Click to view session details (if implemented)
+- **No modifications**: Read-only component, no session state changes
+
+**Security Properties**:
+- No access to authentication tokens or credentials
+- No ability to modify session data
+- No event payload display (events shown separately in EventStream)
+- No communication with server regarding session state
+- Presentation layer only, no business logic
+
 ## Input Validation
 
 ### Validation Strategy
@@ -226,6 +290,7 @@ From `monitor/src/config.rs`:
 | Event payloads | Privacy pipeline sanitization | Memory/transit | Sent over HTTPS/WSS only |
 | JSONL data | Read from disk | `~/.claude/projects/` | Watched by monitor, only metadata extracted |
 | Tool context | Extension allowlist filtering | Memory/transit | Sensitive tools stripped, others filtered by extension |
+| Session state | Client-side memory only | Zustand store | No server persistence, cleared on page reload |
 
 ### Encryption in Transit
 
@@ -245,6 +310,7 @@ From `monitor/src/config.rs`:
 | Private keys | None (file permissions) | OS filesystem security |
 | Configuration | None | Environment variables |
 | Client token | None (localStorage) | Browser's localStorage encryption (varies) |
+| Session state | None (browser memory) | Browser memory only |
 
 **Note**: VibeTea does not implement application-level encryption. Sensitive credentials are protected by:
 1. Environment variable isolation
@@ -252,6 +318,7 @@ From `monitor/src/config.rs`:
 3. HTTPS/WSS transport security
 4. Privacy pipeline sanitization (Phase 5)
 5. Browser localStorage (Phase 7) - varies by browser and OS
+6. Client-side session state cleanup (Phase 10)
 
 ## Cryptography
 
@@ -737,6 +804,7 @@ Not yet configured. Recommended headers for production:
 | Sender errors | Auth failed, rate limited, retries | `monitor/src/sender.rs:289-322` |
 | Client WebSocket messages | Invalid message format logged | `useWebSocket.ts:119-120` |
 | Token operations | Token save/clear in client | `TokenForm.tsx:108, 121` (localStorage ops, not logged) |
+| Session state changes | Session creation, status changes | `useEventStore.ts` state updates (not logged) |
 
 **Status**: Basic error logging present. Structured auth decision logging and comprehensive audit trails pending.
 
@@ -758,6 +826,7 @@ Not yet configured. Recommended headers for production:
 | Crypto errors | File not found, invalid key length | Low - no key material exposed |
 | Client token errors | Warning to console if token missing | Low - development debugging only |
 | Invalid WebSocket message | Silently dropped, no client error | Low - malformed events ignored |
+| Session state errors | No errors exposed (client-side only) | Low - silent failures in state updates |
 
 ### Error Response Handling
 
@@ -798,6 +867,7 @@ No SQL errors, path traversal details, or stack traces exposed to clients.
 | gethostname | Latest | Monitor hostname detection | Current (Phase 6) |
 | anyhow | Latest | Context error handling | Current (Phase 6) |
 | @tanstack/react-virtual | Latest | Virtual scrolling (Phase 8) | Current |
+| zustand | Latest | Client state management | Current (Phase 7) |
 
 ### Dependency Audit
 
@@ -929,6 +999,24 @@ From `client/src/components/EventStream.tsx`:
 - No event modification or persistence (read-only UI)
 - Type-safe event rendering via discriminated unions
 
+### SessionOverview Component (Phase 10)
+
+From `client/src/components/SessionOverview.tsx`:
+
+**Session Display**:
+- Renders list of active/inactive/ended sessions
+- Shows metadata: session ID, source, project, timestamps
+- Status indicators with visual colors (green/yellow/gray)
+- Metrics: duration, event count, last activity
+- Read-only presentation component
+
+**Security Properties**:
+- No access to authentication or authorization data
+- No modification of session state
+- No sensitive event payload display
+- No server communication about sessions
+- Presentation layer only
+
 ### Formatting Utilities (Phase 8)
 
 From `client/src/utils/formatting.ts`:
@@ -953,89 +1041,32 @@ From `client/src/utils/formatting.ts`:
 - Fallback strings for invalid input
 - No sensitive data processing
 
-## Phase 8 Security Changes
+## Phase 10 Security Summary
 
-New client-side components for event display and formatting:
+Client Session Overview component for displaying session state:
 
-### EventStream Component (`client/src/components/EventStream.tsx`)
+### SessionOverview Component
 
-- **Purpose**: Display VibeTea events with efficient virtual scrolling
-- **Technology**: @tanstack/react-virtual for 1000+ event rendering
-- **Features**: Auto-scroll, jump-to-latest, event type badges, timestamps
-- **Security**: Read-only display of pre-sanitized events from privacy pipeline
-- **Accessibility**: ARIA labels, semantic role attributes
+- **Purpose**: Visual display of sessions with status and metadata
+- **Data source**: Zustand event store (client-side only)
+- **Features**: Status colors, duration, event count, last activity
+- **Security**: No access to auth, read-only display, no server communication
 
-### Formatting Utilities (`client/src/utils/formatting.ts`)
+### Session Timeout Cleanup
 
-- **Purpose**: Consistent timestamp and duration formatting across UI
-- **Functions**: 5 pure utility functions with comprehensive error handling
-- **Coverage**: RFC 3339 parsing, relative time, digital clock formats
-- **Security**: No external dependencies, input validation, safe fallbacks
+- **Inactive threshold**: 5 minutes without events
+- **Removal threshold**: 30 minutes without events (automatic cleanup)
+- **Periodic check**: Every 30 seconds via `useSessionTimeouts()` hook
+- **No sensitive data**: Sessions store only metadata, not tokens or payloads
 
-### Test Coverage (`client/src/__tests__/formatting.test.ts`)
+### Security Posture
 
-- **Test count**: 67 test cases covering all formatting functions
-- **Coverage**: Valid input, edge cases, timezone handling, invalid input
-- **Security**: Tests verify correct error handling and fallback behavior
+- **No new vulnerabilities**: Phase 10 is UI-focused, no auth/crypto changes
+- **No sensitive data exposure**: Session state contains only public metadata
+- **Automatic cleanup**: Expired sessions removed from memory after 30 minutes
+- **Client-side only**: All session management in browser, no server-side state
 
-**Status**:
-- EventStream component improves user experience (no security implications)
-- Formatting utilities are pure functions (no security surface area)
-- Test coverage ensures reliable formatting (no production bugs)
-- Privacy guarantees maintained (events pre-sanitized by server)
-
-## Known Vulnerabilities & Gaps
-
-**Fixed in Phase 3:**
-- Ed25519 signature verification fully implemented with strict verification
-- Token comparison using constant-time comparison to prevent timing attacks
-- Per-source rate limiting with token bucket algorithm
-- Comprehensive error handling with specific AuthError variants
-
-**Fixed in Phase 5:**
-- Privacy pipeline fully implemented and tested
-- Extension allowlist filtering for sensitive file types
-- Bash/Grep/Glob/WebSearch/WebFetch context stripping
-- Summary text neutralization
-- Path anonymization via basename extraction
-
-**Fixed in Phase 6:**
-- Keypair generation with OS RNG entropy
-- Secure key storage with proper Unix file permissions (0600)
-- Event signing implementation (deterministic Ed25519)
-- HTTP sender with connection pooling and retry logic
-- Rate limit handling with Retry-After respect
-- Monitor CLI with init and run commands
-- Graceful shutdown with event buffer flushing
-- Structured logging throughout monitor components
-
-**New in Phase 7:**
-- Client-side token management via TokenForm component
-- WebSocket connection with auto-reconnect via useWebSocket hook
-- Connection status visual indicator via ConnectionStatus component
-- Token storage in localStorage with cross-tab sync
-- Basic event validation via parseEventMessage()
-
-**New in Phase 8:**
-- EventStream component with virtual scrolling (no security implications)
-- Formatting utilities for timestamp/duration display (pure functions)
-- Comprehensive test coverage for formatting (67 test cases)
-
-**Remaining gaps:**
-- No rate limiting middleware for other endpoints (only event ingestion protected)
-- No granular authorization/RBAC (design phase)
-- No encryption at rest for configuration/events (acceptable for MVP)
-- No comprehensive audit logging beyond error messages
-- No CORS header configuration (pending)
-- No secure token storage (localStorage is insecure)
-- No token refresh mechanism (client side)
-- No token expiration validation (client side)
-- No per-client isolation or scoping (all clients see all events)
-- No TLS certificate validation in monitor HTTP client (reqwest default)
-- No URL format validation in monitor config (pending)
-- No integration tests for watcher + parser + privacy + sender pipeline
-- No CSRF protection on token form
-- No encryption of token in localStorage (browser-dependent)
+**Status**: Phase 10 adds client-side session visualization and timeout cleanup without introducing new security concerns.
 
 ---
 

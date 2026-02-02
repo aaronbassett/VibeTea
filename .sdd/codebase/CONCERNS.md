@@ -60,6 +60,12 @@ Security-related issues requiring attention:
 - Formatting utilities: No security implications (pure functions with input validation)
 - Test coverage: 67 test cases verify error handling and fallback behavior
 
+**Phase 10 Analysis:**
+- SessionOverview component: No new security concerns (read-only display of metadata)
+- Session timeout cleanup: 30-minute removal prevents memory growth from stale sessions
+- No sensitive data exposure: Sessions store only metadata (timestamps, counts, status)
+- Client-side only: Session management in browser memory, not persisted to server
+
 ## Technical Debt
 
 ### High Priority
@@ -85,6 +91,8 @@ Items that should be addressed before scaling:
 | TD-044 | Client - Conn | WebSocket connection with auto-reconnect via useWebSocket | Handles reconnection but token not validated on client | Medium | Partial |
 | TD-049 | Client - Events | EventStream virtual scrolling component fully implemented | Efficient rendering of 1000+ events | Low | Resolved |
 | TD-050 | Client - Utils | Formatting utilities with comprehensive error handling | Timestamp, duration, relative time formatting | Low | Resolved |
+| TD-055 | Client - Sessions | Session state machine and timeout cleanup implemented | UI display of session metadata | Low | Resolved (Phase 10) |
+| TD-056 | Client - Components | SessionOverview component for displaying session state | Read-only display of active/inactive/ended sessions | Low | Resolved (Phase 10) |
 
 ### Medium Priority
 
@@ -110,6 +118,8 @@ Items to address when working in the area:
 | TD-046 | Client - Event validation | parseEventMessage does basic structural validation only | No schema validation of event content | Low | Open |
 | TD-051 | Client - Events | EventStream uses virtual scrolling for efficiency | Handles large datasets (1000+ events) without lag | Low | Resolved |
 | TD-052 | Client - Utils | Formatting functions handle edge cases (NaN, zero, negative) | All functions tested with comprehensive coverage | Low | Resolved |
+| TD-057 | Client - Sessions | Session state updates based on event stream aggregation | Sessions track active/inactive/ended status transitions | Low | Resolved (Phase 10) |
+| TD-058 | Client - Timeouts | Periodic cleanup removes sessions after 30 minutes | Prevents memory growth from stale session state | Low | Resolved (Phase 10) |
 
 ### Low Priority
 
@@ -131,6 +141,8 @@ Nice to have improvements:
 | TD-048 | Client - Styling | Add loading states and error messages to TokenForm | Better UX feedback | Low | Open |
 | TD-053 | Client - UX | Add error messages for event display failures | Better debugging of event issues | Low | Open |
 | TD-054 | Client - Docs | Document EventStream virtual scrolling behavior | Help with customization | Low | Open |
+| TD-059 | Client - Docs | Document SessionOverview component and session state machine | Help users understand session lifecycle | Low | Open (Phase 10) |
+| TD-060 | Client - Features | Add session filtering/search functionality | Allow users to find specific sessions | Low | Open (Phase 10) |
 
 ## Missing Security Controls
 
@@ -154,6 +166,8 @@ Critical gaps in security infrastructure:
 | Client token form | Token input and storage UI | Client-side authentication | Phase 7 | `client/src/components/TokenForm.tsx` | Resolved |
 | WebSocket hook | Connection management with reconnect | Reliable event stream | Phase 7 | `client/src/hooks/useWebSocket.ts` | Resolved |
 | Event display | Efficient rendering of event stream | User experience | Phase 8 | `client/src/components/EventStream.tsx` | Resolved |
+| Session state | Client-side session tracking and cleanup | User-facing session visibility | Phase 10 | `client/src/hooks/useEventStore.ts` | Resolved |
+| Session UI | Visual display of session state | Session management UX | Phase 10 | `client/src/components/SessionOverview.tsx` | Resolved |
 | Secure token storage | Encryption or session-based auth | Replace localStorage | Phase 8+ | TBD | Open |
 
 ## Fragile Areas
@@ -180,10 +194,14 @@ Code areas that are brittle or risky to modify:
 | `client/src/components/TokenForm.tsx` | localStorage token storage without encryption | Use password field, trim input, clear button | TokenForm manages token lifecycle | Partial |
 | `client/src/hooks/useWebSocket.ts:75-79` | Token passed in URL query parameter | Token visible in logs/network tab | buildWebSocketUrl includes token | Partial |
 | `client/src/hooks/useWebSocket.ts:97-122` | Basic structural event validation only | No schema validation of event types | parseEventMessage checks required fields | Open |
+| `client/src/hooks/useEventStore.ts:95-159` | Session state aggregation from events | Sessions correctly track event sequence | addEvent updates session state | Resolved (Phase 10) |
+| `client/src/hooks/useSessionTimeouts.ts` | Periodic session cleanup interval | Timeouts correctly remove stale sessions | updateSessionStates removes after 30 min | Resolved (Phase 10) |
 | `client/src/components/EventStream.tsx:270-341` | Virtual scrolling with event buffer | Verify scroll position accuracy and auto-scroll behavior | Virtualizer integration with event list | Resolved |
+| `client/src/components/SessionOverview.tsx` | Rendering of session state without auth | Read-only display of public metadata | Session display logic | Resolved (Phase 10) |
 | `client/src/utils/formatting.ts:55-68` | RFC 3339 timestamp parsing | Test timezone handling and invalid input | parseTimestamp function is central | Resolved |
 | Error handling | Custom ServerError type, widely used now | Error handling tests in place | `server/src/error.rs` | Partial |
 | Client state | Zustand store with no auth isolation | Add user-scoped state selector before multi-tenant | `client/src/hooks/useEventStore.ts` | Open |
+| Session state | Session lifecycle management and cleanup | Verify timeout thresholds (5 min inactive, 30 min removal) | `client/src/hooks/useEventStore.ts` | Resolved (Phase 10) |
 
 ## Known Bugs
 
@@ -202,6 +220,7 @@ Active bugs that haven't been fixed:
 | BUG-009 | Client - Connection | WebSocket token in query parameter visible in browser history | Low | Use subprotocol or custom headers instead | Open |
 | BUG-010 | Client - Events | Invalid WebSocket messages silently dropped without indication | Low | Add error boundary or error logging to UI | Open |
 | BUG-011 | Client - Scroll | EventStream estimated row height (64px) may not match actual height | Low | User experience issue only, not security-critical | Open |
+| BUG-012 | Client - Sessions | Session cleanup runs every 30 seconds but not immediately | Low | Cleanup is asynchronous, sessions removed within ~30s | Open |
 
 ## Deprecated Code
 
@@ -234,6 +253,7 @@ Areas lacking proper observability:
 | Client connection | WebSocket connection/disconnection events | Can't track client connection stability | Medium | Add logging to useWebSocket hook (Phase 7) |
 | Token operations | Token storage/retrieval events | Audit token lifecycle | Medium | Add logging to TokenForm component (Phase 7) |
 | Event rendering | EventStream rendering performance and errors | Can't detect UI bottlenecks | Low | Add performance profiling to EventStream (Phase 8) |
+| Session state | Session state transitions and cleanup | Can't track session lifecycle | Medium | Add logging to useEventStore and useSessionTimeouts (Phase 10) |
 
 ## Performance Concerns
 
@@ -256,6 +276,8 @@ Potential performance issues:
 | PERF-013 | Client | localStorage operations on every token access | May impact performance on frequent connections | Cache token in memory during session | Low |
 | PERF-014 | Client | Full event list re-render on each event | O(N) render with 1000 events max | Implement virtual scrolling or pagination | Medium |
 | PERF-015 | Client | Virtual scrolling with overscan | May consume memory with large event buffers | Monitor buffer size and overscan settings | Low |
+| PERF-016 | Client | Session state updates on each event | O(N) session map operations | Consider lazy session aggregation | Low (Phase 10) |
+| PERF-017 | Client | Session cleanup runs every 30 seconds | Background interval overhead | Consider event-driven cleanup instead | Low (Phase 10) |
 
 ## Dependency Risks
 
@@ -302,6 +324,7 @@ Areas that could benefit from refactoring or enhancement:
 | WebSocket transport | Query parameter | WSS subprotocol or custom headers | Better security | Medium |
 | UI error handling | Silent failures | Visible error messages and recovery options | Better UX | Medium |
 | Event formatting | Basic formatting | Localization and timezone handling | Better UX | Low |
+| Session tracking | Client-side only | Optional server-side session persistence | Session analytics | High |
 
 ## TODO Items
 
@@ -332,6 +355,7 @@ Configuration-related issues:
 | Sender configuration | Default buffer/retry may not suit all | Document tuning parameters | Low | Phase 6+ |
 | Client token storage | No guidance on secure token handling | Document localStorage security implications | Low | Phase 7+ |
 | EventStream customization | Users may want different visual styling | Add styling props and examples | Low | Phase 8+ |
+| Session display customization | Users may want different session views | Add styling props and filtering options | Low | Phase 10+ |
 
 ## Code Quality Concerns
 
@@ -353,6 +377,7 @@ Configuration-related issues:
 | Client components | No tests for Phase 7 components | Add unit tests for TokenForm and useWebSocket | Medium | Open |
 | Formatting tests | 67 comprehensive test cases present | Performance benchmarking | Low | Resolved (Phase 8) |
 | EventStream tests | No tests for Phase 8 component | Add unit tests for virtual scrolling and auto-scroll | Medium | Open |
+| Session tests | No tests for Phase 10 session state | Add unit tests for session state machine and cleanup | Medium | Open (Phase 10) |
 
 ## Security Review Checklist
 
@@ -391,6 +416,8 @@ Items to verify before production:
 - [ ] WebSocket auto-reconnect tested (Phase 7 - basic implementation)
 - [x] EventStream virtual scrolling component (Phase 8 - no security implications)
 - [x] Formatting utilities with error handling (Phase 8 - pure functions)
+- [x] Session state machine with timeout cleanup (Phase 10 - no security concerns)
+- [x] SessionOverview component for session display (Phase 10 - read-only UI)
 - [ ] Real-world Claude Code JSONL testing with privacy pipeline
 - [ ] Integration test for watcher + parser + privacy + sender pipeline
 - [ ] Integration test for client auth + WebSocket connection
@@ -415,39 +442,38 @@ Items to verify before production:
 | XSS via localStorage token exposure | Medium | High | Implement secure token storage | Phase 7+ |
 | Token leakage in browser history/logs | Low | Medium | Use WebSocket subprotocol instead of query param | Phase 7+ |
 | Virtual scrolling memory exhaustion | Low | Low | Monitor buffer size and overscan limits | Phase 8+ |
+| Stale session memory growth | Low | Low | Automatic cleanup after 30 minutes | Phase 10 |
 
-## Phase 8 Changes Summary
+## Phase 10 Changes Summary
 
-Client UI components for event display and formatting utilities:
+Client Session Overview component for displaying and managing session state:
 
 **Added Components:**
-- `client/src/components/EventStream.tsx` - Virtual scrolling event display (425 lines)
-- `client/src/utils/formatting.ts` - Timestamp and duration formatting (331 lines)
-- `client/src/__tests__/formatting.test.ts` - Comprehensive test coverage (229 lines)
+- `client/src/components/SessionOverview.tsx` - Session state display component
+- `client/src/hooks/useSessionTimeouts.ts` - Periodic session cleanup hook
+- Updates to `client/src/hooks/useEventStore.ts` - Session state machine implementation
 
 **New Features:**
-- Virtual scrolling with @tanstack/react-virtual for 1000+ events
-- Auto-scroll to latest events with pause on user scroll
-- Event type icons and color-coded badges
-- Jump-to-latest button when auto-scroll is disabled
-- 5 formatting utility functions (formatTimestamp, formatTimestampFull, formatRelativeTime, formatDuration, formatDurationShort)
-- Comprehensive error handling with fallback values
-- 67 test cases covering valid input, edge cases, and error handling
+- Session state machine: Active → Inactive (5 min) → Removed (30 min)
+- Visual status indicators (green/yellow/gray) for session lifecycle
+- Automatic cleanup removes stale sessions from memory
+- Session metadata display: duration, event count, last activity
+- Read-only presentation of session state
 
 **Security Analysis:**
 - No new security vulnerabilities introduced
-- EventStream is read-only display of pre-sanitized events
-- Formatting utilities are pure functions with no side effects
-- All input validation and error handling present
-- No access to sensitive data or authentication
-- No persistence or external dependencies
+- SessionOverview is read-only display of public metadata
+- No sensitive data in session state (no tokens, payloads, or credentials)
+- Automatic cleanup prevents memory leaks from stale sessions
+- Session timeout cleanup is client-side advisory (not enforced by server)
+- All session management stays in browser memory, no persistence
 
 **Outstanding Work:**
-- Unit tests for EventStream component virtual scrolling behavior
-- Integration tests with real event data
-- Performance profiling under high event rates
-- Styling customization options and documentation
-- Error boundary implementation for event rendering
+- Unit tests for session state machine transitions
+- Unit tests for timeout cleanup logic
+- Integration tests with real event sequences
+- Session filtering/search functionality
+- Server-side session persistence (optional, not security-critical)
 
 ---
 

@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 8 Implementation - Virtual scrolling EventStream component, formatting utilities
+**Status**: Phase 10 Implementation - Session overview cards with activity indicators and timeout management
 **Last Updated**: 2026-02-02
 
 ## Languages & Runtimes
@@ -142,8 +142,10 @@
   - `TokenForm.tsx` - **Phase 7**: Token management and persistence UI
   - `EventStream.tsx` - **Phase 8**: Virtual scrolling event stream with 1000+ event support
   - `Heatmap.tsx` - **Phase 9**: Activity heatmap with CSS Grid, color scale, 7/30-day views, accessibility
-- `hooks/useEventStore.ts` - Zustand store for WebSocket event state with selective subscriptions
+  - `SessionOverview.tsx` - **Phase 10**: Session cards with activity indicators and status badges
+- `hooks/useEventStore.ts` - Zustand store for WebSocket event state with session tracking and timeout management
 - `hooks/useWebSocket.ts` - **Phase 7**: WebSocket connection management with auto-reconnect
+- `hooks/useSessionTimeouts.ts` - **Phase 10**: Session timeout checking (5min active→inactive, 30min removal)
 - `types/events.ts` - Event type definitions with discriminated union types matching Rust schema
 - `utils/` - Utility functions
   - `formatting.ts` - **Phase 8**: Timestamp and duration formatting utilities (5 functions, 331 lines)
@@ -468,6 +470,94 @@
 - Heatmap subscribes to events from Zustand store
 - Uses memoization (useMemo) for event counting and cell generation
 - Provides onCellClick callback for parent to filter EventStream
+
+## Phase 10 Additions
+
+**Client Session Timeout Hook** (`client/src/hooks/useSessionTimeouts.ts` - 48 lines):
+- **useSessionTimeouts()**: Custom React hook for session state management
+- **Periodic checking**: Sets up interval using `SESSION_CHECK_INTERVAL_MS` (30 seconds)
+- **State transitions**:
+  - Active → Inactive: After 5 minutes without events (INACTIVE_THRESHOLD_MS = 300,000ms)
+  - Inactive/Ended → Removed: After 30 minutes without events (REMOVAL_THRESHOLD_MS = 1,800,000ms)
+- **Integration**: Calls `updateSessionStates()` from Zustand store
+- **Cleanup**: Properly clears interval on unmount
+- **App-level integration**: Should be called once at root level (App.tsx)
+- **No parameters**: Hook manages its own interval lifecycle
+
+**Session Overview Component** (`client/src/components/SessionOverview.tsx` - 484 lines):
+- **Session Cards**: Displays active, idle, and ended sessions with rich information
+- **Real-time Activity Indicators**: Pulsing dot showing activity level
+  - 1-5 events in 60s: 1Hz pulse (slow)
+  - 6-15 events in 60s: 2Hz pulse (medium)
+  - 16+ events in 60s: 3Hz pulse (fast)
+  - Inactive sessions: Gray dot, no pulse
+- **Status Badges**: Color-coded session state
+  - Active: Green badge with "Active" label
+  - Inactive: Yellow badge with "Idle" label
+  - Ended: Gray badge with "Ended" label
+- **Session Information**:
+  - Project name as title
+  - Source identifier
+  - Session duration (formatted with formatDuration)
+  - Event count for active sessions
+  - "Last active" timestamp for inactive sessions
+- **Session Sorting**: Active sessions first, then by last event time descending
+- **Recent Event Counting**: 60-second window for activity indicator calculation
+- **Sub-components**:
+  - `ActivityIndicator`: Pulsing dot with activity-based animation
+  - `StatusBadge`: Color-coded status label
+  - `SessionCard`: Individual session display
+  - `EmptyState`: Helpful message when no sessions
+- **Click Handlers**: Optional `onSessionClick` callback for filtering events by session
+- **Keyboard Navigation**: Full accessibility support (Enter/Space to activate)
+- **Accessibility**:
+  - `role="region"` for container
+  - `role="list"` and `role="listitem"` for session cards
+  - `aria-label` for cards describing status, duration, and project
+  - Keyboard focus support with visual indicators
+- **Styling**: Dark mode Tailwind CSS with opacity changes for inactive sessions
+
+**Zustand Store Enhancement** (`client/src/hooks/useEventStore.ts`):
+- **New Constants**:
+  - `INACTIVE_THRESHOLD_MS = 300,000` (5 minutes)
+  - `REMOVAL_THRESHOLD_MS = 1,800,000` (30 minutes)
+  - `SESSION_CHECK_INTERVAL_MS = 30,000` (30 seconds)
+- **Session Interface Enhanced**:
+  - `sessionId: string` - Unique session identifier
+  - `source: string` - Monitor source ID
+  - `project: string` - Project name
+  - `startedAt: Date` - Session start time
+  - `lastEventAt: Date` - Time of most recent event
+  - `eventCount: number` - Total events in session
+  - `status: SessionStatus` - 'active' | 'inactive' | 'ended'
+- **New Action**: `updateSessionStates(): void`
+  - Transitions sessions between states based on time thresholds
+  - Removes sessions after 30 minutes of inactivity
+  - Called periodically by useSessionTimeouts hook
+  - Updates lastEventAt when new events arrive
+  - Maintains session state machine invariants
+- **Event Processing**:
+  - `addEvent()` updates lastEventAt for corresponding session
+  - Session created on first event with sessionId from payload
+  - Session transitioned to 'ended' on summary event
+  - Session status transitions to 'inactive' after inactivity timeout
+- **Map-based Storage**: Sessions stored in Map<string, Session> keyed by sessionId
+
+**Animation Constants** (`client/src/index.css`):
+- **Pulse Animations** (already in Phase 9):
+  - `pulse-slow`: 1Hz (1 second cycle) - opacity 1→0.6→1, scale 1→1.1→1
+  - `pulse-medium`: 2Hz (0.5 second cycle) - same animation, faster
+  - `pulse-fast`: 3Hz (0.33 second cycle) - same animation, fastest
+- **Keyframes** (`@keyframes`):
+  - Define opacity and scale transformation at 0%, 50%, 100% points
+  - Used by ActivityIndicator for pulse effects based on event volume
+
+**Integration Points** (Phase 10):
+- SessionOverview component subscribes to sessions and events from Zustand store
+- useSessionTimeouts hook manages periodic state transitions
+- SessionOverview calculates recent event counts for activity indicators
+- Pulse animations defined in index.css applied via ActivityIndicator component
+- Session click handler allows filtering events by session (future feature)
 
 ## Not Yet Implemented
 

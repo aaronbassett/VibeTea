@@ -46,8 +46,8 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Components | PascalCase | `ConnectionStatus.tsx`, `TokenForm.tsx`, `EventStream.tsx` |
-| Hooks | camelCase with `use` prefix | `useEventStore.ts`, `useWebSocket.ts` |
+| Components | PascalCase | `ConnectionStatus.tsx`, `TokenForm.tsx`, `EventStream.tsx`, `Heatmap.tsx`, `SessionOverview.tsx` |
+| Hooks | camelCase with `use` prefix | `useEventStore.ts`, `useWebSocket.ts`, `useSessionTimeouts.ts` |
 | Types | PascalCase in `types/` folder | `types/events.ts` contains `VibeteaEvent` |
 | Utilities | camelCase | `utils/formatting.ts` |
 | Constants | SCREAMING_SNAKE_CASE in const files | `MAX_EVENTS = 1000`, `TOKEN_STORAGE_KEY` |
@@ -58,16 +58,16 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Variables | camelCase | `sessionId`, `eventCount`, `wsRef`, `connectRef`, `displayEvents`, `isAutoScrollEnabled` |
-| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `DEFAULT_BUFFER_SIZE`, `TOKEN_STORAGE_KEY`, `ESTIMATED_ROW_HEIGHT` |
-| Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()`, `parseEventMessage()`, `calculateBackoff()`, `formatTimestamp()`, `getEventDescription()` |
+| Variables | camelCase | `sessionId`, `eventCount`, `wsRef`, `connectRef`, `displayEvents`, `isAutoScrollEnabled`, `recentEventCount`, `viewDays` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `DEFAULT_BUFFER_SIZE`, `TOKEN_STORAGE_KEY`, `ESTIMATED_ROW_HEIGHT`, `RECENT_EVENT_WINDOW_MS`, `LOW_ACTIVITY_THRESHOLD` |
+| Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()`, `parseEventMessage()`, `calculateBackoff()`, `formatTimestamp()`, `getEventDescription()`, `countRecentEventsBySession()`, `getActivityLevel()` |
 | Classes | PascalCase (rare in modern React) | N/A |
-| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent`, `UseWebSocketReturn`, `ConnectionStatusProps`, `EventStreamProps` |
-| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus`, `TokenStatus`, `EventType` |
+| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent`, `UseWebSocketReturn`, `ConnectionStatusProps`, `EventStreamProps`, `SessionOverviewProps`, `ActivityIndicatorProps` |
+| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus`, `TokenStatus`, `EventType`, `ActivityLevel`, `SessionStatus` |
 | Type guards | `is` prefix | `isSessionEvent()`, `isValidEventType()` |
 | Enums | PascalCase | N/A (use union types instead) |
 | Refs | camelCase with `Ref` suffix | `wsRef`, `reconnectTimeoutRef`, `connectRef`, `parentRef`, `previousEventCountRef` |
-| Records/Maps | PascalCase for type, camelCase for variable | `EVENT_TYPE_ICONS`, `EVENT_TYPE_COLORS` (const) |
+| Records/Maps | PascalCase for type, camelCase for variable | `EVENT_TYPE_ICONS`, `EVENT_TYPE_COLORS`, `STATUS_CONFIG`, `PULSE_ANIMATIONS` (const) |
 
 ### Rust/Server/Monitor
 
@@ -925,6 +925,238 @@ Key conventions for CSS Grid heatmaps:
 7. **Cell keyboard nav**: Support Enter/Space for activation
 8. **Memoization**: Memoize event counting and cell generation for performance
 
+### Session Overview Pattern (TypeScript - Phase 10)
+
+Component for displaying active AI assistant sessions with real-time activity indicators:
+
+**From `SessionOverview.tsx`** (Phase 10):
+
+```typescript
+/**
+ * Session overview component displaying AI assistant sessions.
+ *
+ * Shows session cards with project information, duration, activity indicators,
+ * and status badges. Supports filtering events by clicking on a session card.
+ *
+ * Features:
+ * - Real-time activity indicators with pulse animation based on event volume
+ * - Session status badges (Active, Idle, Ended)
+ * - Session duration tracking
+ * - Dimmed styling for inactive/ended sessions
+ * - Accessible with proper ARIA labels and keyboard navigation
+ */
+export function SessionOverview({
+  className = '',
+  onSessionClick,
+}: SessionOverviewProps) {
+  // Subscribe to sessions from the store
+  const sessions = useEventStore((state) => state.sessions);
+  const events = useEventStore((state) => state.events);
+
+  // Convert sessions Map to sorted array
+  const sortedSessions = useMemo(() => {
+    const sessionArray = Array.from(sessions.values());
+    return sortSessions(sessionArray);
+  }, [sessions]);
+
+  // Calculate recent event counts for each session
+  const recentEventCounts = useMemo(
+    () => countRecentEventsBySession(events, RECENT_EVENT_WINDOW_MS),
+    [events]
+  );
+
+  // Handle session card click
+  const handleSessionClick = useCallback(
+    (sessionId: string) => {
+      onSessionClick?.(sessionId);
+    },
+    [onSessionClick]
+  );
+
+  // Check if there are any sessions
+  const hasSessions = sortedSessions.length > 0;
+
+  return (
+    <div
+      className={`bg-gray-900 text-gray-100 ${className}`}
+      role="region"
+      aria-label="Session overview"
+    >
+      {/* Component content */}
+    </div>
+  );
+}
+```
+
+**Pure Event Counting Pattern**:
+
+```typescript
+/**
+ * Count recent events per session within the specified time window.
+ *
+ * Uses the most recent event's timestamp as the reference point to maintain
+ * pure render behavior. This provides a stable approximation of "recent"
+ * events since the store updates frequently with new events.
+ *
+ * @param events - Array of events to analyze (newest first)
+ * @param windowMs - Time window in milliseconds
+ * @returns Map of session IDs to event counts
+ */
+function countRecentEventsBySession(
+  events: readonly VibeteaEvent[],
+  windowMs: number
+): Map<string, number> {
+  const counts = new Map<string, number>();
+
+  // Use the most recent event's timestamp as reference (events are sorted newest first)
+  if (events.length === 0) {
+    return counts;
+  }
+
+  const mostRecentEvent = events[0];
+  if (mostRecentEvent === undefined) {
+    return counts;
+  }
+
+  const referenceTime = new Date(mostRecentEvent.timestamp).getTime();
+
+  for (const event of events) {
+    const eventTime = new Date(event.timestamp).getTime();
+    const age = referenceTime - eventTime;
+
+    if (age <= windowMs && age >= 0) {
+      const sessionId = event.payload.sessionId;
+      const currentCount = counts.get(sessionId) ?? 0;
+      counts.set(sessionId, currentCount + 1);
+    }
+  }
+
+  return counts;
+}
+```
+
+**Activity Level and Pulse Animation Pattern**:
+
+```typescript
+/**
+ * Pulse animation classes for different activity levels
+ */
+const PULSE_ANIMATIONS = {
+  none: '',
+  low: 'animate-pulse-slow', // 1Hz
+  medium: 'animate-pulse-medium', // 2Hz
+  high: 'animate-pulse-fast', // 3Hz
+} as const;
+
+/**
+ * Determine the activity level based on recent event count.
+ *
+ * @param recentEventCount - Number of events in the last 60 seconds
+ * @param isActive - Whether the session is currently active
+ * @returns Activity level for pulse animation
+ */
+function getActivityLevel(
+  recentEventCount: number,
+  isActive: boolean
+): ActivityLevel {
+  // No pulse for inactive sessions or no recent events
+  if (!isActive || recentEventCount === 0) {
+    return 'none';
+  }
+
+  // 1-5 events: 1Hz pulse (slow)
+  if (recentEventCount <= LOW_ACTIVITY_THRESHOLD) {
+    return 'low';
+  }
+
+  // 6-15 events: 2Hz pulse (medium)
+  if (recentEventCount <= MEDIUM_ACTIVITY_THRESHOLD) {
+    return 'medium';
+  }
+
+  // 16+ events: 3Hz pulse (fast)
+  return 'high';
+}
+```
+
+**Session State Machine Pattern**:
+
+```typescript
+/**
+ * Sort sessions: active first, then by lastEventAt descending.
+ *
+ * @param sessions - Array of sessions to sort
+ * @returns Sorted array of sessions
+ */
+function sortSessions(sessions: readonly Session[]): Session[] {
+  return [...sessions].sort((a, b) => {
+    // Active sessions come first
+    if (a.status === 'active' && b.status !== 'active') return -1;
+    if (a.status !== 'active' && b.status === 'active') return 1;
+
+    // Then inactive before ended
+    if (a.status === 'inactive' && b.status === 'ended') return -1;
+    if (a.status === 'ended' && b.status === 'inactive') return 1;
+
+    // Within same status, sort by lastEventAt descending (most recent first)
+    return b.lastEventAt.getTime() - a.lastEventAt.getTime();
+  });
+}
+```
+
+Key conventions for session overview:
+1. **Activity indicators**: Map event count to pulse frequency (1-5 events = 1Hz, 6-15 = 2Hz, 16+ = 3Hz)
+2. **Pure event counting**: Use most recent event timestamp as reference for stable calculations
+3. **Session sorting**: Active first, then by most recent activity
+4. **Status badges**: Color-coded badges for Active (green), Idle (yellow), Ended (gray)
+5. **Dimmed styling**: Reduce opacity for inactive/ended sessions
+6. **CSS animations**: Define pulse animations in CSS with different frequencies
+7. **Memoization**: Use useMemo to avoid recalculating counts on every render
+8. **Keyboard accessibility**: Support Enter/Space for card activation
+
+### Session Timeouts Hook Pattern (TypeScript - Phase 10)
+
+Hook for managing periodic session state transitions:
+
+**From `useSessionTimeouts.ts`** (Phase 10):
+
+```typescript
+/**
+ * Hook for managing session timeout logic.
+ *
+ * Sets up a periodic interval that checks and updates session states
+ * based on time thresholds:
+ * - Active -> Inactive: After 5 minutes without events
+ * - Inactive/Ended -> Removed: After 30 minutes without events
+ *
+ * This hook should be called once at the app root level (App.tsx).
+ */
+export function useSessionTimeouts(): void {
+  const updateSessionStates = useEventStore(
+    (state) => state.updateSessionStates
+  );
+
+  useEffect(() => {
+    // Set up periodic check for session state transitions
+    const intervalId = setInterval(() => {
+      updateSessionStates();
+    }, SESSION_CHECK_INTERVAL_MS);
+
+    // Clean up interval on unmount
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [updateSessionStates]);
+}
+```
+
+Key conventions:
+1. **No return value**: Hook returns void since it only manages side effects
+2. **Store subscription**: Get the action directly from Zustand
+3. **Cleanup on unmount**: Always clear the interval in cleanup function
+4. **Root-level call**: Called once in App.tsx for app-wide session management
+5. **Time thresholds**: Configurable via store constants (`INACTIVE_THRESHOLD_MS`, `REMOVAL_THRESHOLD_MS`)
+
 ### Exponential Backoff Pattern (TypeScript - Phase 7)
 
 Implement reconnection delays with jitter:
@@ -1305,6 +1537,18 @@ import { useEventStore } from '../hooks/useEventStore';
 import type { EventType, VibeteaEvent } from '../types/events';
 ```
 
+Example from `SessionOverview.tsx` (Phase 10):
+
+```typescript
+import type React from 'react';
+import { useCallback, useMemo } from 'react';
+
+import { useEventStore } from '../hooks/useEventStore';
+import { formatDuration, formatRelativeTime } from '../utils/formatting';
+
+import type { Session, SessionStatus, VibeteaEvent } from '../types/events';
+```
+
 Example from `utils/formatting.ts` (Phase 8):
 
 ```typescript
@@ -1440,6 +1684,41 @@ const EVENT_TYPE_ICONS: Record<EventType, string> = {
   activity: '\u{1F4AC}', // 💬
   // ...
 };
+```
+
+Example from `SessionOverview.tsx` (Phase 10):
+
+```typescript
+/**
+ * Session overview component displaying active AI assistant sessions.
+ *
+ * Shows session cards with project information, duration, activity indicators,
+ * and status badges. Supports filtering events by clicking on a session card.
+ *
+ * Features:
+ * - Real-time activity indicators with pulse animation based on event volume
+ * - Session status badges (Active, Idle, Ended)
+ * - Session duration tracking
+ * - Dimmed styling for inactive/ended sessions
+ * - Accessible with proper ARIA labels and keyboard navigation
+ */
+
+/**
+ * Count recent events per session within the specified time window.
+ *
+ * Uses the most recent event's timestamp as the reference point to maintain
+ * pure render behavior.
+ *
+ * @param events - Array of events to analyze (newest first)
+ * @param windowMs - Time window in milliseconds
+ * @returns Map of session IDs to event counts
+ */
+function countRecentEventsBySession(
+  events: readonly VibeteaEvent[],
+  windowMs: number
+): Map<string, number> {
+  // Implementation
+}
 ```
 
 Example from `utils/formatting.ts` (Phase 8):
@@ -1694,6 +1973,13 @@ Format: `type(scope): description`
 | refactor | Code restructure | `refactor(config): simplify validation` |
 | test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
+
+Examples with Phase 10:
+- `feat(client): add SessionOverview component with activity indicators`
+- `feat(client): add session state machine with timeout logic`
+
+Examples with Phase 9:
+- `feat(client): add Activity Heatmap component with color scale and accessibility`
 
 Examples with Phase 8:
 - `feat(client): add virtual scrolling event stream with auto-scroll`

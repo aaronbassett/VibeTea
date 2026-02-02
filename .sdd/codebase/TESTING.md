@@ -68,11 +68,14 @@ client/
 │   │   └── events.ts           # Type definitions
 │   ├── hooks/
 │   │   ├── useEventStore.ts    # Zustand store
-│   │   └── useWebSocket.ts     # WebSocket connection hook (Phase 7)
+│   │   ├── useWebSocket.ts     # WebSocket connection hook (Phase 7)
+│   │   └── useSessionTimeouts.ts # Session timeouts hook (Phase 10)
 │   ├── components/
 │   │   ├── ConnectionStatus.tsx # Connection indicator (Phase 7)
 │   │   ├── TokenForm.tsx        # Token input form (Phase 7)
-│   │   └── EventStream.tsx      # Virtual scrolling list (Phase 8)
+│   │   ├── EventStream.tsx      # Virtual scrolling list (Phase 8)
+│   │   ├── Heatmap.tsx          # Activity heatmap (Phase 9)
+│   │   └── SessionOverview.tsx  # Session overview (Phase 10)
 │   ├── utils/
 │   │   └── formatting.ts        # Timestamp/duration formatting (Phase 8)
 │   ├── App.tsx
@@ -127,10 +130,12 @@ monitor/
 | `src/types/events.ts` | `src/__tests__/events.test.ts` |
 | `src/hooks/useEventStore.ts` | `src/__tests__/useEventStore.test.ts` (planned) |
 | `src/hooks/useWebSocket.ts` | `src/__tests__/useWebSocket.test.ts` (planned) |
+| `src/hooks/useSessionTimeouts.ts` | `src/__tests__/useSessionTimeouts.test.ts` (planned) |
 | `src/components/ConnectionStatus.tsx` | `src/__tests__/ConnectionStatus.test.tsx` (planned) |
 | `src/components/TokenForm.tsx` | `src/__tests__/TokenForm.test.tsx` (planned) |
 | `src/components/EventStream.tsx` | `src/__tests__/EventStream.test.tsx` (planned) |
 | `src/components/Heatmap.tsx` | `src/__tests__/Heatmap.test.tsx` (planned) |
+| `src/components/SessionOverview.tsx` | `src/__tests__/SessionOverview.test.tsx` (planned) |
 | `src/utils/formatting.ts` | `src/__tests__/formatting.test.ts` |
 | `src/App.tsx` | `src/__tests__/App.test.tsx` (planned) |
 
@@ -381,6 +386,97 @@ Key patterns for formatting utilities testing (Phase 8, 33 tests):
 7. **Reference parameters**: Use fixed `now` parameter for predictable relative time tests
 8. **Comprehensive coverage**: Tests cover all time units and fallback scenarios
 
+### Session Overview Tests (TypeScript - Phase 10, Planned)
+
+Session overview tests will validate activity counting, session sorting, and pulse animations:
+
+#### Planned Test Patterns for `SessionOverview.tsx`
+
+```typescript
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { SessionOverview } from '../SessionOverview';
+import { useEventStore } from '../../hooks/useEventStore';
+
+describe('SessionOverview Component', () => {
+  it('should render sessions from store', () => {
+    // Mock store with sample sessions
+    vi.mocked(useEventStore).mockImplementation((selector) =>
+      selector({
+        sessions: new Map([
+          ['session-1', {
+            sessionId: 'session-1',
+            source: 'test',
+            project: 'TestProject',
+            startedAt: new Date(),
+            lastEventAt: new Date(),
+            status: 'active',
+            eventCount: 10,
+          }],
+        ]),
+        events: [],
+      } as any)
+    );
+
+    render(<SessionOverview />);
+
+    expect(screen.getByText('TestProject')).toBeInTheDocument();
+  });
+
+  it('should show empty state when no sessions', () => {
+    vi.mocked(useEventStore).mockImplementation((selector) =>
+      selector({
+        sessions: new Map(),
+        events: [],
+      } as any)
+    );
+
+    render(<SessionOverview />);
+
+    expect(screen.getByText('No active sessions')).toBeInTheDocument();
+  });
+
+  it('should display activity indicators based on event count', () => {
+    // Test pulse animation classes based on recent event count
+    // Low activity (1-5 events) = animate-pulse-slow
+    // Medium activity (6-15 events) = animate-pulse-medium
+    // High activity (16+ events) = animate-pulse-fast
+  });
+
+  it('should sort sessions with active first', () => {
+    // Verify active sessions appear before inactive/ended
+  });
+
+  it('should display status badges correctly', () => {
+    // Test Active (green), Idle (yellow), Ended (gray) badges
+  });
+
+  it('should call onSessionClick when card is clicked', () => {
+    const onSessionClick = vi.fn();
+    // Test click handler invocation
+  });
+
+  it('should support keyboard navigation (Enter/Space)', () => {
+    // Test Enter and Space key activation
+  });
+
+  it('should have proper accessibility labels', () => {
+    // Test aria-label presence and content
+    // Test role="region" for session overview
+    // Test role="listitem" for session cards
+  });
+});
+```
+
+Key patterns for session overview testing:
+1. **Activity counting**: Verify `countRecentEventsBySession` returns correct counts
+2. **Pulse animation mapping**: Test activity level determination (low/medium/high)
+3. **Session sorting**: Verify active first, then by recent activity
+4. **Status badge rendering**: Verify correct styling for each status
+5. **Click handling**: Test `onSessionClick` callback invocation
+6. **Keyboard accessibility**: Support Enter/Space activation
+7. **ARIA labels**: Verify accessibility attributes
+
 ### Component Tests (TypeScript - Phase 7)
 
 Component tests validate rendering, props, and interactions using Vitest:
@@ -454,297 +550,6 @@ Key patterns for component testing:
 4. **Props validation**: Test different prop combinations
 5. **Style verification**: Verify Tailwind classes are applied
 
-#### Planned Test Patterns for `TokenForm.tsx`
-
-```typescript
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { TokenForm } from '../TokenForm';
-
-describe('TokenForm Component', () => {
-  beforeEach(() => {
-    // Clear localStorage before each test
-    localStorage.clear();
-  });
-
-  it('should render with empty input initially', () => {
-    render(<TokenForm />);
-
-    const input = screen.getByLabelText('Authentication Token');
-    expect(input).toHaveValue('');
-  });
-
-  it('should show "No token saved" when no token exists', () => {
-    render(<TokenForm />);
-
-    expect(screen.getByText('No token saved')).toBeInTheDocument();
-  });
-
-  it('should save token to localStorage on form submission', async () => {
-    const user = userEvent.setup();
-    render(<TokenForm />);
-
-    const input = screen.getByLabelText('Authentication Token');
-    const submitButton = screen.getByText('Save Token');
-
-    await user.type(input, 'test-token-123');
-    await user.click(submitButton);
-
-    expect(localStorage.getItem('vibetea_token')).toBe('test-token-123');
-    expect(screen.getByText('Token saved')).toBeInTheDocument();
-  });
-
-  it('should clear token on clear button click', async () => {
-    const user = userEvent.setup();
-    localStorage.setItem('vibetea_token', 'existing-token');
-
-    render(<TokenForm />);
-
-    const clearButton = screen.getByText('Clear');
-    await user.click(clearButton);
-
-    expect(localStorage.getItem('vibetea_token')).toBeNull();
-    expect(screen.getByText('No token saved')).toBeInTheDocument();
-  });
-
-  it('should call onTokenChange callback when token is saved', async () => {
-    const user = userEvent.setup();
-    const onTokenChange = vi.fn();
-
-    render(<TokenForm onTokenChange={onTokenChange} />);
-
-    const input = screen.getByLabelText('Authentication Token');
-    const submitButton = screen.getByText('Save Token');
-
-    await user.type(input, 'new-token');
-    await user.click(submitButton);
-
-    expect(onTokenChange).toHaveBeenCalled();
-  });
-
-  it('should disable save button when input is empty', () => {
-    render(<TokenForm />);
-
-    const submitButton = screen.getByText('Save Token');
-    expect(submitButton).toBeDisabled();
-  });
-
-  it('should trim whitespace from token input', async () => {
-    const user = userEvent.setup();
-    render(<TokenForm />);
-
-    const input = screen.getByLabelText('Authentication Token');
-    const submitButton = screen.getByText('Save Token');
-
-    await user.type(input, '  token-with-spaces  ');
-    await user.click(submitButton);
-
-    expect(localStorage.getItem('vibetea_token')).toBe('token-with-spaces');
-  });
-
-  it('should sync state across storage events from other tabs', () => {
-    render(<TokenForm />);
-
-    expect(screen.getByText('No token saved')).toBeInTheDocument();
-
-    // Simulate storage event from another tab
-    const storageEvent = new StorageEvent('storage', {
-      key: 'vibetea_token',
-      newValue: 'token-from-other-tab',
-      oldValue: null,
-    });
-    window.dispatchEvent(storageEvent);
-
-    expect(screen.getByText('Token saved')).toBeInTheDocument();
-  });
-});
-```
-
-Key patterns for form testing:
-1. **Setup and teardown**: Clear localStorage before each test
-2. **User interactions**: Use `userEvent` for realistic interactions
-3. **Assertions on side effects**: Verify localStorage updates
-4. **Callback verification**: Use `vi.fn()` to mock callbacks
-5. **Input validation**: Test edge cases like whitespace, empty values
-6. **Multi-tab sync**: Test storage event handling
-
-#### Planned Test Patterns for `useWebSocket.ts`
-
-```typescript
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
-import { useWebSocket } from '../useWebSocket';
-import { useEventStore } from '../useEventStore';
-
-describe('useWebSocket Hook', () => {
-  let mockWebSocket: Partial<WebSocket>;
-
-  beforeEach(() => {
-    // Mock WebSocket
-    mockWebSocket = {
-      readyState: WebSocket.CLOSED,
-      onopen: null,
-      onmessage: null,
-      onerror: null,
-      onclose: null,
-      close: vi.fn(),
-    };
-
-    global.WebSocket = vi.fn(() => mockWebSocket) as any;
-    localStorage.clear();
-  });
-
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('should initialize with isConnected false', () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-    const { result } = renderHook(() => useWebSocket());
-
-    expect(result.current.isConnected).toBe(false);
-  });
-
-  it('should warn if no token is present', () => {
-    const warnSpy = vi.spyOn(console, 'warn');
-    const { result } = renderHook(() => useWebSocket());
-
-    act(() => {
-      result.current.connect();
-    });
-
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('No authentication token')
-    );
-  });
-
-  it('should attempt to connect with valid token', () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-    const { result } = renderHook(() => useWebSocket());
-
-    act(() => {
-      result.current.connect();
-    });
-
-    expect(global.WebSocket).toHaveBeenCalledWith(
-      expect.stringContaining('test-token')
-    );
-  });
-
-  it('should handle WebSocket messages by dispatching to store', () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-    const { result } = renderHook(() => useWebSocket());
-
-    act(() => {
-      result.current.connect();
-    });
-
-    const event = {
-      id: 'evt_123',
-      source: 'test',
-      timestamp: new Date().toISOString(),
-      type: 'session',
-      payload: { sessionId: 'sid_123', action: 'started', project: 'test' },
-    };
-
-    act(() => {
-      if (mockWebSocket.onmessage) {
-        mockWebSocket.onmessage({
-          data: JSON.stringify(event),
-        } as MessageEvent);
-      }
-    });
-
-    const events = useEventStore.getState().events;
-    expect(events).toContainEqual(event);
-  });
-
-  it('should schedule reconnection on close', async () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-    const { result } = renderHook(() => useWebSocket());
-
-    act(() => {
-      result.current.connect();
-      if (mockWebSocket.onclose) {
-        mockWebSocket.onclose();
-      }
-    });
-
-    // Wait for reconnection to be scheduled
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Status should be reconnecting
-    const status = useEventStore.getState().status;
-    expect(status).toBe('reconnecting');
-  });
-
-  it('should apply exponential backoff jitter', async () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-    vi.useFakeTimers();
-
-    const { result } = renderHook(() => useWebSocket());
-
-    act(() => {
-      result.current.connect();
-      if (mockWebSocket.onclose) {
-        mockWebSocket.onclose();
-      }
-    });
-
-    // Advance by partial time, should not reconnect yet
-    act(() => {
-      vi.advanceTimersByTime(500); // Less than min backoff
-    });
-    expect(global.WebSocket).toHaveBeenCalledTimes(1);
-
-    // Advance past min backoff, should attempt reconnect
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-    expect(global.WebSocket).toHaveBeenCalledTimes(2);
-
-    vi.useRealTimers();
-  });
-
-  it('should disconnect and stop reconnecting', () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-    const { result } = renderHook(() => useWebSocket());
-
-    act(() => {
-      result.current.connect();
-    });
-    expect(result.current.isConnected).toBe(false); // Initial state
-
-    act(() => {
-      result.current.disconnect();
-    });
-
-    expect(mockWebSocket.close).toHaveBeenCalled();
-  });
-
-  it('should clean up on unmount', () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-    const { result, unmount } = renderHook(() => useWebSocket());
-
-    act(() => {
-      result.current.connect();
-    });
-
-    unmount();
-
-    expect(mockWebSocket.close).toHaveBeenCalled();
-  });
-});
-```
-
-Key patterns for hook testing:
-1. **Mock external APIs**: Mock WebSocket, localStorage, etc.
-2. **renderHook**: Use React Testing Library's hook rendering utilities
-3. **act()**: Wrap state updates to avoid warnings
-4. **Fake timers**: Use `vi.useFakeTimers()` for timing tests
-5. **Callback verification**: Test side effects like dispatch and reconnection
-
 ### Unit Tests (Rust)
 
 Tests follow the Arrange-Act-Assert pattern and are organized inline:
@@ -815,46 +620,6 @@ Key patterns observed in server crate:
 2. **Descriptive names**: Test names describe the behavior (e.g., `test_config_with_unsafe_no_auth`)
 3. **Result types**: Tests verify both success and error cases using `assert!` and `matches!`
 4. **Parsing tests**: Dedicated tests for parsing functions with various inputs
-
-#### Example from server/src/error.rs
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn config_error_missing_displays_correctly() {
-        // Arrange
-        let err = ConfigError::missing("API_KEY");
-
-        // Act
-        let message = err.to_string();
-
-        // Assert
-        assert_eq!(message, "missing required configuration: API_KEY");
-    }
-
-    #[test]
-    fn server_error_is_client_error_returns_true() {
-        assert!(ServerError::auth("bad token").is_client_error());
-        assert!(ServerError::validation("bad input").is_client_error());
-        assert!(ServerError::rate_limit("client", 60).is_client_error());
-    }
-
-    #[test]
-    fn config_error_converts_to_server_error() {
-        let config_err = ConfigError::missing("PORT");
-        let server_err: ServerError = config_err.into();
-        assert!(matches!(server_err, ServerError::Config(_)));
-    }
-}
-```
-
-Key patterns:
-1. **Error display**: Tests verify error messages format correctly
-2. **Conversions**: Tests validate `impl From` and `impl Into` conversions
-3. **Utility methods**: Tests verify helper methods like `is_client_error()`
 
 ### Unit Tests (Rust) - Privacy Module (Phase 5)
 
@@ -955,7 +720,7 @@ Privacy unit tests are organized into sections:
 1. **PrivacyConfig Tests** (10 tests): Configuration creation, environment variable parsing, allowlist filtering
 2. **extract_basename Tests** (8 tests): Path parsing for various formats
 3. **PrivacyPipeline Tests** (15 tests): Event processing and context stripping
-4. **Edge Case Tests** (5 tests): Complex paths, Unicode filenames, case sensitivity
+4. **Edge Case Tests** (5 tests): Complex scenarios
 
 ### Unit Tests (Rust) - Crypto Module (Phase 6)
 
@@ -1416,32 +1181,6 @@ Privacy integration tests cover Constitution I requirements:
 4. **Extension filtering**: Allowlist correctly filters by file extension
 5. **Comprehensive coverage**: All event types processed safely, no sensitive data in JSON
 
-### Error Handling Tests
-
-Both TypeScript and Rust emphasize testing error cases:
-
-**Rust Error Type Tests** (from `server/src/error.rs`):
-
-```rust
-#[test]
-fn config_error_invalid_displays_correctly() {
-    let err = ConfigError::invalid("port", "must be a positive integer");
-    assert_eq!(
-        err.to_string(),
-        "invalid configuration value for 'port': must be a positive integer"
-    );
-}
-
-#[test]
-fn server_error_rate_limit_displays_correctly() {
-    let err = ServerError::rate_limit("192.168.1.100", 30);
-    assert_eq!(
-        err.to_string(),
-        "rate limit exceeded for 192.168.1.100, retry after 30 seconds"
-    );
-}
-```
-
 ## Mocking Strategy
 
 ### TypeScript (Planned)
@@ -1519,93 +1258,6 @@ fn test_event_serialization_tool() {
 }
 ```
 
-### Privacy Test Helpers (Phase 5)
-
-Privacy tests use helper functions and constants for consistency:
-
-```rust
-/// Sensitive path patterns that should NEVER appear in processed events.
-const SENSITIVE_PATH_PATTERNS: &[&str] = &[
-    "/home/",
-    "/Users/",
-    "/root/",
-    "/var/",
-    "/etc/",
-    "C:\\Users\\",
-    "C:\\Program Files\\",
-];
-
-/// Sensitive command/content patterns that should be stripped from context.
-const SENSITIVE_COMMAND_PATTERNS: &[&str] = &[
-    "rm -rf",
-    "sudo ",
-    "chmod ",
-    "curl -",
-    "wget ",
-    "Bearer ",
-    "Authorization:",
-];
-
-/// Creates a privacy pipeline with default configuration (no allowlist).
-fn default_pipeline() -> PrivacyPipeline {
-    PrivacyPipeline::new(PrivacyConfig::new(None))
-}
-
-/// Creates a privacy pipeline with a specific extension allowlist.
-fn pipeline_with_allowlist(extensions: &[&str]) -> PrivacyPipeline {
-    let allowlist: HashSet<String> = extensions.iter().map(|s| s.to_string()).collect();
-    PrivacyPipeline::new(PrivacyConfig::new(Some(allowlist)))
-}
-```
-
-### Crypto Test Helpers (Phase 6)
-
-Crypto tests use temporary directories and deterministic generation:
-
-```rust
-use tempfile::TempDir;
-
-// Tests create temporary directories for key file operations
-let temp_dir = TempDir::new().unwrap();
-let crypto = Crypto::generate();
-crypto.save(temp_dir.path()).unwrap();
-
-// Verify operations on the saved keys
-let loaded = Crypto::load(temp_dir.path()).unwrap();
-assert_eq!(crypto.public_key_base64(), loaded.public_key_base64());
-```
-
-### Sender Test Helpers (Phase 6)
-
-Sender tests use helper functions to create consistent test fixtures:
-
-```rust
-fn create_test_event() -> Event {
-    Event::new(
-        "test-monitor".to_string(),
-        EventType::Session,
-        EventPayload::Session {
-            session_id: Uuid::new_v4(),
-            action: SessionAction::Started,
-            project: "test-project".to_string(),
-        },
-    )
-}
-
-fn create_test_crypto() -> Crypto {
-    Crypto::generate()
-}
-
-fn create_test_sender() -> Sender {
-    let config = SenderConfig::new(
-        "http://localhost:8080".to_string(),
-        "test-monitor".to_string(),
-        10, // Small buffer for testing
-    );
-    Sender::new(config, create_test_crypto())
-}
-```
-
 ## Coverage Requirements
 
 ### Targets
@@ -1675,6 +1327,12 @@ Tests that must pass before any deploy:
 - Event dispatch to store
 - Cleanup on disconnect/unmount
 
+**useSessionTimeouts.test.ts** (planned - Phase 10)
+- Interval setup for session state transitions
+- Active -> Inactive transition after 5 minutes
+- Inactive/Ended -> Removed transition after 30 minutes
+- Cleanup on unmount
+
 **ConnectionStatus.test.tsx** (planned - Phase 7)
 - Rendering with different connection statuses
 - Label display based on props
@@ -1710,6 +1368,16 @@ Tests that must pass before any deploy:
 - Accessibility: grid/row/gridcell roles present
 - Accessibility: aria-labels contain event count and datetime
 - Keyboard navigation: Enter/Space activates cells
+
+**SessionOverview.test.tsx** (planned - Phase 10)
+- Rendering sessions from store
+- Empty state when no sessions
+- Activity indicators based on event count (pulse animations)
+- Session sorting (active first, then by recency)
+- Status badge display (Active/Idle/Ended)
+- Event click handler invocation
+- Keyboard navigation support (Enter/Space)
+- Accessibility labels and roles
 
 #### Rust/Server
 
@@ -1782,17 +1450,15 @@ Planned integration tests will cover:
 **privacy_test.rs** (17 integration tests)
 - **Constitution I Compliance Tests**: Validates privacy guarantees in production scenarios
   1. `no_full_paths_in_tool_events` - Path reduction validation
-  2. `no_full_paths_various_formats` - Multiple path format handling
-  3. `no_full_paths_in_session_events` - Session event path validation
-  4. `bash_commands_never_transmitted` - Command stripping verification
-  5. `grep_patterns_never_transmitted` - Search pattern stripping
-  6. `glob_patterns_never_transmitted` - File pattern stripping
-  7. `websearch_never_transmits_context` - Search query stripping
-  8. `webfetch_never_transmits_context` - URL stripping
-  9. `summary_text_stripped` - Summary neutralization
-  10. `all_event_types_safe` - Comprehensive multi-type test
-  11. `allowlist_filtering_removes_sensitive_extensions` - Extension filtering
-  12. Additional edge case and serialization tests
+  2. `bash_commands_never_transmitted` - Command stripping verification
+  3. `grep_patterns_never_transmitted` - Search pattern stripping
+  4. `glob_patterns_never_transmitted` - File pattern stripping
+  5. `websearch_never_transmits_context` - Search query stripping
+  6. `webfetch_never_transmits_context` - URL stripping
+  7. `summary_text_stripped` - Summary neutralization
+  8. `all_event_types_safe` - Comprehensive multi-type test
+  9. `allowlist_filtering_removes_sensitive_extensions` - Extension filtering
+  10. Additional edge case and serialization tests
 
 Each integration test:
 - Creates realistic event payloads with sensitive data
@@ -1909,20 +1575,21 @@ cargo test -p vibetea-monitor sender::tests
 
 ## Next Steps for Testing
 
-1. **TypeScript**: Create unit tests for `useWebSocket` hook (Phase 7)
-2. **TypeScript**: Create component tests for `ConnectionStatus` (Phase 7)
-3. **TypeScript**: Create component tests for `TokenForm` (Phase 7)
-4. **TypeScript**: Create component tests for `EventStream` (Phase 8)
-5. **TypeScript**: Create unit tests for `useEventStore` store
-6. **TypeScript**: Add component tests for UI elements as they're built
-7. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
-8. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
-9. **Rust/Monitor**: Add integration tests for crypto module (key persistence scenarios)
-10. **Rust/Monitor**: Add integration tests for sender module (retry scenarios, rate limiting)
-11. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
-12. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
-13. **Snapshot testing**: Consider for event serialization if JSON formats become complex
-14. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
+1. **TypeScript**: Create unit tests for `useSessionTimeouts` hook (Phase 10)
+2. **TypeScript**: Create component tests for `SessionOverview` (Phase 10)
+3. **TypeScript**: Create unit tests for `useEventStore` store
+4. **TypeScript**: Create unit tests for `useWebSocket` hook (Phase 7)
+5. **TypeScript**: Create component tests for `ConnectionStatus` (Phase 7)
+6. **TypeScript**: Create component tests for `TokenForm` (Phase 7)
+7. **TypeScript**: Create component tests for `EventStream` (Phase 8)
+8. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
+9. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
+10. **Rust/Monitor**: Add integration tests for crypto module (key persistence scenarios)
+11. **Rust/Monitor**: Add integration tests for sender module (retry scenarios, rate limiting)
+12. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
+13. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
+14. **Snapshot testing**: Consider for event serialization if JSON formats become complex
+15. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
 
 ---
 
