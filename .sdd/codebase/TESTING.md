@@ -27,7 +27,7 @@
 | Type | Framework | Configuration | Status |
 |------|-----------|---------------|--------|
 | Unit | Rust built-in | `#[cfg(test)]` inline | In use |
-| Integration | Rust built-in | `tests/` directory | Ready |
+| Integration | Rust built-in | `tests/` directory | In use (Phase 5) |
 | E2E | Not selected | TBD | Not started |
 
 ### Running Tests
@@ -51,6 +51,8 @@
 | `cargo test --test '*'` | Run integration tests only |
 | `cargo test -- --nocapture` | Run tests with println output |
 | `cargo test -- --test-threads=1` | Run tests sequentially (prevents env var interference) |
+| `cargo test -p vibetea-monitor privacy` | Run privacy module tests |
+| `cargo test --test privacy_test` | Run privacy integration tests |
 
 ## Test Organization
 
@@ -97,9 +99,12 @@ monitor/
 │   ├── types.rs                # Types module with inline tests
 │   ├── watcher.rs              # File watching implementation
 │   ├── parser.rs               # JSONL parser implementation
+│   ├── privacy.rs              # Privacy pipeline with 38 inline unit tests
 │   ├── lib.rs                  # Library entrypoint
 │   └── main.rs                 # Binary entrypoint
-└── tests/                       # Integration tests directory (to be created)
+└── tests/
+    ├── privacy_test.rs         # Integration tests for privacy compliance (17 tests)
+    └── (more integration tests to be created)
 ```
 
 ### Test File Location Strategy
@@ -114,7 +119,7 @@ monitor/
 
 **Rust**: Inline tests in same module (`#[cfg(test)] mod tests`)
 
-Tests for a function go in the same file, grouped in a `tests` module at the end of the file.
+Tests for a function go in the same file, grouped in a `tests` module at the end of the file. Integration tests go in separate files in the `tests/` directory.
 
 ## Test Patterns
 
@@ -304,6 +309,107 @@ Key patterns:
 2. **Conversions**: Tests validate `impl From` and `impl Into` conversions
 3. **Utility methods**: Tests verify helper methods like `is_client_error()`
 
+### Unit Tests (Rust) - Privacy Module (Phase 5)
+
+Privacy module tests are comprehensive, organized by component and testing Constitution I compliance:
+
+#### Example from monitor/src/privacy.rs inline tests
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{SessionAction, ToolStatus};
+    use uuid::Uuid;
+
+    // =========================================================================
+    // PrivacyConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn config_new_with_no_allowlist_allows_all() {
+        let config = PrivacyConfig::new(None);
+        assert!(config.is_extension_allowed("file.rs"));
+        assert!(config.is_extension_allowed("file.py"));
+        assert!(config.is_extension_allowed("file.anything"));
+        assert!(config.is_extension_allowed("Makefile")); // No extension allowed when no filter
+    }
+
+    #[test]
+    fn config_from_env_parses_comma_separated() {
+        std::env::set_var("VIBETEA_BASENAME_ALLOWLIST", ".rs,.ts,.md");
+        let config = PrivacyConfig::from_env();
+        std::env::remove_var("VIBETEA_BASENAME_ALLOWLIST");
+
+        assert!(config.is_extension_allowed("file.rs"));
+        assert!(config.is_extension_allowed("file.ts"));
+        assert!(config.is_extension_allowed("file.md"));
+        assert!(!config.is_extension_allowed("file.py"));
+    }
+
+    // =========================================================================
+    // extract_basename Tests
+    // =========================================================================
+
+    #[test]
+    fn extract_basename_from_unix_absolute_path() {
+        assert_eq!(
+            extract_basename("/home/user/project/src/auth.ts"),
+            Some("auth.ts".to_string())
+        );
+    }
+
+    // =========================================================================
+    // PrivacyPipeline Tests
+    // =========================================================================
+
+    #[test]
+    fn pipeline_tool_bash_strips_context() {
+        let pipeline = PrivacyPipeline::default();
+        let payload = EventPayload::Tool {
+            session_id: Uuid::nil(),
+            tool: "Bash".to_string(),
+            status: ToolStatus::Completed,
+            context: Some("rm -rf / --no-preserve-root".to_string()),
+            project: Some("my-project".to_string()),
+        };
+
+        let result = pipeline.process(payload);
+        if let EventPayload::Tool { context, tool, .. } = result {
+            assert_eq!(tool, "Bash");
+            assert_eq!(context, None);
+        } else {
+            panic!("Expected Tool payload");
+        }
+    }
+
+    #[test]
+    fn pipeline_tool_read_extracts_basename() {
+        let pipeline = PrivacyPipeline::default();
+        let payload = EventPayload::Tool {
+            session_id: Uuid::nil(),
+            tool: "Read".to_string(),
+            status: ToolStatus::Completed,
+            context: Some("/home/user/project/src/auth.ts".to_string()),
+            project: Some("my-project".to_string()),
+        };
+
+        let result = pipeline.process(payload);
+        if let EventPayload::Tool { context, .. } = result {
+            assert_eq!(context, Some("auth.ts".to_string()));
+        } else {
+            panic!("Expected Tool payload");
+        }
+    }
+}
+```
+
+Privacy unit tests are organized into sections:
+1. **PrivacyConfig Tests** (10 tests): Configuration parsing, environment variable handling, extension allowlist
+2. **extract_basename Tests** (8 tests): Path parsing edge cases, Unix/relative paths, hidden files
+3. **PrivacyPipeline Tests** (15 tests): Event processing, sensitive tool context stripping, allowlist filtering
+4. **Edge Case Tests** (5 tests): Complex paths, Unicode filenames, case sensitivity
+
 ### Integration Tests (Rust)
 
 Larger tests that exercise multiple components together:
@@ -316,6 +422,131 @@ Integration tests verify end-to-end functionality with full configuration:
 // Tests for unsafe mode authentication
 // Run with: cargo test --test unsafe_mode_test
 ```
+
+### Integration Tests (Rust) - Privacy Module (Phase 5)
+
+Privacy compliance integration tests in `monitor/tests/privacy_test.rs` validate Constitution I requirements:
+
+```rust
+//! Privacy compliance test suite for VibeTea Monitor.
+//!
+//! These tests validate Constitution I (Privacy by Design) by ensuring
+//! no sensitive data is ever present in processed events.
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+/// Creates a deterministic session ID for testing.
+fn test_session_id() -> Uuid {
+    Uuid::nil()
+}
+
+/// Creates a privacy pipeline with default configuration (no allowlist).
+fn default_pipeline() -> PrivacyPipeline {
+    PrivacyPipeline::new(PrivacyConfig::new(None))
+}
+
+/// Checks that a JSON string does not contain any sensitive path patterns.
+fn assert_no_sensitive_paths(json: &str, test_name: &str) {
+    for pattern in SENSITIVE_PATH_PATTERNS {
+        assert!(
+            !json.contains(pattern),
+            "{test_name}: JSON contains sensitive path pattern '{pattern}': {json}"
+        );
+    }
+}
+
+// =============================================================================
+// Test 1: no_full_paths_in_tool_events
+// =============================================================================
+
+/// Verifies that full file paths are reduced to basenames in Tool events.
+#[test]
+fn no_full_paths_in_tool_events() {
+    let pipeline = default_pipeline();
+
+    let payload = EventPayload::Tool {
+        session_id: test_session_id(),
+        tool: "Read".to_string(),
+        status: ToolStatus::Completed,
+        context: Some("/home/user/projects/secret/src/auth.rs".to_string()),
+        project: Some("my-project".to_string()),
+    };
+
+    let result = pipeline.process(payload);
+
+    if let EventPayload::Tool { context, .. } = &result {
+        assert_eq!(
+            context.as_deref(),
+            Some("auth.rs"),
+            "Context should be reduced to basename only"
+        );
+    }
+
+    let json = serde_json::to_string(&result).expect("Failed to serialize");
+    assert!(!json.contains("/home/"), "Serialized event should not contain full path");
+}
+
+// =============================================================================
+// Test 2: bash_commands_never_transmitted
+// =============================================================================
+
+/// Verifies that Bash tool context (containing actual shell commands) is always stripped.
+#[test]
+fn bash_commands_never_transmitted() {
+    let pipeline = default_pipeline();
+
+    let dangerous_commands = vec![
+        "rm -rf /important",
+        "curl -H 'Authorization: Bearer secret_token' https://api.example.com",
+        "export API_KEY=sk-1234567890",
+        "mysql -u root -pMySecretPass123",
+    ];
+
+    for command in dangerous_commands {
+        let payload = EventPayload::Tool {
+            session_id: test_session_id(),
+            tool: "Bash".to_string(),
+            status: ToolStatus::Completed,
+            context: Some(command.to_string()),
+            project: Some("project".to_string()),
+        };
+
+        let result = pipeline.process(payload);
+
+        if let EventPayload::Tool { context, tool, .. } = &result {
+            assert_eq!(tool, "Bash", "Tool name should be preserved");
+            assert_eq!(
+                *context, None,
+                "Bash context should be None for command: {command}"
+            );
+        }
+
+        let json = serde_json::to_string(&result).expect("Failed to serialize");
+        assert!(!json.contains("secret"), "Serialized event should not contain 'secret'");
+    }
+}
+
+// =============================================================================
+// Additional tests cover:
+// - Test 3: grep_patterns_never_transmitted
+// - Test 4: glob_patterns_never_transmitted
+// - Test 5: websearch_never_transmits_context
+// - Test 6: webfetch_never_transmits_context
+// - Test 7: summary_text_stripped
+// - Test 8: all_event_types_safe (comprehensive integration test)
+// - Test 9: allowlist_filtering_removes_sensitive_extensions
+// - Test 10+: extract_basename edge cases
+// =============================================================================
+```
+
+Privacy integration tests cover Constitution I requirements:
+1. **No full paths**: Validates path-to-basename conversion
+2. **No sensitive tool context**: Bash, Grep, Glob, WebSearch, WebFetch
+3. **Summary stripping**: Session summaries neutralized to "Session ended"
+4. **Extension filtering**: Allowlist correctly filters by file extension
+5. **Comprehensive coverage**: All event types processed safely, no sensitive data in JSON
 
 ### Error Handling Tests
 
@@ -363,6 +594,7 @@ No mocking framework is used currently. Tests use:
 1. **Environment isolation**: `EnvGuard` pattern to manage env vars
 2. **Helper functions**: `parse_bool_env()`, `parse_port()` tested independently
 3. **Direct instantiation**: Create test instances with test data
+4. **Deterministic test doubles**: For privacy tests, use fixed UUIDs (`Uuid::nil()`)
 
 ## Test Data
 
@@ -418,6 +650,45 @@ fn test_event_serialization_tool() {
 }
 ```
 
+### Privacy Test Helpers (Phase 5)
+
+Privacy tests use helper functions and constants for consistency:
+
+```rust
+/// Sensitive path patterns that should NEVER appear in processed events.
+const SENSITIVE_PATH_PATTERNS: &[&str] = &[
+    "/home/",
+    "/Users/",
+    "/root/",
+    "/var/",
+    "/etc/",
+    "C:\\Users\\",
+    "C:\\Program Files\\",
+];
+
+/// Sensitive command/content patterns that should be stripped from context.
+const SENSITIVE_COMMAND_PATTERNS: &[&str] = &[
+    "rm -rf",
+    "sudo ",
+    "chmod ",
+    "curl -",
+    "wget ",
+    "Bearer ",
+    "Authorization:",
+];
+
+/// Creates a privacy pipeline with default configuration (no allowlist).
+fn default_pipeline() -> PrivacyPipeline {
+    PrivacyPipeline::new(PrivacyConfig::new(None))
+}
+
+/// Creates a privacy pipeline with a specific extension allowlist.
+fn pipeline_with_allowlist(extensions: &[&str]) -> PrivacyPipeline {
+    let allowlist: HashSet<String> = extensions.iter().map(|s| s.to_string()).collect();
+    PrivacyPipeline::new(PrivacyConfig::new(Some(allowlist)))
+}
+```
+
 ## Coverage Requirements
 
 ### Targets
@@ -452,6 +723,7 @@ Tests that must pass before any deploy:
 | Error tests | Error type safety | `server/src/error.rs` tests |
 | Serialization tests | JSON round-trips | `server/src/types.rs` tests |
 | Event type tests | Type-safe event creation | `client/src/__tests__/events.test.ts` |
+| Privacy tests | Constitution I compliance | `monitor/src/privacy.rs` (unit) + `monitor/tests/privacy_test.rs` (integration) |
 
 ### Unit Tests by Module
 
@@ -493,6 +765,52 @@ Tests follow similar patterns to server modules covering:
 - Error type formatting and conversions
 - Event type serialization
 
+**privacy.rs** (38 unit tests - Phase 5)
+- **PrivacyConfig tests** (10): Configuration creation, environment variable parsing, allowlist filtering
+  - `config_new_with_no_allowlist_allows_all`
+  - `config_new_with_allowlist_filters_extensions`
+  - `config_allowlist_rejects_no_extension`
+  - `config_from_env_with_no_var_allows_all`
+  - `config_from_env_parses_comma_separated`
+  - `config_from_env_handles_missing_dots`
+  - `config_from_env_trims_whitespace`
+  - `config_from_env_filters_empty_entries`
+  - `config_default_allows_all`
+  - Plus environment-specific tests
+
+- **extract_basename tests** (8): Path parsing for various formats
+  - `extract_basename_from_unix_absolute_path`
+  - `extract_basename_from_unix_relative_path`
+  - `extract_basename_already_basename`
+  - `extract_basename_with_dots_in_name`
+  - `extract_basename_hidden_file`
+  - `extract_basename_empty_path`
+  - `extract_basename_root_path`
+  - `extract_basename_trailing_slash`
+
+- **PrivacyPipeline tests** (15): Event processing and context stripping
+  - `pipeline_session_passes_through`
+  - `pipeline_activity_passes_through`
+  - `pipeline_agent_passes_through`
+  - `pipeline_error_passes_through`
+  - `pipeline_summary_strips_text`
+  - `pipeline_tool_bash_strips_context`
+  - `pipeline_tool_grep_strips_context`
+  - `pipeline_tool_glob_strips_context`
+  - `pipeline_tool_websearch_strips_context`
+  - `pipeline_tool_webfetch_strips_context`
+  - `pipeline_tool_read_extracts_basename`
+  - `pipeline_tool_write_extracts_basename`
+  - `pipeline_tool_edit_extracts_basename`
+  - `pipeline_tool_with_no_context`
+  - `pipeline_tool_allowlist_filters`
+  - Plus allowlist and project preservation tests
+
+- **Edge case tests** (5): Complex scenarios
+  - `pipeline_handles_complex_paths`
+  - `pipeline_handles_unicode_filenames`
+  - `pipeline_case_sensitive_tool_names`
+
 ### Integration Tests
 
 #### Rust/Server
@@ -508,6 +826,29 @@ Planned integration tests will cover:
 - HTTP request handling with signatures
 - WebSocket connection and message broadcast
 
+#### Rust/Monitor (Phase 5)
+
+**privacy_test.rs** (17 integration tests)
+- **Constitution I Compliance Tests**: Validates privacy guarantees in production scenarios
+  1. `no_full_paths_in_tool_events` - Path reduction validation
+  2. `no_full_paths_various_formats` - Multiple path format handling
+  3. `no_full_paths_in_session_events` - Session event path validation
+  4. `bash_commands_never_transmitted` - Command stripping verification
+  5. `grep_patterns_never_transmitted` - Search pattern stripping
+  6. `glob_patterns_never_transmitted` - File pattern stripping
+  7. `websearch_never_transmits_context` - Search query stripping
+  8. `webfetch_never_transmits_context` - URL stripping
+  9. `summary_text_stripped` - Summary neutralization
+  10. `all_event_types_safe` - Comprehensive multi-type test
+  11. `allowlist_filtering_removes_sensitive_extensions` - Extension filtering
+  12. Additional edge case and serialization tests
+
+Each integration test:
+- Creates realistic event payloads with sensitive data
+- Processes them through the privacy pipeline
+- Verifies no sensitive data appears in JSON output
+- Uses helper functions for consistency and maintainability
+
 ## CI Integration
 
 ### Test Pipeline
@@ -521,8 +862,10 @@ test:
   - Unit tests (Vitest)
   - Lint Rust (clippy)
   - Format check Rust (rustfmt)
-  - Unit tests (cargo test)
-  - Integration tests (cargo test --test)
+  - Unit tests (cargo test --lib)
+  - Privacy unit tests (cargo test -p vibetea-monitor privacy)
+  - Integration tests (cargo test --test '*')
+  - Privacy integration tests (cargo test --test privacy_test)
   - Coverage report (optional)
 ```
 
@@ -535,7 +878,9 @@ test:
 | TypeScript unit tests | Yes | Correctness |
 | Rust linting (clippy) | Yes | Code quality |
 | Rust unit tests | Yes | Correctness |
+| Privacy unit tests | Yes | Constitution I compliance |
 | Rust integration tests | Yes | End-to-end behavior |
+| Privacy integration tests | Yes | Constitution I compliance in production scenarios |
 | Code formatting matches | Yes | Consistency |
 
 ## Current Test Coverage
@@ -558,6 +903,8 @@ test:
 - **config.rs**: Test cases covering env parsing, path resolution, defaults
 - **error.rs**: Test cases covering error formatting and conversions
 - **types.rs**: Test cases covering event serialization
+- **privacy.rs** (Phase 5): 38 unit tests covering privacy configuration, path extraction, event processing
+- **privacy_test.rs** (Phase 5): 17 integration tests covering Constitution I compliance
 - Integration tests directory ready for full pipeline tests
 
 ## Test Execution
@@ -572,6 +919,9 @@ cd client && npm run test:watch    # Watch mode
 # Rust (entire workspace)
 cargo test                         # All tests
 cargo test -- --test-threads=1    # Sequential (prevents env var interference)
+
+# Rust (specific modules)
+cargo test -p vibetea-monitor privacy  # Privacy tests only
 ```
 
 ### Running Specific Test Modules
@@ -583,6 +933,11 @@ cargo test -p vibetea-server error::tests
 
 # Rust - integration tests
 cargo test --test unsafe_mode_test
+cargo test --test privacy_test
+
+# Privacy tests specifically
+cargo test -p vibetea-monitor privacy::tests  # Unit tests
+cargo test --test privacy_test                # Integration tests
 ```
 
 ## Next Steps for Testing
@@ -594,6 +949,7 @@ cargo test --test unsafe_mode_test
 5. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
 6. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
 7. **Snapshot testing**: Consider for event serialization if JSON formats become complex
+8. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
 
 ---
 

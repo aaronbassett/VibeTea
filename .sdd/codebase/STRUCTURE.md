@@ -1,6 +1,6 @@
 # Project Structure
 
-**Status**: Phase 4 incremental update - Monitor parser and file watcher implementation
+**Status**: Phase 5 incremental update - Monitor privacy pipeline implementation
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -30,10 +30,12 @@ VibeTea/
 │   │   ├── config.rs          # Environment variable configuration (303 lines)
 │   │   ├── error.rs           # Error types and conversions (173 lines)
 │   │   ├── types.rs           # Event definitions (341 lines)
-│   │   ├── watcher.rs         # File system watching with position tracking (NEW - Phase 4)
-│   │   ├── parser.rs          # JSONL parsing and event normalization (NEW - Phase 4)
+│   │   ├── watcher.rs         # File system watching with position tracking (Phase 4)
+│   │   ├── parser.rs          # JSONL parsing and event normalization (Phase 4)
+│   │   ├── privacy.rs         # Privacy pipeline for event sanitization (NEW - Phase 5)
 │   │   └── Cargo.toml         # Rust dependencies
-│   └── tests/                 # Integration tests (empty in Phase 4)
+│   └── tests/
+│       └── privacy_test.rs     # Privacy compliance tests (NEW - Phase 5)
 │
 ├── client/                     # TypeScript React web dashboard
 │   ├── src/
@@ -198,14 +200,15 @@ GET /health:
 | File | Purpose | Lines | Status |
 |------|---------|-------|--------|
 | `main.rs` | Monitor entry point | ~10 | Placeholder (Phase 4) |
-| `lib.rs` | Public API (exports modules) | ~35 | Updated (Phase 4) |
+| `lib.rs` | Public API (exports modules) | ~40 | Updated (Phase 5) |
 | `config.rs` | Environment variable parsing | 303 | Phase 3 |
 | `error.rs` | Error types (Config, IO, JSON, HTTP, Crypto, Watch) | 173 | Phase 3 |
 | `types.rs` | Event definitions with ID generation | 341 | Phase 3 |
-| `watcher.rs` | File system watching with position tracking | ~300 | NEW (Phase 4) |
-| `parser.rs` | JSONL parsing and event normalization | ~400 | NEW (Phase 4) |
+| `watcher.rs` | File system watching with position tracking | ~300 | Phase 4 |
+| `parser.rs` | JSONL parsing and event normalization | ~400 | Phase 4 |
+| `privacy.rs` | Privacy pipeline for event sanitization | 1039 | NEW (Phase 5) |
 
-#### Monitor File Watcher - `watcher.rs` (Phase 4 New)
+#### Monitor File Watcher - `watcher.rs` (Phase 4)
 
 **Purpose**: Monitor JSONL files in `~/.claude/projects/` for changes
 
@@ -225,7 +228,7 @@ GET /health:
 - `tokio` - Async runtime and synchronization primitives
 - `tracing` - Structured logging
 
-#### Monitor JSONL Parser - `parser.rs` (Phase 4 New)
+#### Monitor JSONL Parser - `parser.rs` (Phase 4)
 
 **Purpose**: Parse Claude Code JSONL format and normalize to VibeTea events
 
@@ -251,6 +254,67 @@ GET /health:
 - `SessionParser::parse_line()` - Parse single JSONL line
 - Extracts UUID from filename as session ID
 - URL-decodes project name from path
+
+#### Monitor Privacy Pipeline - `privacy.rs` (Phase 5 New)
+
+**Purpose**: Sanitize event payloads before transmission to ensure no sensitive data leaves the monitor
+
+**File Size**: 1039 lines including tests
+
+**Key Types**:
+- `PrivacyConfig` - Configuration for extension allowlist
+- `PrivacyPipeline` - Main processor for event payload sanitization
+- `extract_basename()` - Utility function for path-to-basename conversion
+
+**Key Methods**:
+- `PrivacyConfig::new()` - Create with optional extension allowlist
+- `PrivacyConfig::from_env()` - Load allowlist from VIBETEA_BASENAME_ALLOWLIST env var
+- `PrivacyConfig::is_extension_allowed()` - Check if basename extension is allowed
+- `PrivacyPipeline::new()` - Create pipeline with config
+- `PrivacyPipeline::process()` - Process event payload through sanitization stages
+- `extract_basename()` - Convert full path to basename (Unix/Windows compatible)
+
+**Sensitive Tools** (context always stripped):
+- `Bash` - Commands may contain secrets
+- `Grep` - Patterns reveal user intent
+- `Glob` - Patterns reveal project structure
+- `WebSearch` - Queries reveal intent
+- `WebFetch` - URLs may contain sensitive information
+
+**Configuration Variables**:
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `VIBETEA_BASENAME_ALLOWLIST` | Comma-separated file extensions (e.g., `.rs,.ts,.md`) | None (allow all) |
+
+**Privacy Guarantees**:
+- No full file paths (only basenames)
+- No file contents or diffs
+- No user prompts or assistant responses
+- No actual Bash commands
+- No Grep/Glob search patterns
+- No WebSearch/WebFetch URLs
+- Summary text replaced with "Session ended"
+- Extension allowlist filtering prevents restricted file types
+
+**Example Usage**:
+```rust
+// Allow only Rust and TypeScript files
+let config = PrivacyConfig::from_env();  // Reads VIBETEA_BASENAME_ALLOWLIST
+let pipeline = PrivacyPipeline::new(config);
+
+// Process event before transmission
+let sanitized = pipeline.process(event);
+```
+
+**Test Coverage** (Privacy Test Suite - 951 lines):
+- Configuration parsing tests
+- Extension allowlist filtering tests
+- Path-to-basename conversion tests
+- Sensitive tool context stripping tests
+- Summary text replacement tests
+- All event type payload transformations
+- Cross-platform path handling
+- Environment variable parsing edge cases
 
 **Configuration Variables**:
 | Variable | Purpose | Required | Default |
@@ -338,19 +402,21 @@ main.rs
 - `rate_limit` ← Per-source request rate limiting
 - `main` ← Server startup, logging setup, signal handling, graceful shutdown
 
-### Monitor Module Structure (Phase 4)
+### Monitor Module Structure (Phase 5)
 
 **Public API** (`src/lib.rs`):
 ```rust
 pub mod config;
 pub mod error;
 pub mod parser;
+pub mod privacy;
 pub mod types;
 pub mod watcher;
 
 pub use config::Config;
 pub use error::{MonitorError, Result};
 pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
+pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 pub use watcher::{FileWatcher, WatchEvent, WatcherError};
 ```
@@ -365,6 +431,10 @@ parser.rs
   ├── uses: types (Event, EventPayload)
   └── provides: ParsedEvent, SessionParser
 
+privacy.rs (Phase 5 NEW)
+  ├── uses: types (EventPayload)
+  └── provides: PrivacyConfig, PrivacyPipeline, extract_basename
+
 config.rs
   ├── uses: (environment only)
   └── provides: Config struct
@@ -378,7 +448,7 @@ types.rs
   └── provides: Event, EventPayload, EventType
 
 main.rs
-  ├── uses: config, watcher, parser, types
+  ├── uses: config, watcher, parser, privacy, types
   └── provides: Monitor bootstrap (Phase 4 placeholder)
 ```
 
@@ -388,7 +458,8 @@ main.rs
 - `types` ← Event schema and serialization
 - `watcher` ← File system monitoring and position tracking (Phase 4)
 - `parser` ← JSONL parsing and event normalization (Phase 4)
-- `main` ← File watching, parsing, batching, and transmission (Phase 4 placeholder)
+- `privacy` ← Event payload sanitization before transmission (Phase 5 NEW)
+- `main` ← File watching, parsing, batching, transmission (Phase 4 placeholder)
 
 ### Client Module Structure
 
@@ -405,16 +476,17 @@ main.rs
 | New server feature logic | `server/src/{feature}.rs` in public mod or routes | `auth.rs`, `broadcast.rs`, `rate_limit.rs` |
 | New HTTP route | `server/src/routes.rs` function | `post_events`, `get_ws`, `get_health` |
 | New error type | `server/src/error.rs` enum variant | `AuthError`, `RateLimitError` |
-| New monitor feature | `monitor/src/{feature}.rs` | `watcher.rs`, `parser.rs` (Phase 4 added) |
+| New monitor feature | `monitor/src/{feature}.rs` | `watcher.rs`, `parser.rs` (Phase 4), `privacy.rs` (Phase 5) |
 | File watching logic | `monitor/src/watcher.rs` | Extend FileWatcher (Phase 4) |
 | JSONL parsing logic | `monitor/src/parser.rs` | Extend SessionParser (Phase 4) |
-| Monitor main logic | `monitor/src/main.rs` | Watch directory, parse files, send events (Phase 4) |
+| Privacy filtering logic | `monitor/src/privacy.rs` | Extend PrivacyPipeline (Phase 5) |
+| Monitor main logic | `monitor/src/main.rs` | Watch directory, parse files, sanitize, send events (Phase 4+) |
 | New React component | `client/src/components/{feature}/` | `client/src/components/sessions/SessionList.tsx` |
 | New client hook | `client/src/hooks/` | `client/src/hooks/useWebSocket.ts` |
 | New utility function | `client/src/utils/` | `client/src/utils/formatDate.ts` |
 | New type definition | `client/src/types/` | `client/src/types/api.ts` |
 | Server integration tests | `server/tests/` | `server/tests/unsafe_mode_test.rs` |
-| Monitor tests | `monitor/tests/` | `monitor/tests/parser.rs`, `monitor/tests/watcher.rs` |
+| Monitor tests | `monitor/tests/` | `monitor/tests/privacy_test.rs` (Phase 5) |
 
 ## Import Paths
 
@@ -437,6 +509,7 @@ use crate::broadcast::EventBroadcaster;
 use crate::rate_limit::RateLimiter;
 use crate::watcher::FileWatcher;
 use crate::parser::SessionParser;
+use crate::privacy::{PrivacyConfig, PrivacyPipeline, extract_basename};
 ```
 
 ### TypeScript
@@ -471,7 +544,7 @@ import { formatDate } from '@utils/formatDate';
 | `server/src/main.rs` | Server application bootstrap with graceful shutdown | Phase 3 complete |
 | `server/src/lib.rs` | Server public library API | Exports all modules |
 | `monitor/src/main.rs` | Monitor application bootstrap | Placeholder (Phase 4) |
-| `monitor/src/lib.rs` | Monitor public library API | Exports watcher, parser, types (Phase 4) |
+| `monitor/src/lib.rs` | Monitor public library API | Exports watcher, parser, privacy, types (Phase 5) |
 | `client/src/main.tsx` | React DOM render | Renders App into #root |
 | `client/src/App.tsx` | Root React component | Placeholder (Phase 3) |
 | `client/index.html` | HTML template | Vite entry point |
@@ -487,31 +560,51 @@ Files that are auto-generated or compile-time artifacts:
 | `client/dist/` | `npm run build` (Vite) | Bundled client JavaScript and CSS |
 | `Cargo.lock` | `cargo` | Dependency lock file (committed) |
 
-## Phase 4 Implementation Summary
+## Phase 5 Implementation Summary
 
-The following modules were added/updated in Phase 4 for the monitor:
+The following modules were added/updated in Phase 5 for the monitor:
 
 **Monitor New Modules**:
 
-- `src/watcher.rs` - File system watching (NEW)
+- `src/privacy.rs` - Privacy pipeline for event sanitization (NEW - Phase 5)
+  - PrivacyConfig for extension allowlist configuration
+  - PrivacyPipeline for multi-stage event payload sanitization
+  - extract_basename() utility for path conversion
+  - Sensitive tool detection (Bash, Grep, Glob, WebSearch, WebFetch)
+  - Extension allowlist filtering
+  - Summary text replacement
+  - Complete documentation with examples
+  - 1039 total lines of code and documentation
+
+**Monitor Test Modules**:
+
+- `tests/privacy_test.rs` - Privacy compliance test suite (NEW - Phase 5)
+  - Configuration parsing tests
+  - Extension allowlist filtering tests
+  - Path-to-basename conversion tests (Unix, Windows, relative)
+  - Sensitive tool context stripping validation
+  - Summary text replacement verification
+  - All event type payload transformations
+  - 951 total lines of tests covering all privacy guarantees
+
+**Monitor Updated Modules** (Phase 5):
+- `src/lib.rs` - Updated public API
+  - Now exports privacy module
+  - Exports PrivacyConfig, PrivacyPipeline, extract_basename types
+
+**Monitor Phase 4 Modules** (Still in use):
+- `src/watcher.rs` - File system watching with position tracking
   - FileWatcher using notify crate
-  - WatchEvent enum (FileCreated, LinesAdded, FileRemoved)
   - Position tracking with RwLock HashMap
   - Recursive `.jsonl` file monitoring
 
-- `src/parser.rs` - JSONL parsing (NEW)
+- `src/parser.rs` - JSONL parsing and normalization
   - SessionParser for stateful parsing
   - ParsedEventKind enum (5 event types)
   - Claude Code event format mapping
-  - Privacy-first metadata extraction
-  - Session ID from filename, project from path
-
-- `src/lib.rs` - Updated public API (Phase 4)
-  - Now exports watcher and parser modules
-  - Exports ParsedEvent and SessionParser types
 
 **Monitor Existing Modules** (Phase 3):
-- `src/main.rs` - Entry point (still placeholder, awaiting Phase 4+ implementation)
+- `src/main.rs` - Entry point (placeholder, awaiting Phase 4+ implementation)
 - `src/config.rs` - Configuration loading
 - `src/error.rs` - Error types
 - `src/types.rs` - Event definitions

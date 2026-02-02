@@ -1,6 +1,6 @@
 # Architecture
 
-**Status**: Phase 4 incremental update - Monitor parser and file watcher implementation
+**Status**: Phase 5 incremental update - Monitor privacy pipeline implementation
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -8,7 +8,7 @@
 
 VibeTea is a three-tier real-time event streaming system with clear separation of concerns:
 
-- **Monitor** (Rust): Event producer that watches Claude Code session files and captures activity
+- **Monitor** (Rust): Event producer that watches Claude Code session files and captures activity with privacy guarantees
 - **Server** (Rust): Event hub that authenticates monitors and broadcasts to clients
 - **Client** (TypeScript/React): Event consumer that displays sessions and activities
 
@@ -20,10 +20,11 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 |---------|-------------|
 | **Hub-and-Spoke** | Monitors push events to the server, clients subscribe via WebSocket |
 | **Event-Driven** | All state changes flow through immutable, versioned events |
-| **Layered** | Monitor: Config/Watcher/Parser → Types; Server: Routes → Auth/Broadcast/RateLimit → Types; Client: Types → Hooks → Components |
+| **Layered** | Monitor: Config/Watcher/Parser/Privacy → Types; Server: Routes → Auth/Broadcast/RateLimit → Types; Client: Types → Hooks → Components |
 | **Pub/Sub** | Server acts as event broker with asymmetric authentication (monitors sign, clients consume) |
 | **Token Bucket** | Per-source rate limiting using token bucket algorithm with stale entry cleanup |
 | **File Tailing** | Monitor uses position tracking to efficiently read only new content from JSONL files |
+| **Privacy Pipeline** | Multi-stage data sanitization ensuring no sensitive data leaves the monitor (Phase 5) |
 
 ## Core Components
 
@@ -163,11 +164,86 @@ pub struct AppState {
 
 **Privacy Strategy**: Extracts only metadata (tool names, timestamps, file basenames), never processes code content or prompts
 
+### Monitor Privacy Pipeline
+
+**Purpose**: Ensure no sensitive data (source code, file paths, prompts, commands) is transmitted to the server
+**Location**: `monitor/src/privacy.rs`
+**Responsibility**: Multi-stage data sanitization before event transmission
+
+**Phase 5 New - Privacy Pipeline Pattern**:
+
+The privacy module implements a **defense-in-depth sanitization pipeline** with multiple stages:
+
+**Stage 1: Configuration** (`PrivacyConfig`)
+- Loads allowlist from `VIBETEA_BASENAME_ALLOWLIST` environment variable
+- Supports extension filtering (e.g., `.rs,.ts,.md` to allow only those files)
+- All-or-nothing filtering: if allowlist is set, only matching extensions pass through
+- Trims whitespace, auto-adds dots to extensions, filters empty entries
+
+**Stage 2: Sensitive Tool Detection** (constant `SENSITIVE_TOOLS`)
+- Bash: Shell commands may contain API keys, passwords, secrets
+- Grep: Search patterns reveal user intent
+- Glob: File patterns reveal project structure
+- WebSearch, WebFetch: URLs and queries contain sensitive information
+- These tools always have context stripped to `None`
+
+**Stage 3: Path Sanitization** (`extract_basename()`)
+- Converts full paths like `/home/user/project/src/auth.ts` → `auth.ts`
+- Handles Unix absolute/relative paths, Windows paths, already-basenames
+- Cross-platform using `std::path::Path`
+- Returns `None` for invalid paths (empty, root-only)
+
+**Stage 4: Context Processing** (`process_tool_context()`)
+- Sensitive tools: context → None
+- Other tools: extract basename, apply allowlist, transmit only if extension matches
+- Non-matching extensions get context set to None (file not transmitted)
+
+**Stage 5: Payload Transformation** (`process()`)
+- Session events: pass through (project already sanitized at parse time)
+- Activity events: pass through unchanged
+- Tool events: context processed per stage 4
+- Agent events: pass through unchanged
+- Summary events: text replaced with "Session ended"
+- Error events: pass through (category already sanitized)
+
+**Key Types**:
+- `PrivacyConfig` - Controls extension allowlist configuration
+- `PrivacyPipeline` - Main processor applying all transformations
+- `extract_basename()` - Utility for path-to-basename conversion
+
+**Configuration Variables**:
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `VIBETEA_BASENAME_ALLOWLIST` | Comma-separated file extensions to allow (e.g., `.rs,.ts`) | None (allow all) |
+
+**Example Usage**:
+```rust
+// Allow only Rust and TypeScript files
+let mut allowlist = HashSet::new();
+allowlist.insert(".rs".to_string());
+allowlist.insert(".ts".to_string());
+let config = PrivacyConfig::new(Some(allowlist));
+let pipeline = PrivacyPipeline::new(config);
+
+// Process an event before transmission
+let sanitized_event = pipeline.process(event);
+```
+
+**Privacy Guarantees**:
+- ✓ No full file paths in Tool events (only basenames)
+- ✓ No file contents or diffs
+- ✓ No user prompts or assistant responses
+- ✓ No actual Bash commands (only description field)
+- ✓ No Grep/Glob search patterns
+- ✓ No WebSearch/WebFetch URLs or queries
+- ✓ Summary text replaced with neutral message
+- ✓ Extension allowlist prevents restricted file types from leaving the monitor
+
 ### Monitor Component
 
-**Purpose**: Captures Claude Code session activity and transmits to server
+**Purpose**: Captures Claude Code session activity with privacy guarantees and transmits to server
 **Location**: `monitor/src/`
-**Technologies**: Rust, tokio, file watching, JSONL parsing, Ed25519 cryptography
+**Technologies**: Rust, tokio, file watching, JSONL parsing, Ed25519 cryptography, privacy pipeline
 
 **Module Hierarchy**:
 ```
@@ -178,14 +254,17 @@ monitor/src/
 ├── types.rs      - Event definitions
 ├── error.rs      - Error hierarchy
 ├── watcher.rs    - File system watching (Phase 4 new)
-└── parser.rs     - JSONL parsing (Phase 4 new)
+├── parser.rs     - JSONL parsing (Phase 4 new)
+└── privacy.rs    - Privacy pipeline (Phase 5 new)
 ```
 
-**Key Features (Phase 4)**:
+**Key Features (Phase 5)**:
 - File system watching for `.jsonl` files
 - Incremental parsing with position tracking
 - Claude Code event format normalization
-- Privacy-first approach (metadata only)
+- Privacy pipeline with multi-stage sanitization
+- Extension allowlist filtering
+- Sensitive tool detection and context stripping
 
 ### Client Component
 
@@ -201,7 +280,7 @@ monitor/src/
 
 ## Data Flow
 
-### Monitor → Server Flow (Phase 4)
+### Monitor → Server Flow (Phase 5)
 
 ```
 Claude Code Session Activity
@@ -217,6 +296,10 @@ Claude Code Session Activity
     ParsedEvent (normalized)
          ↓
     VibeTea Event Construction
+         ↓
+    PrivacyPipeline Processing
+         ↓
+    Sanitized Event Payload
          ↓
     Sign with Ed25519 Private Key
          ↓
@@ -241,13 +324,18 @@ Claude Code Session Activity
 3. SessionParser reads new lines from tracked position
 4. Parser extracts Claude Code events and converts to normalized ParsedEvent
 5. ParsedEvent is converted to VibeTea Event with session ID, timestamp, source
-6. Events are buffered and signed with monitor's private key
-7. Signed batch is sent to server's `/events` endpoint via HTTPS POST
-8. Server route handler extracts source ID from X-Source-ID header
-9. Auth module verifies signature using configured public key
-10. Rate limiter checks request allowance for source
-11. Event schema is validated
-12. EventBroadcaster immediately forwards to all subscribed WebSocket clients
+6. **NEW (Phase 5)**: PrivacyPipeline processes event payload:
+   - Strips context from sensitive tools (Bash, Grep, Glob, WebSearch, WebFetch)
+   - Converts full paths to basenames
+   - Applies extension allowlist filtering
+   - Replaces summary text with neutral message
+7. Sanitized event is buffered and signed with monitor's private key
+8. Signed batch is sent to server's `/events` endpoint via HTTPS POST
+9. Server route handler extracts source ID from X-Source-ID header
+10. Auth module verifies signature using configured public key
+11. Rate limiter checks request allowance for source
+12. Event schema is validated
+13. EventBroadcaster immediately forwards to all subscribed WebSocket clients
 
 ### Server → Client Flow
 
@@ -294,6 +382,7 @@ Authenticated Event
 | **RateLimit Module** | Token bucket tracking, stale entry cleanup | None (self-contained) | Routes, auth, broadcast |
 | **Monitor File Watcher** | File system observation, position tracking | Filesystem | Parser directly (events via channel) |
 | **Monitor Parser** | JSONL parsing, event normalization | Types | Filesystem directly |
+| **Monitor Privacy Pipeline** | Event payload sanitization | Types (EventPayload) | Filesystem, auth, server communication |
 | **Client Component** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
 
 ## Dependency Rules
@@ -305,6 +394,8 @@ Authenticated Event
 - **Type safety**: All three languages use strong typing; event schema is enforced at compile time
 - **Asymmetric auth**: Monitors authenticate with cryptographic signatures; clients authenticate with bearer tokens
 - **File watcher isolation**: Watcher and parser communicate via channels, no direct file access from parser
+- **Privacy pipeline is mandatory**: All events must be processed through privacy pipeline before transmission
+- **Privacy is immutable**: PrivacyConfig and PrivacyPipeline are immutable after creation
 
 ## Key Interfaces & Contracts
 
@@ -367,6 +458,33 @@ pub enum ParsedEventKind {
 }
 ```
 
+### Monitor Privacy Pipeline Contract
+
+```rust
+// Privacy pipeline processes event payloads
+pub struct PrivacyPipeline {
+    config: PrivacyConfig,
+}
+
+impl PrivacyPipeline {
+    pub fn new(config: PrivacyConfig) -> Self { ... }
+    pub fn process(&self, payload: EventPayload) -> EventPayload { ... }
+}
+
+pub struct PrivacyConfig {
+    basename_allowlist: Option<HashSet<String>>,
+}
+
+impl PrivacyConfig {
+    pub fn new(basename_allowlist: Option<HashSet<String>>) -> Self { ... }
+    pub fn from_env() -> Self { ... }
+    pub fn is_extension_allowed(&self, basename: &str) -> bool { ... }
+}
+
+// Path sanitization utility
+pub fn extract_basename(path: &str) -> Option<String> { ... }
+```
+
 ### Monitor ↔ Server HTTP Contract
 
 **Endpoint**: `POST /events`
@@ -418,6 +536,7 @@ pub enum ParsedEventKind {
 | **WebSocket Protocol** | Ping/pong handling, text messages, close frames | `routes.rs` (handle_websocket) |
 | **File Watching** | Recursive directory monitoring, change detection | `watcher.rs` (notify-based) |
 | **Event Parsing** | Claude Code JSONL normalization, privacy filtering | `parser.rs` |
+| **Privacy Pipeline** | Multi-stage data sanitization before transmission | `privacy.rs` (Phase 5) |
 
 ## Testing Strategy
 
@@ -429,6 +548,14 @@ pub enum ParsedEventKind {
 - WebSocket filter tests (source, event type, project filtering)
 - AppState initialization tests
 
+**Monitor Tests**: Located in `monitor/tests/privacy_test.rs` (Phase 5 new)
+- Privacy pipeline validation tests
+- Path-to-basename conversion tests
+- Extension allowlist filtering tests
+- Sensitive tool context stripping tests
+- Summary text replacement tests
+- Configuration parsing tests (environment variables)
+
 **Integration Tests**: Located in `server/tests/unsafe_mode_test.rs`
 - End-to-end scenarios in unsafe mode (auth disabled)
 
@@ -437,6 +564,7 @@ pub enum ParsedEventKind {
 cargo test --package vibetea-server  # All server tests
 cargo test --package vibetea-server routes  # Route tests only
 cargo test --package vibetea-monitor  # All monitor tests
+cargo test --package vibetea-monitor privacy  # Privacy tests only
 ```
 
 ## Graceful Shutdown Flow

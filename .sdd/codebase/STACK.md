@@ -1,13 +1,13 @@
 # Technology Stack
 
-**Status**: Phase 4 Implementation - Claude Code JSONL parser and file watcher modules added
+**Status**: Phase 5 Implementation - Privacy pipeline module for event sanitization
 **Last Updated**: 2026-02-02
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, event capture and signing |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event capture and signing |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 
@@ -158,8 +158,9 @@
 - `config.rs` - Configuration from environment variables (server URL, source ID, key path, buffer size)
 - `error.rs` - Error types
 - `types.rs` - Event types
-- `parser.rs` - **NEW**: Claude Code JSONL parser (privacy-first metadata extraction)
-- `watcher.rs` - **NEW**: File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
+- `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction)
+- `watcher.rs` - File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
+- `privacy.rs` - **NEW Phase 5**: Privacy pipeline for event sanitization before transmission
 - `lib.rs` - Public interface
 - `main.rs` - Monitor entry point
 
@@ -201,6 +202,42 @@
 - Public exports: SessionParser, ParsedEvent, ParsedEventKind
 - Documentation expanded with overview, privacy statement, and module descriptions
 
+## Phase 5 Additions
+
+**Monitor Privacy Module** (`monitor/src/privacy.rs` - 1039 lines):
+- **PrivacyConfig**: Configuration for privacy filtering with optional extension allowlist
+- **PrivacyPipeline**: Core privacy processor that sanitizes event payloads before transmission
+- **extract_basename()**: Utility function to reduce full paths to secure basenames
+- **Sensitive tool detection**: Hardcoded list of tools requiring full context stripping (Bash, Grep, Glob, WebSearch, WebFetch)
+- **Extension allowlist**: Optional filtering based on file extensions (configurable via `VIBETEA_BASENAME_ALLOWLIST`)
+- **Summary stripping**: Session summary text replaced with neutral "Session ended" message
+- **Comprehensive documentation**: Privacy guarantees, examples, and implementation details
+
+**Privacy Test Suite** (`monitor/tests/privacy_test.rs` - 951 lines):
+- 18+ comprehensive privacy compliance tests
+- Validates Constitution I (Privacy by Design)
+- Test categories:
+  - Path sanitization (no full paths in output)
+  - Sensitive tool context stripping (Bash, Grep, Glob, WebSearch, WebFetch)
+  - File content/diff stripping
+  - Code prompt/response stripping
+  - Command argument removal
+  - Summary text neutralization
+  - Extension allowlist filtering
+  - Sensitive pattern detection (credentials, paths, commands)
+
+**Privacy Pipeline Integration Points** (`monitor/src/lib.rs`):
+- Public exports: PrivacyConfig, PrivacyPipeline, extract_basename
+- Module documentation: Privacy-first approach explained
+- Ready for integration into main event loop
+
+**Configuration**: VIBETEA_BASENAME_ALLOWLIST env var
+- Format: Comma-separated extensions (e.g., `.rs,.ts,.md`)
+- Handles missing dots: `rs,ts,md` auto-converted to `.rs,.ts,.md`
+- Whitespace trimming: ` .rs , .ts ` normalized correctly
+- Empty entries filtered: `.rs,,.ts,,,` results in `.rs`, `.ts`
+- When not set: All extensions allowed (default privacy-preserving behavior)
+
 ## Not Yet Implemented
 
 - Database/persistence layer
@@ -211,5 +248,5 @@
 - Automatic reconnection on WebSocket disconnection
 - Per-user authentication tokens
 - Token rotation and expiration
-- Monitor integration with file watcher and parser (Phase 4 in progress)
+- Monitor integration with file watcher, parser, and privacy pipeline (Phase 5 in progress)
 - Chunked event sending for high-volume sessions

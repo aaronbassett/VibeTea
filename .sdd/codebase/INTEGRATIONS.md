@@ -1,16 +1,16 @@
 # External Integrations
 
-**Status**: Phase 4 - Claude Code JSONL parsing and file system monitoring operational
+**Status**: Phase 5 - Privacy pipeline for event sanitization before transmission
 **Last Updated**: 2026-02-02
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files and file system changes
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, and transmits to server
 - **Server**: Receives, validates, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization
 
-All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication.
+All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication and privacy-by-design data handling.
 
 ## File System Integration
 
@@ -22,11 +22,13 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 
 **Parser Location**: `monitor/src/parser.rs` (SessionParser, ParsedEvent, ParsedEventKind)
 **Watcher Location**: `monitor/src/watcher.rs` (FileWatcher, WatchEvent)
+**Privacy Pipeline**: `monitor/src/privacy.rs` (PrivacyConfig, PrivacyPipeline, extract_basename)
 
 **Privacy-First Approach**:
 - Only metadata extracted: tool names, timestamps, file basenames
 - Never processes code content, prompts, or assistant responses
 - File path parsing for project name extraction (slugified format)
+- All event payloads pass through PrivacyPipeline before transmission
 
 **Session File Structure**:
 ```
@@ -55,6 +57,125 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 | `VIBETEA_CLAUDE_DIR` | No | ~/.claude | Claude Code directory to monitor |
 | `VIBETEA_BASENAME_ALLOWLIST` | No | - | Comma-separated file extensions to watch |
 | `VIBETEA_BUFFER_SIZE` | No | 1000 | Event buffer capacity |
+
+## Privacy & Data Sanitization
+
+### Privacy Pipeline Architecture
+
+**Location**: `monitor/src/privacy.rs` (1039 lines)
+
+**Core Components**:
+
+1. **PrivacyConfig** - Configuration management
+   - Optional extension allowlist (e.g., `.rs`, `.ts`)
+   - Loaded from `VIBETEA_BASENAME_ALLOWLIST` environment variable
+   - Supports comma-separated format: `.rs,.ts,.md` or `rs,ts,md` (auto-dots)
+   - Whitespace-tolerant: ` .rs , .ts ` normalized to `[".rs", ".ts"]`
+   - Empty entries filtered: `.rs,,.ts,,,` becomes `[".rs", ".ts"]`
+
+2. **PrivacyPipeline** - Event sanitization processor
+   - Processes EventPayload before transmission to server
+   - Strips sensitive contexts from dangerous tools
+   - Extracts basenames from file paths
+   - Applies extension allowlist filtering
+   - Neutralizes session summary text
+
+3. **extract_basename()** - Path safety function
+   - Converts full paths to secure basenames
+   - Handles Unix: `/home/user/src/auth.ts` → `auth.ts`
+   - Handles Windows: `C:\Users\user\src\auth.ts` → `auth.ts`
+   - Handles relative: `src/auth.ts` → `auth.ts`
+   - Returns `None` for invalid/empty paths
+
+**Sensitive Tools** (context always stripped):
+- `Bash` - Commands may contain secrets, passwords, API keys
+- `Grep` - Patterns reveal what user is searching for
+- `Glob` - File patterns reveal project structure
+- `WebSearch` - Queries reveal user intent
+- `WebFetch` - URLs may contain sensitive parameters
+
+**Privacy Processing Rules**:
+
+| Payload Type | Processing |
+|--------------|-----------|
+| Session | Pass through (project already sanitized at parse time) |
+| Activity | Pass through unchanged |
+| Tool (sensitive) | Context set to `None` |
+| Tool (other) | Context → basename, apply allowlist, pass if allowed else `None` |
+| Agent | Pass through unchanged |
+| Summary | Summary text replaced with "Session ended" |
+| Error | Pass through (category already sanitized) |
+
+**Extension Allowlist Filtering**:
+- When `VIBETEA_BASENAME_ALLOWLIST` is not set: All extensions allowed
+- When set to `.rs,.ts`: Only `.rs` and `.ts` files transmitted; others filtered to `None`
+- If no extension and allowlist set: Context filtered to `None`
+- Examples:
+  - `file.rs` with allowlist `.rs,.ts` → ALLOWED
+  - `file.py` with allowlist `.rs,.ts` → FILTERED
+  - `Makefile` with allowlist `.rs,.ts` → FILTERED (no extension)
+
+**Example Privacy Processing**:
+```
+Input:  Tool { context: Some("/home/user/project/src/auth.rs"), tool: "Read", ... }
+Output: Tool { context: Some("auth.rs"), tool: "Read", ... }
+
+Input:  Tool { context: Some("rm -rf /home"), tool: "Bash", ... }
+Output: Tool { context: None, tool: "Bash", ... }  # Sensitive tool
+
+Input:  Tool { context: Some("/home/user/config.py"), tool: "Read", allowlist: [.rs,.ts] }
+Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
+```
+
+### Privacy Test Suite
+
+**Location**: `monitor/tests/privacy_test.rs` (951 lines)
+
+**Coverage**: 18+ comprehensive privacy compliance tests
+**Validates**: Constitution I (Privacy by Design)
+
+**Test Categories**:
+1. **Path Sanitization**
+   - No full paths in output (Unix, Windows, relative)
+   - Basenames correctly extracted
+   - Hidden files handled
+
+2. **Sensitive Tool Stripping**
+   - Bash commands removed entirely
+   - Grep patterns omitted
+   - Glob patterns stripped
+   - WebSearch queries removed
+   - WebFetch URLs removed
+
+3. **Content Stripping**
+   - File contents never transmitted
+   - Diffs excluded from payloads
+   - Code excerpts removed
+
+4. **Prompt/Response Stripping**
+   - User prompts not included
+   - Assistant responses excluded
+   - Message content sanitized
+
+5. **Command Argument Removal**
+   - Arguments separated from descriptions
+   - Descriptions allowed for Bash context
+   - Actual commands never sent
+
+6. **Summary Neutralization**
+   - Summary text set to generic "Session ended"
+   - Original text discarded
+   - No content leakage
+
+7. **Extension Allowlist Filtering**
+   - Correct files allowed through
+   - Disallowed extensions filtered
+   - No-extension files handled properly
+
+8. **Sensitive Pattern Detection**
+   - Path patterns never appear (e.g., `/home/`, `/Users/`, `C:\`)
+   - Command patterns removed (e.g., `rm -rf`, `sudo`, `curl -`, `Bearer`)
+   - Credentials not transmitted
 
 ## Authentication & Authorization
 
@@ -108,7 +229,7 @@ VIBETEA_PUBLIC_KEYS=monitor-prod:dGVzdHB1YmtleTEx,monitor-dev:dGVzdHB1YmtleTIy
 **Configuration Location**: `server/src/config.rs`
 - Parses `VIBETEA_SUBSCRIBER_TOKEN` (required unless unsafe mode enabled)
 - Token required for all WebSocket connections
-- No token refresh mechanism in Phase 4
+- No token refresh mechanism in Phase 5
 - Stored as `Option<String>` in Config struct
 
 **Future Enhancements**: Per-user tokens, token expiration, refresh tokens
@@ -150,6 +271,12 @@ Event {
 - SessionParser converts ParsedEventKind → VibeTea Event types
 - Tool invocations tracked with extracted context (file basenames)
 - Session lifecycle inferred from JSONL file creation/removal and summary markers
+
+**Phase 5 Privacy Integration** (`monitor/src/privacy.rs`):
+- ProcessedEvent payloads through PrivacyPipeline before transmission
+- Sensitive contexts stripped according to tool type
+- Paths reduced to basenames with extension filtering
+- Summary text neutralized to privacy-safe message
 
 ### Client Event Store Integration
 
@@ -201,11 +328,12 @@ export interface EventStore {
 **Flow**:
 1. Monitor watches local JSONL files via file watcher
 2. Parser extracts metadata from new/modified JSONL lines
-3. Monitor signs event payload with Ed25519 private key
-4. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers
-5. Server validates signature against registered public key
-6. Server rate limits based on source ID (100 events/sec default)
-7. Server broadcasts to all connected clients via WebSocket
+3. Events processed through PrivacyPipeline (Phase 5)
+4. Monitor signs event payload with Ed25519 private key
+5. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers
+6. Server validates signature against registered public key
+7. Server rate limits based on source ID (100 events/sec default)
+8. Server broadcasts to all connected clients via WebSocket
 
 **Rate Limiting** (`server/src/rate_limit.rs`):
 - Token bucket algorithm per source
@@ -256,7 +384,7 @@ export interface EventStore {
 **Connection Details**:
 - Address/port: Configured via `PORT` environment variable (default: 8080)
 - Persistent connection model
-- No automatic reconnection (Phase 4 - future enhancement)
+- No automatic reconnection (Phase 5 - future enhancement)
 - No message queuing (direct streaming)
 - Events processed with selective subscriptions to prevent unnecessary re-renders
 
@@ -388,7 +516,7 @@ VIBETEA_SOURCE_ID=my-monitor                     # Custom source identifier
 VIBETEA_KEY_PATH=~/.vibetea                      # Directory with private/public keys
 VIBETEA_CLAUDE_DIR=~/.claude                     # Claude Code directory to watch
 VIBETEA_BUFFER_SIZE=1000                         # Event buffer capacity
-VIBETEA_BASENAME_ALLOWLIST=ts,tsx,rs             # Optional file extension filter
+VIBETEA_BASENAME_ALLOWLIST=.ts,.tsx,.rs          # Optional file extension filter (Phase 5)
 RUST_LOG=debug                                   # Logging level
 ```
 
@@ -400,18 +528,33 @@ RUST_LOG=debug                                   # Logging level
 - Buffer size parsed as usize, validated for positive integers
 - Allowlist split by comma, whitespace trimmed, empty entries filtered
 
+**Privacy Configuration** (Phase 5):
+- `VIBETEA_BASENAME_ALLOWLIST` loads into PrivacyConfig via `from_env()`
+- Format: `.rs,.ts,.md` or `rs,ts,md` (dots auto-added)
+- Whitespace tolerance: ` .rs , .ts ` → `[".rs", ".ts"]`
+- Empty entries filtered: `.rs,,.ts,,,` → `[".rs", ".ts"]`
+- When not set: All extensions allowed (default behavior)
+- Applied during PrivacyPipeline event processing
+
 **File System Monitoring**:
 - Watches directory: VIBETEA_CLAUDE_DIR
 - Monitors for file creation, modification, deletion, and directory changes
 - Uses `notify` crate (version 8.0) for cross-platform inotify/FSEvents
 - Optional extension filtering via VIBETEA_BASENAME_ALLOWLIST
-- **NEW Phase 4**: FileWatcher tracks position to efficiently tail JSONL files
+- Phase 4: FileWatcher tracks position to efficiently tail JSONL files
 
 **JSONL Parsing**:
-- **NEW Phase 4**: SessionParser extracts metadata from Claude Code JSONL
+- Phase 4: SessionParser extracts metadata from Claude Code JSONL
 - Privacy-first: Never processes code content or prompts
 - Tool tracking: Extracts tool name and context from assistant tool_use events
 - Progress tracking: Detects tool completion from progress PostToolUse events
+
+**Privacy Pipeline** (Phase 5):
+- PrivacyPipeline processes all events before transmission
+- PrivacyConfig loaded from `VIBETEA_BASENAME_ALLOWLIST`
+- Sensitive tools stripped: Bash, Grep, Glob, WebSearch, WebFetch
+- Paths reduced to basenames with extension allowlist filtering
+- Summary text neutralized to "Session ended"
 
 ### Local Client Setup
 
@@ -479,7 +622,8 @@ server: {
 - File watching errors (permission denied, path not found)
 - HTTP request errors (connection refused, timeout)
 - Cryptographic errors (invalid private key)
-- **NEW Phase 4**: JSONL parsing errors (invalid JSON, malformed events)
+- Phase 4: JSONL parsing errors (invalid JSON, malformed events)
+- Phase 5: Privacy processing errors (path parsing failures)
 
 **Config Error Types**:
 - MissingEnvVar(String) - VIBETEA_SERVER_URL required
@@ -502,6 +646,7 @@ server: {
 - Logs errors via `tracing` crate with structured context
 - Validates VIBETEA_BUFFER_SIZE as positive integer
 - Graceful degradation on malformed JSONL lines
+- Privacy processing failures logged without exposing sensitive data
 
 ## File System Monitoring
 
@@ -543,11 +688,12 @@ server: {
 **Components**:
 - Server: Logs configuration, connection events, errors, rate limiting
 - Monitor: Logs file system events, HTTP requests, signing operations
-- **NEW Phase 4**: Parser logs invalid JSONL events with context
-- **NEW Phase 4**: Watcher logs file tracking updates and position management
+- Phase 4: Parser logs invalid JSONL events with context
+- Phase 4: Watcher logs file tracking updates and position management
+- Phase 5: Privacy pipeline logs filtering decisions and sensitive tool detection
 - Warning logged when VIBETEA_UNSAFE_NO_AUTH is enabled
 
-**No External Service Integration** (Phase 4):
+**No External Service Integration** (Phase 5):
 - Logs to stdout/stderr only
 - Future: Integration with logging services (e.g., ELK, Datadog)
 
@@ -573,7 +719,7 @@ server: {
 **Bearer Token**:
 - Currently a static string per deployment
 - No encryption in transit (relies on TLS via HTTPS)
-- No expiration or refresh (Phase 4 limitation)
+- No expiration or refresh (Phase 5 limitation)
 
 **Security Implications**:
 - Token should be treated like a password
@@ -597,22 +743,28 @@ server: {
 
 ### Privacy
 
-**Claude Code JSONL**:
+**Claude Code JSONL** (Phase 4-5):
 - Parser never extracts code content, prompts, or responses
 - Only metadata stored: tool names, timestamps, file basenames
 - File paths used only for project name extraction
+- PrivacyPipeline (Phase 5) ensures sensitive data not transmitted:
+  - Full paths reduced to basenames
+  - Sensitive tool contexts always stripped
+  - Extension allowlist filtering applied
+  - Summary text neutralized
 - Event contents never logged or stored unencrypted
+- All transformations logged without revealing sensitive data
 
 ## Future Integration Points
 
 ### Planned (Not Yet Integrated)
 
-- **Database/Persistence**: Store events beyond memory (Phase 4+)
-- **Authentication Providers**: OAuth2, API key rotation (Phase 4+)
-- **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 4+)
+- **Main Event Loop**: Integrate file watcher, parser, privacy pipeline, and HTTP client (Phase 5 in progress)
+- **Database/Persistence**: Store events beyond memory (Phase 5+)
+- **Authentication Providers**: OAuth2, API key rotation (Phase 5+)
+- **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 5+)
 - **Message Queues**: Redis, RabbitMQ for event buffering (Phase 5+)
-- **Webhooks**: External service notifications (Phase 5+)
-- **Monitor Integration**: Main event loop connecting watcher, parser, and HTTP client (Phase 4 in progress)
+- **Webhooks**: External service notifications (Phase 6+)
 
 ## Configuration Quick Reference
 
@@ -637,7 +789,7 @@ server: {
 | `VIBETEA_KEY_PATH` | string | ~/.vibetea | No | Directory with key.priv/key.pub |
 | `VIBETEA_CLAUDE_DIR` | string | ~/.claude | No | Claude Code directory to watch |
 | `VIBETEA_BUFFER_SIZE` | number | 1000 | No | Event buffer capacity |
-| `VIBETEA_BASENAME_ALLOWLIST` | string | - | No | Comma-separated file extensions to watch |
+| `VIBETEA_BASENAME_ALLOWLIST` | string | - | No | Comma-separated file extensions to watch (Phase 5) |
 | `RUST_LOG` | string | info | No | Logging level (debug, info, warn, error) |
 
 ### Client Environment Variables
@@ -668,3 +820,30 @@ None required for production (future configuration planned).
 - `monitor/src/watcher.rs` - File system watching logic
 
 **Integration Status**: Parser and watcher modules complete; integration with main event loop in progress.
+
+## Phase 5 Changes
+
+**Monitor Privacy Module** (`monitor/src/privacy.rs` - 1039 lines):
+- **PrivacyConfig**: Configuration management for privacy filtering
+- **PrivacyPipeline**: Event sanitization processor
+- **extract_basename()**: Path-to-basename conversion utility
+- **Sensitive tool detection**: Hardcoded list (Bash, Grep, Glob, WebSearch, WebFetch)
+- **Extension allowlist**: Optional filtering by file extension
+- **Summary stripping**: Session summary neutralization
+- **Comprehensive documentation**: Privacy guarantees and usage examples
+
+**Privacy Test Suite** (`monitor/tests/privacy_test.rs` - 951 lines):
+- 18+ comprehensive privacy compliance tests
+- Validates Constitution I (Privacy by Design)
+- Path sanitization, sensitive tool stripping, content filtering
+- Extension allowlist verification, pattern detection
+- Sensitive data exclusion validation
+
+**Configuration** (`VIBETEA_BASENAME_ALLOWLIST`):
+- Comma-separated extensions (e.g., `.rs,.ts,.md`)
+- Auto-adds dots: `rs,ts,md` → `.rs,.ts,.md`
+- Whitespace-tolerant: ` .rs , .ts ` normalized
+- Empty entries filtered: `.rs,,.ts,,,` → `.rs,.ts`
+- When not set: All extensions allowed
+
+**Integration Status**: Privacy module complete and ready for main event loop integration.

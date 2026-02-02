@@ -73,20 +73,20 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs` |
-| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE` |
+| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs` |
+| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `PrivacyPipeline` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
 
 #### Code Elements
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080` |
-| Structs | PascalCase | `Config`, `Event`, `JsonlParser` |
+| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SENSITIVE_TOOLS = &["Bash", "Grep", "Glob"]` |
+| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `PrivacyConfig` |
 | Enums | PascalCase | `EventType`, `SessionAction`, `ServerError` |
-| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.watch_for_changes()` |
+| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
 ## Error Handling
@@ -353,6 +353,57 @@ impl ServerError {
 }
 ```
 
+### Privacy Pipeline Pattern (Rust - Phase 5)
+
+The privacy module (`monitor/src/privacy.rs`) implements a privacy-by-design approach using composable pipeline components:
+
+```rust
+// Configuration object controlling privacy behavior
+pub struct PrivacyConfig {
+    basename_allowlist: Option<HashSet<String>>,
+}
+
+impl PrivacyConfig {
+    pub fn from_env() -> Self {
+        // Reads VIBETEA_BASENAME_ALLOWLIST environment variable
+        // Format: ".rs,.ts,.md" (comma-separated extensions)
+    }
+
+    pub fn is_extension_allowed(&self, basename: &str) -> bool {
+        // Returns true if extension is in allowlist or no allowlist is set
+    }
+}
+
+// Pipeline struct encapsulating privacy transformations
+pub struct PrivacyPipeline {
+    config: PrivacyConfig,
+}
+
+impl PrivacyPipeline {
+    pub fn process(&self, payload: EventPayload) -> EventPayload {
+        // Applies privacy transformations:
+        // 1. Strips context from sensitive tools (Bash, Grep, Glob, WebSearch, WebFetch)
+        // 2. Extracts basenames from file paths for safe tools (Read, Write, Edit)
+        // 3. Applies allowlist filtering based on file extensions
+        // 4. Neutralizes summary text to "Session ended"
+        // 5. Passes through Session, Activity, Agent, Error payloads unchanged
+    }
+}
+
+// Utility function for basename extraction
+pub fn extract_basename(path: &str) -> Option<String> {
+    // Safely extracts filename from any path format
+    // Returns None for invalid paths (empty, root, trailing separators)
+}
+```
+
+Key conventions in privacy module:
+- **Immutable operations**: Privacy pipeline creates new payloads rather than modifying in-place
+- **Graceful degradation**: Invalid paths return `None` rather than panicking
+- **Configuration flexibility**: Uses environment variables for runtime control
+- **Comprehensive documentation**: Every public item has detailed doc comments with examples
+- **Privacy-first defaults**: Default config allows all extensions (no data loss), allowlist can be set to restrict
+
 ## Import Ordering
 
 ### TypeScript
@@ -447,6 +498,7 @@ const VALID_EVENT_TYPES = [
 | Example blocks | Complex public APIs | `/// # Examples` section |
 | Panics section | Functions that can panic | `/// # Panics` section |
 | Errors section | Fallible functions | `/// # Errors` section |
+| Section markers | Organize related tests | `// =========` multi-line headers |
 
 Example from `server/src/config.rs`:
 
@@ -488,6 +540,50 @@ impl Config {
 }
 ```
 
+Example from `monitor/src/privacy.rs` (Phase 5):
+
+```rust
+//! Privacy pipeline for VibeTea Monitor.
+//!
+//! This module ensures no sensitive data (source code, file contents, full paths,
+//! prompts, commands) is ever transmitted to the server.
+//!
+//! # Privacy Guarantees
+//!
+//! The privacy pipeline provides the following guarantees:
+//! - **Path-to-basename conversion**: Full paths like `/home/user/src/auth.ts` → `auth.ts`
+//! - **Content stripping**: File contents and code never transmitted
+//! - **Sensitive tool masking**: Bash, Grep, Glob, WebSearch, WebFetch context always stripped
+//! - **Extension allowlist filtering**: Optional filtering by file extension
+
+/// Tools whose context should always be stripped for privacy.
+///
+/// These tools may contain sensitive information:
+/// - `Bash`: Contains shell commands which may include secrets, passwords, or API keys
+/// - `Grep`: Contains search patterns which may reveal what the user is looking for
+/// - `Glob`: Contains file patterns which may reveal project structure
+/// - `WebSearch`: Contains search queries which may reveal user intent
+/// - `WebFetch`: Contains URLs which may contain sensitive information
+const SENSITIVE_TOOLS: &[&str] = &["Bash", "Grep", "Glob", "WebSearch", "WebFetch"];
+
+/// Extracts the basename (filename) from a file path.
+///
+/// This function handles various path formats:
+/// - Unix paths: `/home/user/file.rs` -> `file.rs`
+/// - Windows paths: `C:\Users\user\file.rs` -> `file.rs` (on Windows systems)
+/// - Relative paths: `src/file.rs` -> `file.rs`
+/// - Already a basename: `file.rs` -> `file.rs`
+///
+/// # Returns
+///
+/// - `Some(basename)` if a valid basename was extracted
+/// - `None` if the path is empty, ends with a separator, or has no filename
+#[must_use]
+pub fn extract_basename(path: &str) -> Option<String> {
+    // Implementation
+}
+```
+
 ## Git Conventions
 
 ### Commit Messages
@@ -503,6 +599,10 @@ Format: `type(scope): description`
 | refactor | Code restructure | `refactor(config): simplify validation` |
 | test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
+
+Examples with Phase 5:
+- `feat(monitor): add privacy pipeline with Constitution I compliance`
+- `test(monitor): add 38 unit tests for privacy module`
 
 ### Branch Naming
 
