@@ -1,13 +1,13 @@
 # External Integrations
 
-**Status**: Phase 5 - Privacy pipeline for event sanitization before transmission
+**Status**: Phase 6 Implementation - CLI, cryptographic signing, and HTTP sender
 **Last Updated**: 2026-02-02
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, and transmits to server
-- **Server**: Receives, validates, and broadcasts events via WebSocket
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP
+- **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization
 
 All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication and privacy-by-design data handling.
@@ -177,9 +177,60 @@ Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
    - Command patterns removed (e.g., `rm -rf`, `sudo`, `curl -`, `Bearer`)
    - Credentials not transmitted
 
-## Authentication & Authorization
+## Cryptographic Authentication & Key Management
 
-### Monitor Authentication (Monitor → Server)
+### Phase 6: Monitor Cryptographic Operations
+
+**Module Location**: `monitor/src/crypto.rs` (438 lines)
+
+**Crypto Module Features**:
+
+1. **Keypair Generation**
+   - `Crypto::generate()` creates new Ed25519 keypair
+   - Uses OS cryptographically secure RNG via `rand` crate
+   - Returns Crypto struct managing SigningKey
+
+2. **Key Persistence**
+   - `save(dir)` writes keypair to files
+   - Private key: `key.priv` (raw 32-byte seed, permissions 0600)
+   - Public key: `key.pub` (base64-encoded, permissions 0644)
+   - Creates directory if not present
+   - Error on invalid file permissions (Unix)
+
+3. **Key Loading**
+   - `load(dir)` reads existing keypair
+   - Validates private key is exactly 32 bytes
+   - Returns CryptoError if format invalid
+   - Reconstructs SigningKey from seed bytes
+
+4. **Key Existence Check**
+   - `exists(dir)` checks if private key file present
+   - Used to prevent accidental overwrite
+
+5. **Public Key Export**
+   - `public_key_base64()` returns base64-encoded public key
+   - Format suitable for `VIBETEA_PUBLIC_KEYS` environment variable
+   - Derived from SigningKey via VerifyingKey
+
+6. **Event Signing**
+   - `sign(message)` returns base64-encoded Ed25519 signature
+   - Message is JSON-encoded event payload (bytes)
+   - Signature verifiable by server with public key
+   - Uses RFC 8032 compliant signing via ed25519-dalek
+
+**CryptoError Types**:
+- `Io` - File system errors
+- `InvalidKey` - Seed not 32 bytes or malformed
+- `Base64` - Public key decoding error
+- `KeyExists` - Files already present (can be overwritten)
+
+**File Locations** (configurable):
+- Default key directory: `~/.vibetea/`
+- Override with `VIBETEA_KEY_PATH` environment variable
+- Private key: `{key_dir}/key.priv`
+- Public key: `{key_dir}/key.pub`
+
+### Monitor → Server Authentication
 
 | Aspect | Details | Configuration |
 |--------|---------|---------------|
@@ -234,6 +285,177 @@ VIBETEA_PUBLIC_KEYS=monitor-prod:dGVzdHB1YmtleTEx,monitor-dev:dGVzdHB1YmtleTIy
 
 **Future Enhancements**: Per-user tokens, token expiration, refresh tokens
 
+## HTTP Sender & Event Transmission
+
+### Phase 6: Event Sender Module
+
+**Module Location**: `monitor/src/sender.rs` (544 lines)
+
+**Sender Features**:
+
+1. **HTTP Client Configuration**
+   - Built with `reqwest` Client
+   - Connection pooling: 10 max idle connections per host
+   - Request timeout: 30 seconds
+   - Automatic redirect handling
+
+2. **Event Buffering**
+   - VecDeque-based buffer with FIFO eviction
+   - Default capacity: 1000 events
+   - Configurable via `buffer_size` parameter
+   - Tracks buffer overflow events with warnings
+   - Supports queuing before sending
+
+3. **Exponential Backoff Retry**
+   - Initial delay: 1 second
+   - Maximum delay: 60 seconds
+   - Jitter: ±25% per attempt
+   - Max retry attempts: 10 per batch
+   - Resets on successful send
+
+4. **Rate Limit Handling**
+   - Recognizes HTTP 429 (Too Many Requests)
+   - Reads `Retry-After` header from server
+   - Respects server-provided delay
+   - Falls back to exponential backoff if no header
+
+5. **Event Signing**
+   - Signs JSON event payload with Ed25519
+   - X-Signature header contains base64-encoded signature
+   - X-Source-ID header contains monitor source identifier
+   - Compatible with server `auth.rs` verification
+
+6. **Batch Sending**
+   - `send_batch()` for efficient transmission
+   - Single HTTP request with event array or single event
+   - JSON request body with event(s)
+   - 202 Accepted response expected
+
+7. **Buffer Management**
+   - `queue(event)` - Add to buffer
+   - `flush()` - Send all buffered events
+   - `send(event)` - Send single event immediately
+   - `buffer_len()` - Current buffer size
+   - `is_empty()` - Check if buffer empty
+
+8. **Graceful Shutdown**
+   - `shutdown(timeout)` - Flushes remaining events
+   - Returns count of unflushed events
+   - Waits for timeout before giving up
+   - Allows time for final retry attempts
+
+**SenderConfig**:
+```rust
+pub struct SenderConfig {
+    pub server_url: String,     // e.g., https://vibetea.fly.dev
+    pub source_id: String,      // e.g., hostname
+    pub buffer_size: usize,     // e.g., 1000
+}
+```
+
+**SenderError Types**:
+- `Http` - HTTP client error (network, TLS, etc.)
+- `ServerError { status, message }` - Non-202 response
+- `AuthFailed` - 401 Unauthorized (invalid signature)
+- `RateLimited { retry_after_secs }` - 429 with delay
+- `BufferOverflow { evicted_count }` - Events evicted
+- `MaxRetriesExceeded { attempts }` - All retries failed
+- `Json` - Event serialization error
+
+**Connection Details**:
+- Server URL from `VIBETEA_SERVER_URL` env var
+- POST to `{server_url}/events` endpoint
+- HTTPS recommended for production
+- HTTP allowed for local development
+
+## CLI & Key Management
+
+### Phase 6: Monitor CLI
+
+**Module Location**: `monitor/src/main.rs` (301 lines)
+
+**Command Structure**:
+
+1. **init Command**: Generate Ed25519 keypair
+   ```bash
+   vibetea-monitor init [--force]
+   ```
+   - Generates new keypair using `Crypto::generate()`
+   - Saves to `~/.vibetea/` or `VIBETEA_KEY_PATH`
+   - Displays public key for server registration
+   - Prompts for overwrite confirmation (unless --force)
+   - Provides copy-paste ready export command
+
+2. **run Command**: Start monitor daemon
+   ```bash
+   vibetea-monitor run
+   ```
+   - Loads configuration from environment variables
+   - Loads cryptographic keys from disk
+   - Creates sender with buffering and retry
+   - Initializes file watcher (future: Phase 7)
+   - Waits for shutdown signal
+   - Graceful shutdown with event flushing
+
+3. **help Command**: Show documentation
+   ```bash
+   vibetea-monitor help
+   vibetea-monitor --help
+   vibetea-monitor -h
+   ```
+   - Displays usage information
+   - Lists all available commands
+   - Shows environment variables
+   - Provides example commands
+
+4. **version Command**: Show version
+   ```bash
+   vibetea-monitor version
+   vibetea-monitor --version
+   vibetea-monitor -V
+   ```
+   - Prints binary version from Cargo.toml
+
+**CLI Features**:
+- Manual argument parsing (no external CLI framework)
+- Flag support: `--force`, `-f` for init overwrite
+- Short and long option variants for help/version
+- User prompts on stdout/stderr
+- Structured error messages
+- Exit codes: 0 on success, 1 on error
+
+**Environment Variables Used**:
+
+| Variable | Required | Default | Command |
+|----------|----------|---------|---------|
+| `VIBETEA_SERVER_URL` | Yes | - | run |
+| `VIBETEA_SOURCE_ID` | No | hostname | run |
+| `VIBETEA_KEY_PATH` | No | ~/.vibetea | init, run |
+| `VIBETEA_CLAUDE_DIR` | No | ~/.claude | run |
+| `VIBETEA_BUFFER_SIZE` | No | 1000 | run |
+| `VIBETEA_BASENAME_ALLOWLIST` | No | - | run |
+| `RUST_LOG` | No | info | all |
+
+**Logging**:
+- Structured logging via `tracing` crate
+- Environment-based filtering (`RUST_LOG`)
+- JSON output support
+- Logs configuration, key loading, shutdown events
+- Info level by default
+
+**Signal Handling**:
+- Listens for SIGINT (Ctrl+C)
+- Listens for SIGTERM on Unix
+- Cross-platform support via `tokio::signal`
+- Graceful shutdown sequence on signal
+
+**Key Registration Workflow**:
+1. User runs: `vibetea-monitor init`
+2. Binary displays public key
+3. User copies to: `export VIBETEA_PUBLIC_KEYS="...:<public_key>"`
+4. User adds to server configuration
+5. User runs: `vibetea-monitor run`
+
 ## Event Validation & Types
 
 ### Shared Event Schema
@@ -277,6 +499,12 @@ Event {
 - Sensitive contexts stripped according to tool type
 - Paths reduced to basenames with extension filtering
 - Summary text neutralized to privacy-safe message
+
+**Phase 6 Signing Integration** (`monitor/src/crypto.rs` + `monitor/src/sender.rs`):
+- Events signed with Ed25519 private key
+- Signature in X-Signature header (base64-encoded)
+- Server verifies using registered public key
+- Constant-time comparison prevents timing attacks
 
 ### Client Event Store Integration
 
@@ -322,15 +550,15 @@ export interface EventStore {
 
 **Endpoint**: `https://<server-url>/events`
 **Method**: POST
-**Authentication**: Ed25519 signature in X-Signature header
+**Authentication**: Ed25519 signature in X-Signature header (Phase 6)
 **Content-Type**: application/json
 
 **Flow**:
 1. Monitor watches local JSONL files via file watcher
 2. Parser extracts metadata from new/modified JSONL lines
 3. Events processed through PrivacyPipeline (Phase 5)
-4. Monitor signs event payload with Ed25519 private key
-5. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers
+4. Monitor signs event payload with Ed25519 private key (Phase 6)
+5. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers (Phase 6)
 6. Server validates signature against registered public key
 7. Server rate limits based on source ID (100 events/sec default)
 8. Server broadcasts to all connected clients via WebSocket
@@ -347,6 +575,11 @@ export interface EventStore {
 - `VIBETEA_SERVER_URL` - Server endpoint (required)
 - `VIBETEA_SOURCE_ID` - Source identifier for event attribution (default: hostname)
 - Uses gethostname crate to get system hostname if not provided
+
+**Phase 6 Enhancements**:
+- Crypto module signs all events before transmission
+- Sender module handles buffering, retry, rate limiting
+- CLI allows easy key management and monitor startup
 
 ### Server → Client (Event Broadcasting)
 
@@ -419,7 +652,7 @@ export interface EventStore {
 | Header | Required | Value |
 |--------|----------|-------|
 | X-Source-ID | Yes | Monitor identifier (non-empty string) |
-| X-Signature | No* | Base64-encoded Ed25519 signature |
+| X-Signature | No* | Base64-encoded Ed25519 signature (Phase 6) |
 | Content-Type | Yes | application/json |
 
 *Required unless `VIBETEA_UNSAFE_NO_AUTH=true`
@@ -528,6 +761,13 @@ RUST_LOG=debug                                   # Logging level
 - Buffer size parsed as usize, validated for positive integers
 - Allowlist split by comma, whitespace trimmed, empty entries filtered
 
+**Key Management** (Phase 6):
+- `vibetea-monitor init` generates Ed25519 keypair
+- Keys stored in ~/.vibetea/ or VIBETEA_KEY_PATH
+- Private key: key.priv (0600 permissions)
+- Public key: key.pub (0644 permissions)
+- Public key must be registered with server via VIBETEA_PUBLIC_KEYS
+
 **Privacy Configuration** (Phase 5):
 - `VIBETEA_BASENAME_ALLOWLIST` loads into PrivacyConfig via `from_env()`
 - Format: `.rs,.ts,.md` or `rs,ts,md` (dots auto-added)
@@ -555,6 +795,18 @@ RUST_LOG=debug                                   # Logging level
 - Sensitive tools stripped: Bash, Grep, Glob, WebSearch, WebFetch
 - Paths reduced to basenames with extension allowlist filtering
 - Summary text neutralized to "Session ended"
+
+**Cryptographic Signing** (Phase 6):
+- Crypto module signs all events with Ed25519 private key
+- Signature sent in X-Signature header (base64-encoded)
+- Monitor must be initialized before first run: `vibetea-monitor init`
+
+**HTTP Transmission** (Phase 6):
+- Sender module handles event buffering (1000 events default)
+- Exponential backoff retry: 1s → 60s with ±25% jitter
+- Rate limit handling: Respects 429 with Retry-After header
+- Connection pooling: 10 max idle connections per host
+- 30-second request timeout
 
 ### Local Client Setup
 
@@ -624,6 +876,8 @@ server: {
 - Cryptographic errors (invalid private key)
 - Phase 4: JSONL parsing errors (invalid JSON, malformed events)
 - Phase 5: Privacy processing errors (path parsing failures)
+- Phase 6: Key management errors (missing/invalid keys)
+- Phase 6: HTTP sender errors (connection, rate limit, signature)
 
 **Config Error Types**:
 - MissingEnvVar(String) - VIBETEA_SERVER_URL required
@@ -640,13 +894,29 @@ server: {
 - Io - File system I/O errors
 - DirectoryNotFound - Watch directory missing or inaccessible
 
+**Crypto Error Types** (`monitor/src/crypto.rs` - Phase 6):
+- Io - File system errors during key I/O
+- InvalidKey - Key format invalid or wrong size
+- Base64 - Public key base64 decoding error
+- KeyExists - Key files already present (can overwrite)
+
+**Sender Error Types** (`monitor/src/sender.rs` - Phase 6):
+- Http - Network/HTTP client error
+- ServerError - Non-202 response from server
+- AuthFailed - 401 Unauthorized (signature/source mismatch)
+- RateLimited - 429 Too Many Requests
+- BufferOverflow - Events evicted due to full buffer
+- MaxRetriesExceeded - All retry attempts exhausted
+- Json - Event serialization failure
+
 **Resilience**:
 - Continues watching even if individual file operations fail
-- Retries HTTP requests with exponential backoff (future enhancement)
+- Retries HTTP requests with exponential backoff (Phase 6)
 - Logs errors via `tracing` crate with structured context
 - Validates VIBETEA_BUFFER_SIZE as positive integer
 - Graceful degradation on malformed JSONL lines
 - Privacy processing failures logged without exposing sensitive data
+- Sender buffers events if network unavailable, retries with backoff
 
 ## File System Monitoring
 
@@ -687,10 +957,12 @@ server: {
 
 **Components**:
 - Server: Logs configuration, connection events, errors, rate limiting
-- Monitor: Logs file system events, HTTP requests, signing operations
+- Monitor: Logs file system events, HTTP requests, signing operations (Phase 6)
 - Phase 4: Parser logs invalid JSONL events with context
 - Phase 4: Watcher logs file tracking updates and position management
 - Phase 5: Privacy pipeline logs filtering decisions and sensitive tool detection
+- Phase 6: Crypto logs key generation, loading, and signature operations
+- Phase 6: Sender logs buffering, retry, rate limit decisions
 - Warning logged when VIBETEA_UNSAFE_NO_AUTH is enabled
 
 **No External Service Integration** (Phase 5):
@@ -701,11 +973,13 @@ server: {
 
 ### Cryptographic Authentication
 
-**Ed25519 Signatures**:
+**Ed25519 Signatures** (Phase 6):
 - Library: `ed25519-dalek` crate (version 2.1)
-- Key generation: 32-byte seed
+- Key generation: 32-byte seed via OS RNG
 - Signature verification: Base64-encoded public keys per source
 - Private key storage: User's filesystem (unencrypted)
+- File permissions: 0600 (owner read/write only)
+- Public key permissions: 0644 (owner read/write, others read)
 - Timing attack prevention: `subtle::ConstantTimeEq` for comparison
 
 **Security Implications**:
@@ -713,6 +987,8 @@ server: {
 - Public keys registered on server must match monitor's keys
 - Signature validation prevents spoofed events
 - Constant-time comparison prevents timing attacks on verification
+- Ed25519 prevents signature forgery even if attacker has public key
+- Phase 6: Enables cryptographic proof of event origin
 
 ### Token-Based Client Authentication
 
@@ -755,16 +1031,27 @@ server: {
 - Event contents never logged or stored unencrypted
 - All transformations logged without revealing sensitive data
 
+### Sender Security
+
+**HTTP Client Security** (Phase 6):
+- Connection pooling prevents connection-based attacks
+- Timeout prevents hanging connections
+- Exponential backoff prevents amplification attacks
+- No credentials in URLs or request bodies (signature-based only)
+- X-Signature header prevents man-in-the-middle spoofing
+- Event buffering prevents replay of failed requests (forward secrecy)
+
 ## Future Integration Points
 
 ### Planned (Not Yet Integrated)
 
-- **Main Event Loop**: Integrate file watcher, parser, privacy pipeline, and HTTP client (Phase 5 in progress)
+- **Main Event Loop**: Integrate file watcher, parser, privacy pipeline, and HTTP sender (Phase 6 in progress)
 - **Database/Persistence**: Store events beyond memory (Phase 5+)
 - **Authentication Providers**: OAuth2, API key rotation (Phase 5+)
 - **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 5+)
 - **Message Queues**: Redis, RabbitMQ for event buffering (Phase 5+)
 - **Webhooks**: External service notifications (Phase 6+)
+- **Background Task Spawning**: Async watcher and sender pipeline (Phase 6+)
 
 ## Configuration Quick Reference
 
@@ -796,7 +1083,9 @@ server: {
 
 None required for production (future configuration planned).
 
-## Phase 4 Changes
+## Phase Changes Summary
+
+### Phase 4 Changes
 
 **Monitor Parser Module** (`monitor/src/parser.rs`):
 - Claude Code JSONL parsing with privacy-first approach
@@ -821,7 +1110,7 @@ None required for production (future configuration planned).
 
 **Integration Status**: Parser and watcher modules complete; integration with main event loop in progress.
 
-## Phase 5 Changes
+### Phase 5 Changes
 
 **Monitor Privacy Module** (`monitor/src/privacy.rs` - 1039 lines):
 - **PrivacyConfig**: Configuration management for privacy filtering
@@ -847,3 +1136,35 @@ None required for production (future configuration planned).
 - When not set: All extensions allowed
 
 **Integration Status**: Privacy module complete and ready for main event loop integration.
+
+### Phase 6 Changes
+
+**Monitor Crypto Module** (`monitor/src/crypto.rs` - 438 lines):
+- Ed25519 keypair generation and management
+- Key persistence with proper file permissions (0600/0644)
+- Key loading with validation
+- Public key base64 encoding for server registration
+- Event signing with base64-encoded signatures
+- Comprehensive error handling
+
+**Monitor Sender Module** (`monitor/src/sender.rs` - 544 lines):
+- HTTP client with connection pooling and timeouts
+- Event buffering with FIFO eviction strategy
+- Exponential backoff retry (1s → 60s with ±25% jitter)
+- Rate limit handling (429 with Retry-After)
+- Batch event sending with signature support
+- Graceful shutdown with event flushing
+
+**Monitor CLI Module** (`monitor/src/main.rs` - 301 lines):
+- `vibetea-monitor init` - Generate Ed25519 keypair
+- `vibetea-monitor run` - Start monitor daemon
+- `vibetea-monitor help` - Show documentation
+- `vibetea-monitor version` - Show version
+- Signal handling (SIGINT/SIGTERM)
+- Graceful shutdown with timeout
+
+**Module Exports** (`monitor/src/lib.rs`):
+- Public: Crypto, CryptoError, Sender, SenderConfig, SenderError
+- Documentation updated
+
+**Integration Status**: Crypto, sender, and CLI modules complete. Main event loop integration next (Phase 7).

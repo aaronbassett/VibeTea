@@ -1,6 +1,6 @@
 # Architecture
 
-**Status**: Phase 5 incremental update - Monitor privacy pipeline implementation
+**Status**: Phase 6 incremental update - Monitor crypto, sender, and CLI modules
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -20,11 +20,13 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 |---------|-------------|
 | **Hub-and-Spoke** | Monitors push events to the server, clients subscribe via WebSocket |
 | **Event-Driven** | All state changes flow through immutable, versioned events |
-| **Layered** | Monitor: Config/Watcher/Parser/Privacy → Types; Server: Routes → Auth/Broadcast/RateLimit → Types; Client: Types → Hooks → Components |
+| **Layered** | Monitor: CLI/Config → Watcher/Parser/Privacy → Crypto/Sender → Types; Server: Routes → Auth/Broadcast/RateLimit → Types; Client: Types → Hooks → Components |
 | **Pub/Sub** | Server acts as event broker with asymmetric authentication (monitors sign, clients consume) |
 | **Token Bucket** | Per-source rate limiting using token bucket algorithm with stale entry cleanup |
 | **File Tailing** | Monitor uses position tracking to efficiently read only new content from JSONL files |
 | **Privacy Pipeline** | Multi-stage data sanitization ensuring no sensitive data leaves the monitor (Phase 5) |
+| **Command-Line Interface** | Monitor CLI with `init` and `run` subcommands for key generation and daemon execution (Phase 6) |
+| **Event Buffering** | Monitor buffers events in memory (1000 max, FIFO) before batch transmission with exponential backoff retry (Phase 6) |
 
 ## Core Components
 
@@ -216,19 +218,6 @@ The privacy module implements a **defense-in-depth sanitization pipeline** with 
 |----------|---------|---------|
 | `VIBETEA_BASENAME_ALLOWLIST` | Comma-separated file extensions to allow (e.g., `.rs,.ts`) | None (allow all) |
 
-**Example Usage**:
-```rust
-// Allow only Rust and TypeScript files
-let mut allowlist = HashSet::new();
-allowlist.insert(".rs".to_string());
-allowlist.insert(".ts".to_string());
-let config = PrivacyConfig::new(Some(allowlist));
-let pipeline = PrivacyPipeline::new(config);
-
-// Process an event before transmission
-let sanitized_event = pipeline.process(event);
-```
-
 **Privacy Guarantees**:
 - ✓ No full file paths in Tool events (only basenames)
 - ✓ No file contents or diffs
@@ -239,32 +228,243 @@ let sanitized_event = pipeline.process(event);
 - ✓ Summary text replaced with neutral message
 - ✓ Extension allowlist prevents restricted file types from leaving the monitor
 
+### Monitor Cryptographic Module
+
+**Purpose**: Manage Ed25519 keypairs for signing events sent to the server
+**Location**: `monitor/src/crypto.rs`
+**Responsibility**: Key generation, storage, retrieval, and event signing
+
+**Phase 6 New - Crypto Module Pattern**:
+
+The crypto module handles Ed25519 operations with security-first design:
+
+**Key Management**:
+- `Crypto::generate()` - Generate new Ed25519 keypair using OS RNG
+- `Crypto::load(dir)` - Load keypair from `{dir}/key.priv` (32-byte seed)
+- `Crypto::save(dir)` - Save keypair with correct permissions:
+  - `key.priv`: 0600 (owner read/write only) - Raw 32-byte seed
+  - `key.pub`: 0644 (public) - Base64-encoded public key
+- `Crypto::exists(dir)` - Check if keypair exists
+
+**Signing Operations**:
+- `crypto.sign(&[u8])` - Sign message, return base64 signature for HTTP headers
+- `crypto.sign_raw(&[u8])` - Sign message, return raw 64-byte signature
+- `crypto.public_key_base64()` - Get base64-encoded public key for server registration
+- `crypto.verifying_key()` - Get ed25519_dalek VerifyingKey
+
+**Security Features**:
+- File permissions enforce private key confidentiality (0600)
+- Deterministic Ed25519 signing (same message = same signature)
+- Public key encoding matches server's expected format
+- Errors distinguish between IO, invalid key format, and base64 issues
+
+**Key Types**:
+- `Crypto` - Main struct holding SigningKey
+- `CryptoError` - Enum for Io, InvalidKey, Base64, KeyExists errors
+
+**Example Usage**:
+```rust
+// Generate a new keypair and save
+let crypto = Crypto::generate();
+crypto.save(Path::new("/home/user/.vibetea")).unwrap();
+
+// Load existing keypair
+let crypto = Crypto::load(Path::new("/home/user/.vibetea")).unwrap();
+
+// Sign an event batch and get base64 signature for X-Signature header
+let signature = crypto.sign(json_bytes);
+```
+
+### Monitor Sender Module
+
+**Purpose**: Send privacy-filtered events to the VibeTea server with resilient transmission
+**Location**: `monitor/src/sender.rs`
+**Responsibility**: HTTP request handling, event buffering, retry logic, and graceful shutdown
+
+**Phase 6 New - Sender Module Pattern**:
+
+The sender module implements reliable event transmission with recovery:
+
+**Event Buffering**:
+- `VecDeque<Event>` buffer with configurable max capacity (default 1000)
+- `queue(event)` - Add event, evict oldest if full, return count of evictions
+- FIFO eviction policy when buffer overflow occurs
+- `buffer_len()`, `is_empty()` - Query buffer state
+
+**HTTP Transmission**:
+- Connection pooling via reqwest (10 idle connections max)
+- Batching: `send()` sends single event, `send_batch()` sends array
+- Headers:
+  - `Content-Type: application/json`
+  - `X-Source-Id: {source_id}` - Monitor identifier
+  - `X-Signature: {base64_signature}` - Ed25519 signature of body
+- Endpoint: `POST {server_url}/events`
+
+**Retry Strategy**:
+- Initial delay: 1 second
+- Max delay: 60 seconds
+- Jitter: ±25% random variance
+- Max attempts: 10
+- Retry on: connection errors, timeouts, 5xx server errors, 429 rate limits
+- Stop on: 401 auth failed, 4xx client errors
+- Parse `Retry-After` header for 429 responses
+
+**Rate Limit Handling**:
+- Detect 429 Too Many Requests
+- Extract `Retry-After` header (seconds)
+- Sleep for specified duration before retry
+- Fall back to current exponential backoff if header missing
+
+**Graceful Shutdown**:
+- `shutdown(timeout)` - Attempt to flush remaining events
+- Timeout (default 5s) prevents indefinite hang
+- Returns count of unflushed events
+- Logs errors if flush fails or times out
+
+**Key Types**:
+- `SenderConfig` - Configuration struct with server URL, source ID, buffer size
+- `Sender` - Main struct with buffer, crypto, HTTP client, retry state
+- `SenderError` - Enum for Http, ServerError, AuthFailed, RateLimited, BufferOverflow, MaxRetriesExceeded, Json
+
+**Configuration Variables**:
+| Variable | Purpose | Required | Default |
+|----------|---------|----------|---------|
+| `VIBETEA_SERVER_URL` | Server URL for event submission | Yes | None |
+| `VIBETEA_SOURCE_ID` | Monitor identifier (must match server registration) | No | Hostname |
+| `VIBETEA_BUFFER_SIZE` | Event buffer capacity before eviction | No | 1000 |
+
+**Example Usage**:
+```rust
+let crypto = Crypto::load(Path::new("/home/user/.vibetea")).unwrap();
+let config = SenderConfig::new(
+    "https://vibetea.fly.dev".to_string(),
+    "my-monitor".to_string(),
+    1000,
+);
+let mut sender = Sender::new(config, crypto);
+
+// Queue events
+sender.queue(event1);
+sender.queue(event2);
+
+// Flush when ready
+sender.flush().await.unwrap();
+
+// Graceful shutdown
+let unflushed = sender.shutdown(Duration::from_secs(5)).await;
+```
+
+### Monitor CLI Component
+
+**Purpose**: Provide command-line interface for keypair generation and daemon execution
+**Location**: `monitor/src/main.rs`
+**Responsibility**: CLI parsing, key initialization, and monitor bootstrap
+
+**Phase 6 New - CLI Implementation**:
+
+The monitor binary provides two main commands:
+
+**Commands**:
+- `vibetea-monitor init` - Generate Ed25519 keypair interactively
+  - Checks for existing keys at `~/.vibetea/key.priv`
+  - Prompts to overwrite if keys exist (unless `--force/-f` flag)
+  - Saves keys with correct permissions (0600/0644)
+  - Displays public key for server registration
+  - Shows example VIBETEA_PUBLIC_KEYS export command
+
+- `vibetea-monitor run` - Start the monitor daemon
+  - Loads configuration from environment variables
+  - Loads Ed25519 keypair from disk
+  - Initializes file watcher and event parser
+  - Creates sender with buffering and retry logic
+  - Waits for SIGINT/SIGTERM signals
+  - Gracefully shuts down with event flush timeout (5s)
+
+**Help Commands**:
+- `vibetea-monitor help` - Show help message
+- `vibetea-monitor --help` / `-h` - Show help message
+- `vibetea-monitor version` - Show version
+- `vibetea-monitor --version` / `-V` - Show version
+
+**Async Runtime**:
+- `init` and `help`/`version` run synchronously
+- `run` command creates multi-threaded tokio runtime
+- Async operations: watcher, parser, sender, signal handling
+
+**Key Functions**:
+- `parse_args()` - Parse command line arguments into Command enum
+- `run_init(force)` - Generate and save keypair with interactive prompt
+- `run_monitor()` - Bootstrap and run the daemon
+- `wait_for_shutdown()` - Handle SIGINT/SIGTERM signals
+- `init_logging()` - Setup tracing with EnvFilter
+- `get_key_directory()` - Resolve key path (VIBETEA_KEY_PATH or ~/.vibetea)
+
+**Signal Handling**:
+- SIGINT (Ctrl+C) - Graceful shutdown
+- SIGTERM - Graceful shutdown
+- Uses tokio::select! to wait for either signal
+
+**Logging**:
+- Tracing framework with adjustable log levels
+- Default level: info
+- Respects RUST_LOG environment variable
+- Includes target and level in output
+
+**Configuration Flow** (run command):
+1. Parse command line arguments
+2. Load Config from environment (VIBETEA_SERVER_URL required)
+3. Load Crypto keys from disk (fails if not initialized)
+4. Create Sender with buffering
+5. TODO: Initialize FileWatcher and SessionParser
+6. Wait for shutdown signal
+7. Attempt graceful flush with 5s timeout
+
+**Example Usage**:
+```bash
+# Generate keypair and register with server
+vibetea-monitor init
+# Output: Shows public key to register
+
+# Start the monitor (requires VIBETEA_SERVER_URL)
+export VIBETEA_SERVER_URL=https://vibetea.fly.dev
+vibetea-monitor run
+
+# Show help
+vibetea-monitor help
+```
+
 ### Monitor Component
 
 **Purpose**: Captures Claude Code session activity with privacy guarantees and transmits to server
 **Location**: `monitor/src/`
-**Technologies**: Rust, tokio, file watching, JSONL parsing, Ed25519 cryptography, privacy pipeline
+**Technologies**: Rust, tokio, file watching, JSONL parsing, Ed25519 cryptography, privacy pipeline, HTTP client
 
 **Module Hierarchy**:
 ```
 monitor/src/
-├── main.rs       - Entry point (Phase 4 placeholder)
+├── main.rs       - CLI entry point with init/run commands (Phase 6)
 ├── lib.rs        - Public API exports
 ├── config.rs     - Environment variable parsing
 ├── types.rs      - Event definitions
 ├── error.rs      - Error hierarchy
-├── watcher.rs    - File system watching (Phase 4 new)
-├── parser.rs     - JSONL parsing (Phase 4 new)
-└── privacy.rs    - Privacy pipeline (Phase 5 new)
+├── watcher.rs    - File system watching (Phase 4)
+├── parser.rs     - JSONL parsing (Phase 4)
+├── privacy.rs    - Privacy pipeline (Phase 5)
+├── crypto.rs     - Keypair management and signing (Phase 6 NEW)
+└── sender.rs     - HTTP client with buffering/retry (Phase 6 NEW)
 ```
 
-**Key Features (Phase 5)**:
+**Key Features (Phase 6)**:
+- CLI with `init` (keypair generation) and `run` (daemon) subcommands
 - File system watching for `.jsonl` files
 - Incremental parsing with position tracking
 - Claude Code event format normalization
 - Privacy pipeline with multi-stage sanitization
 - Extension allowlist filtering
 - Sensitive tool detection and context stripping
+- Ed25519 keypair generation, storage, and event signing (Phase 6)
+- HTTP event transmission with buffering and exponential backoff retry (Phase 6)
+- Graceful shutdown with event flush timeout (Phase 6)
 
 ### Client Component
 
@@ -280,7 +480,7 @@ monitor/src/
 
 ## Data Flow
 
-### Monitor → Server Flow (Phase 5)
+### Monitor → Server Flow (Phase 6)
 
 ```
 Claude Code Session Activity
@@ -301,11 +501,20 @@ Claude Code Session Activity
          ↓
     Sanitized Event Payload
          ↓
-    Sign with Ed25519 Private Key
+    Sender.queue(event)
          ↓
-    Batch and Buffer
+    Event Buffer (VecDeque, 1000 max)
          ↓
-    HTTPS POST to /events
+    Sign with Ed25519 Private Key (Crypto::sign)
+         ↓
+    Batch and Buffer (FIFO, oldest evicted on overflow)
+         ↓
+    Sender.flush() or timer trigger
+         ↓
+    HTTPS POST to /events with headers:
+      - X-Source-ID: {source_id}
+      - X-Signature: {base64_signature}
+      - Content-Type: application/json
          ↓
     Server Route Handler
          ↓
@@ -324,18 +533,24 @@ Claude Code Session Activity
 3. SessionParser reads new lines from tracked position
 4. Parser extracts Claude Code events and converts to normalized ParsedEvent
 5. ParsedEvent is converted to VibeTea Event with session ID, timestamp, source
-6. **NEW (Phase 5)**: PrivacyPipeline processes event payload:
+6. PrivacyPipeline processes event payload:
    - Strips context from sensitive tools (Bash, Grep, Glob, WebSearch, WebFetch)
    - Converts full paths to basenames
    - Applies extension allowlist filtering
    - Replaces summary text with neutral message
-7. Sanitized event is buffered and signed with monitor's private key
-8. Signed batch is sent to server's `/events` endpoint via HTTPS POST
-9. Server route handler extracts source ID from X-Source-ID header
-10. Auth module verifies signature using configured public key
-11. Rate limiter checks request allowance for source
-12. Event schema is validated
-13. EventBroadcaster immediately forwards to all subscribed WebSocket clients
+7. Sender queues event in buffer (max 1000, FIFO eviction)
+8. When flush triggered (manual or timer), events are signed and batched
+9. Ed25519 signature created from JSON batch using private key (Crypto::sign)
+10. Signed batch sent to server's `/events` endpoint via HTTPS POST
+11. X-Signature header contains base64-encoded signature
+12. X-Source-ID header contains monitor source ID
+13. Server route handler extracts source ID from X-Source-ID header
+14. Auth module verifies signature using configured public key
+15. Rate limiter checks request allowance for source
+16. Event schema is validated
+17. EventBroadcaster immediately forwards to all subscribed WebSocket clients
+18. On 429: parse Retry-After header, exponential backoff with jitter
+19. On failure: retry up to 10 times, max 60s delay between attempts
 
 ### Server → Client Flow
 
@@ -380,9 +595,12 @@ Authenticated Event
 | **Auth Module** | Signature verification, token validation | Config (public keys, tokens) | Routes, broadcast |
 | **Broadcast Module** | Event distribution, subscriber filtering | Types (event schema) | Routes, auth, config |
 | **RateLimit Module** | Token bucket tracking, stale entry cleanup | None (self-contained) | Routes, auth, broadcast |
+| **Monitor CLI** | Command parsing, user interaction, daemon bootstrap | Config, Crypto, Sender, Watcher, Parser, Privacy | WebSocket, direct server access |
 | **Monitor File Watcher** | File system observation, position tracking | Filesystem | Parser directly (events via channel) |
 | **Monitor Parser** | JSONL parsing, event normalization | Types | Filesystem directly |
 | **Monitor Privacy Pipeline** | Event payload sanitization | Types (EventPayload) | Filesystem, auth, server communication |
+| **Monitor Cryptographic** | Keypair management, message signing | types (public key format) | Sender (crypto is stateless) |
+| **Monitor Sender** | HTTP transmission, buffering, retry logic | Config (server URL), Crypto (signing), Types (events) | Filesystem, watcher, parser directly |
 | **Client Component** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
 
 ## Dependency Rules
@@ -396,6 +614,9 @@ Authenticated Event
 - **File watcher isolation**: Watcher and parser communicate via channels, no direct file access from parser
 - **Privacy pipeline is mandatory**: All events must be processed through privacy pipeline before transmission
 - **Privacy is immutable**: PrivacyConfig and PrivacyPipeline are immutable after creation
+- **Crypto is stateless**: Crypto module has no mutable state, pure signing operations
+- **Sender owns buffering**: Only sender manages event queue, other modules queue through sender interface
+- **CLI bootstraps all**: main.rs coordinates config, crypto, sender, watcher, parser initialization
 
 ## Key Interfaces & Contracts
 
@@ -485,6 +706,72 @@ impl PrivacyConfig {
 pub fn extract_basename(path: &str) -> Option<String> { ... }
 ```
 
+### Monitor Crypto Contract
+
+```rust
+// Crypto module for keypair and signing operations
+pub struct Crypto {
+    signing_key: SigningKey,
+}
+
+impl Crypto {
+    pub fn generate() -> Self { ... }
+    pub fn load(dir: &Path) -> Result<Self, CryptoError> { ... }
+    pub fn save(&self, dir: &Path) -> Result<(), CryptoError> { ... }
+    pub fn exists(dir: &Path) -> bool { ... }
+    pub fn sign(&self, message: &[u8]) -> String { ... }  // Base64
+    pub fn sign_raw(&self, message: &[u8]) -> [u8; 64] { ... }  // Raw bytes
+    pub fn public_key_base64(&self) -> String { ... }
+    pub fn verifying_key(&self) -> VerifyingKey { ... }
+}
+
+pub enum CryptoError {
+    Io(std::io::Error),
+    InvalidKey(String),
+    Base64(base64::DecodeError),
+    KeyExists(String),
+}
+```
+
+### Monitor Sender Contract
+
+```rust
+// Sender module for event transmission with buffering and retry
+pub struct Sender {
+    config: SenderConfig,
+    crypto: Crypto,
+    client: Client,
+    buffer: VecDeque<Event>,
+    current_retry_delay: Duration,
+}
+
+impl Sender {
+    pub fn new(config: SenderConfig, crypto: Crypto) -> Self { ... }
+    pub fn queue(&mut self, event: Event) -> usize { ... }  // Returns evicted count
+    pub fn buffer_len(&self) -> usize { ... }
+    pub fn is_empty(&self) -> bool { ... }
+    pub async fn send(&mut self, event: Event) -> Result<(), SenderError> { ... }
+    pub async fn flush(&mut self) -> Result<(), SenderError> { ... }
+    pub async fn shutdown(&mut self, timeout: Duration) -> usize { ... }  // Returns unflushed count
+}
+
+pub struct SenderConfig {
+    pub server_url: String,
+    pub source_id: String,
+    pub buffer_size: usize,
+}
+
+pub enum SenderError {
+    Http(reqwest::Error),
+    ServerError { status: u16, message: String },
+    AuthFailed,
+    RateLimited { retry_after_secs: u64 },
+    BufferOverflow { evicted_count: usize },
+    MaxRetriesExceeded { attempts: u32 },
+    Json(serde_json::Error),
+}
+```
+
 ### Monitor ↔ Server HTTP Contract
 
 **Endpoint**: `POST /events`
@@ -521,6 +808,9 @@ pub fn extract_basename(path: &str) -> Option<String> { ... }
 | **File Positions** | FileWatcher (RwLock HashMap) | Position map per file | Monitor session lifetime |
 | **Subscriber Filters** | Per WebSocket connection | Builder pattern applied at connect | Single connection lifetime |
 | **Server Config** | AppState (Arc<Config>) | Immutable, loaded at startup | Server process lifetime |
+| **Event Send Buffer** | Sender (VecDeque) | FIFO queue, max 1000, oldest evicted | Monitor session lifetime |
+| **Retry State** | Sender (current_retry_delay) | Exponential backoff, reset on success | Sender instance lifetime |
+| **Keypair** | Crypto (SigningKey) | Immutable after creation | Monitor process lifetime |
 | **Client State** | Zustand store | Event buffer + session derivation | Client session lifetime |
 
 ## Cross-Cutting Concerns
@@ -537,6 +827,9 @@ pub fn extract_basename(path: &str) -> Option<String> { ... }
 | **File Watching** | Recursive directory monitoring, change detection | `watcher.rs` (notify-based) |
 | **Event Parsing** | Claude Code JSONL normalization, privacy filtering | `parser.rs` |
 | **Privacy Pipeline** | Multi-stage data sanitization before transmission | `privacy.rs` (Phase 5) |
+| **Event Transmission** | HTTP POST with buffering and retry logic | `sender.rs` (Phase 6) |
+| **Key Generation** | Ed25519 keypair generation and storage | `crypto.rs` (Phase 6) |
+| **CLI Interface** | Command parsing and daemon bootstrapping | `main.rs` (Phase 6) |
 
 ## Testing Strategy
 
@@ -548,13 +841,28 @@ pub fn extract_basename(path: &str) -> Option<String> { ... }
 - WebSocket filter tests (source, event type, project filtering)
 - AppState initialization tests
 
-**Monitor Tests**: Located in `monitor/tests/privacy_test.rs` (Phase 5 new)
+**Monitor Tests**: Located in `monitor/tests/privacy_test.rs` (Phase 5)
 - Privacy pipeline validation tests
 - Path-to-basename conversion tests
 - Extension allowlist filtering tests
 - Sensitive tool context stripping tests
 - Summary text replacement tests
 - Configuration parsing tests (environment variables)
+
+**Monitor Crypto Tests**: Inline in `monitor/src/crypto.rs` (Phase 6)
+- Keypair generation tests
+- Save/load roundtrip tests
+- Key existence checks
+- Signature verification tests
+- File permission tests (Unix)
+- Base64 encoding tests
+
+**Monitor Sender Tests**: Inline in `monitor/src/sender.rs` (Phase 6)
+- Event queueing and eviction tests
+- Retry delay calculation tests
+- Jitter application tests
+- Configuration tests
+- Buffer state tests
 
 **Integration Tests**: Located in `server/tests/unsafe_mode_test.rs`
 - End-to-end scenarios in unsafe mode (auth disabled)
@@ -564,7 +872,9 @@ pub fn extract_basename(path: &str) -> Option<String> { ... }
 cargo test --package vibetea-server  # All server tests
 cargo test --package vibetea-server routes  # Route tests only
 cargo test --package vibetea-monitor  # All monitor tests
+cargo test --package vibetea-monitor crypto  # Crypto tests only
 cargo test --package vibetea-monitor privacy  # Privacy tests only
+cargo test --workspace --test-threads=1  # All tests with single thread (important for env vars)
 ```
 
 ## Graceful Shutdown Flow
@@ -572,20 +882,22 @@ cargo test --package vibetea-monitor privacy  # Privacy tests only
 ```
 Signal (SIGTERM/SIGINT)
          ↓
-shutdown_signal() async
+shutdown_signal() async (Monitor: wait_for_shutdown)
          ↓
 Log shutdown initiation
          ↓
-axum graceful shutdown
+Sender.shutdown(timeout) - Attempt to flush remaining events
+         ↓
+Flush remaining buffer to server with timeout
          ↓
 Abort cleanup task
          ↓
-Allow in-flight requests to complete (30s timeout)
+Allow in-flight requests to complete (5s timeout)
          ↓
 Exit with success
 ```
 
-**Shutdown Timeout**: 30 seconds for in-flight requests to complete
+**Shutdown Timeout**: 5 seconds for event buffer flush to complete
 **Cleanup Interval**: Rate limiter cleans up every 30 seconds
 
 ---

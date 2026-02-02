@@ -73,20 +73,20 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs` |
-| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `PrivacyPipeline` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS` |
+| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs` |
+| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
 
 #### Code Elements
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SENSITIVE_TOOLS = &["Bash", "Grep", "Glob"]` |
-| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `PrivacyConfig` |
-| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError` |
-| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()` |
+| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60` |
+| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command` |
+| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command` |
+| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
 ## Error Handling
@@ -119,7 +119,8 @@ Client error handling uses:
 | I/O errors | Use `#[from]` for automatic conversion | `MonitorError::Io(#[from] std::io::Error)` |
 | JSON errors | Automatic conversion via `serde_json` | `MonitorError::Json(#[from] serde_json::Error)` |
 | HTTP errors | String-based variants | `MonitorError::Http(String)` |
-| Cryptographic errors | String-based variants | `MonitorError::Crypto(String)` |
+| Cryptographic errors | String-based variants | `CryptoError::InvalidKey`, `CryptoError::KeyExists` |
+| Sender errors | Enum with specific variants | `SenderError::AuthFailed`, `SenderError::RateLimited`, `SenderError::MaxRetriesExceeded` |
 | File watching errors | String-based variants | `MonitorError::Watch(String)` |
 | JSONL parsing errors | String-based variants | `MonitorError::Parse(String)` |
 
@@ -177,16 +178,59 @@ pub enum MonitorError {
 }
 ```
 
+**Crypto Example** (`monitor/src/crypto.rs` - Phase 6):
+
+```rust
+#[derive(Error, Debug)]
+pub enum CryptoError {
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("invalid key: {0}")]
+    InvalidKey(String),
+
+    #[error("base64 decode error: {0}")]
+    Base64(#[from] base64::DecodeError),
+
+    #[error("key file already exists: {0}")]
+    KeyExists(String),
+}
+```
+
+**Sender Example** (`monitor/src/sender.rs` - Phase 6):
+
+```rust
+#[derive(Error, Debug)]
+pub enum SenderError {
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+
+    #[error("server error: {status} - {message}")]
+    ServerError { status: u16, message: String },
+
+    #[error("authentication failed: invalid signature or source ID")]
+    AuthFailed,
+
+    #[error("rate limited, retry after {retry_after_secs} seconds")]
+    RateLimited { retry_after_secs: u64 },
+
+    #[error("max retries exceeded after {attempts} attempts")]
+    MaxRetriesExceeded { attempts: u32 },
+}
+```
+
 ### Logging Conventions
 
-Not yet implemented in codebase. When logging is added:
+The `tracing` crate is used for structured logging across async Rust code:
 
 | Level | When to Use | Example |
 |-------|-------------|---------|
-| error | Unrecoverable failures | Configuration load failure, server startup error |
-| warn | Recoverable issues | Retry attempt, unsafe auth mode enabled |
-| info | Important events | Server started, session created |
-| debug | Development details | Event payload serialization, connection established |
+| error | Unrecoverable failures | `error!(unflushed_events = unflushed, "Some events could not be sent")` |
+| warn | Recoverable issues | `warn!("Retry attempted")` |
+| info | Important events | `info!("Starting VibeTea Monitor")` |
+| debug | Development details | `debug!("Configuration loaded")` |
+
+**Note**: Logging is initialized using `tracing_subscriber` with `EnvFilter` to control verbosity via `RUST_LOG` environment variable.
 
 ## Common Patterns
 
@@ -404,6 +448,193 @@ Key conventions in privacy module:
 - **Comprehensive documentation**: Every public item has detailed doc comments with examples
 - **Privacy-first defaults**: Default config allows all extensions (no data loss), allowlist can be set to restrict
 
+### Cryptographic Operations Pattern (Rust - Phase 6)
+
+The crypto module (`monitor/src/crypto.rs`) handles Ed25519 keypair generation, storage, and event signing:
+
+```rust
+// Handles Ed25519 cryptographic operations
+pub struct Crypto {
+    signing_key: SigningKey,
+}
+
+impl Crypto {
+    // Generates a new Ed25519 keypair using OS RNG
+    pub fn generate() -> Self { ... }
+
+    // Loads an existing keypair from directory
+    pub fn load(dir: &Path) -> Result<Self, CryptoError> { ... }
+
+    // Saves keypair with secure file permissions (0600 for private key)
+    pub fn save(&self, dir: &Path) -> Result<(), CryptoError> { ... }
+
+    // Checks if keypair already exists
+    pub fn exists(dir: &Path) -> bool { ... }
+
+    // Signs a message and returns base64-encoded signature
+    pub fn sign(&self, message: &[u8]) -> String { ... }
+
+    // Signs and returns raw 64-byte signature
+    pub fn sign_raw(&self, message: &[u8]) -> [u8; 64] { ... }
+}
+```
+
+Key conventions in crypto module:
+- **Key storage**: Private key stored as raw 32-byte seed in `key.priv`, public key as base64 in `key.pub`
+- **File permissions**: Unix permissions set to 0600 (private key) and 0644 (public key)
+- **Deterministic signing**: Ed25519 produces consistent signatures for same message
+- **Error clarity**: Specific error types for I/O, invalid keys, base64 issues
+
+### HTTP Sender Pattern (Rust - Phase 6)
+
+The sender module (`monitor/src/sender.rs`) handles sending events to the server with buffering and retry logic:
+
+```rust
+// Configuration for the sender
+pub struct SenderConfig {
+    pub server_url: String,
+    pub source_id: String,
+    pub buffer_size: usize,  // Default: 1000
+}
+
+// HTTP event sender with buffering and retry logic
+pub struct Sender {
+    config: SenderConfig,
+    crypto: Crypto,
+    client: Client,
+    buffer: VecDeque<Event>,
+    current_retry_delay: Duration,
+}
+
+impl Sender {
+    // Creates new sender with connection pooling via reqwest
+    pub fn new(config: SenderConfig, crypto: Crypto) -> Self { ... }
+
+    // Queues an event for buffering (evicts oldest if full)
+    pub fn queue(&mut self, event: Event) -> usize { ... }
+
+    // Sends a single event immediately without buffering
+    pub async fn send(&mut self, event: Event) -> Result<(), SenderError> { ... }
+
+    // Flushes all buffered events in a single batch
+    pub async fn flush(&mut self) -> Result<(), SenderError> { ... }
+
+    // Gracefully shuts down, attempting to flush remaining events
+    pub async fn shutdown(&mut self, timeout: Duration) -> usize { ... }
+}
+```
+
+Key conventions in sender module:
+- **Buffering strategy**: FIFO queue with configurable size (default 1000 events)
+- **Exponential backoff retry**: 1s initial delay → 60s max, with ±25% jitter
+- **Rate limit handling**: Parses Retry-After header from 429 responses
+- **Authentication**: Signs events using crypto module (Ed25519)
+- **Structured logging**: Uses `tracing` crate for info/warn/debug/error logging
+
+### CLI Pattern (Rust - Phase 6)
+
+The main binary (`monitor/src/main.rs`) implements a simple command-line interface with async runtime management:
+
+#### Command Enum and Parsing
+
+```rust
+#[derive(Debug)]
+enum Command {
+    Init { force: bool },
+    Run,
+    Help,
+    Version,
+}
+
+fn parse_args() -> Result<Command> {
+    // Manual argument parsing for: init, run, help, version
+    // Supports: --force/-f for init, --help/-h, --version/-V
+}
+```
+
+#### Async Runtime Initialization
+
+The CLI uses explicit Tokio runtime creation for async commands:
+
+```rust
+fn main() -> Result<()> {
+    let command = parse_args()?;
+
+    match command {
+        Command::Run => {
+            // Initialize multi-threaded async runtime only for async commands
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("Failed to create tokio runtime")?;
+
+            // Block on async function using the runtime
+            runtime.block_on(run_monitor())
+        }
+        // Sync commands run directly
+        Command::Init { force } => run_init(force),
+        // ...
+    }
+}
+```
+
+#### Signal Handling
+
+Graceful shutdown using `tokio::signal`:
+
+```rust
+async fn wait_for_shutdown() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("Failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    // Wait for either signal
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+}
+```
+
+#### Logging Initialization
+
+Configure structured logging with environment variable control:
+
+```rust
+fn init_logging() {
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_level(true)
+        .init();
+}
+```
+
+Key conventions in CLI:
+- **Simple argument parsing**: No external CLI library, manual matching of command names
+- **Error handling**: Uses `anyhow::Result` for ergonomic error propagation
+- **Async runtime**: Explicit multi-threaded Tokio runtime created only when needed
+- **Signal handling**: Handles both Ctrl+C (SIGINT) and SIGTERM, with platform-specific handling
+- **Graceful shutdown**: Attempts to flush unsent events before exiting
+- **Logging**: Uses `tracing` with environment-driven verbosity control
+- **Help/version**: Standard `--help` and `--version` flags supported
+
 ## Import Ordering
 
 ### TypeScript
@@ -438,6 +669,37 @@ use std::error::Error;
 use std::fmt;
 
 use thiserror::Error as ThisError;
+```
+
+Example from `monitor/src/crypto.rs` (Phase 6):
+
+```rust
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::path::Path;
+
+use base64::prelude::*;
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use rand::Rng;
+use thiserror::Error;
+```
+
+Example from `monitor/src/main.rs` (Phase 6):
+
+```rust
+use std::io::{self, Write};
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use directories::BaseDirs;
+use tokio::signal;
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
+
+use vibetea_monitor::config::Config;
+use vibetea_monitor::crypto::Crypto;
+use vibetea_monitor::sender::{Sender, SenderConfig};
 ```
 
 ## Comments & Documentation
@@ -540,6 +802,108 @@ impl Config {
 }
 ```
 
+Example from `monitor/src/crypto.rs` (Phase 6):
+
+```rust
+//! Cryptographic operations for VibeTea Monitor.
+//!
+//! This module handles Ed25519 keypair generation, storage, and event signing.
+//! Keys are stored in the VibeTea directory (`~/.vibetea/` by default):
+//!
+//! - `key.priv`: Raw 32-byte Ed25519 seed (file mode 0600)
+//! - `key.pub`: Base64-encoded public key (file mode 0644)
+
+/// Handles Ed25519 cryptographic operations.
+///
+/// This struct manages an Ed25519 signing key and provides methods for
+/// generating, loading, saving keys, and signing messages.
+#[derive(Debug)]
+pub struct Crypto {
+    signing_key: SigningKey,
+}
+
+impl Crypto {
+    /// Generates a new Ed25519 keypair using the operating system's
+    /// cryptographically secure random number generator.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::crypto::Crypto;
+    ///
+    /// let crypto = Crypto::generate();
+    /// let pubkey = crypto.public_key_base64();
+    /// assert!(!pubkey.is_empty());
+    /// ```
+    #[must_use]
+    pub fn generate() -> Self { ... }
+}
+```
+
+Example from `monitor/src/sender.rs` (Phase 6):
+
+```rust
+//! HTTP sender for VibeTea Monitor.
+//!
+//! This module handles sending events to the VibeTea server with:
+//!
+//! - Connection pooling via reqwest
+//! - Event buffering (1000 events max, FIFO eviction)
+//! - Exponential backoff retry (1s → 60s max, ±25% jitter)
+//! - Rate limit handling (429 with Retry-After header)
+
+/// HTTP event sender with buffering and retry logic.
+pub struct Sender {
+    config: SenderConfig,
+    crypto: Crypto,
+    client: Client,
+    buffer: VecDeque<Event>,
+    current_retry_delay: Duration,
+}
+
+impl Sender {
+    /// Creates a new sender with the given configuration and cryptographic context.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Sender configuration
+    /// * `crypto` - Cryptographic context for signing events
+    #[must_use]
+    pub fn new(config: SenderConfig, crypto: Crypto) -> Self { ... }
+}
+```
+
+Example from `monitor/src/main.rs` (Phase 6):
+
+```rust
+//! VibeTea Monitor - Claude Code session watcher.
+//!
+//! This binary watches Claude Code session files and forwards privacy-filtered
+//! events to the VibeTea server.
+//!
+//! # Commands
+//!
+//! - `vibetea-monitor init`: Generate Ed25519 keypair for server authentication
+//! - `vibetea-monitor run`: Start the monitor daemon
+//!
+//! # Environment Variables
+//!
+//! See the [`config`] module for available configuration options.
+
+/// CLI command.
+#[derive(Debug)]
+enum Command {
+    /// Initialize keypair.
+    Init { force: bool },
+    /// Run the monitor.
+    Run,
+    /// Show help.
+    Help,
+    /// Show version.
+    Version,
+}
+```
+
 Example from `monitor/src/privacy.rs` (Phase 5):
 
 ```rust
@@ -565,23 +929,6 @@ Example from `monitor/src/privacy.rs` (Phase 5):
 /// - `WebSearch`: Contains search queries which may reveal user intent
 /// - `WebFetch`: Contains URLs which may contain sensitive information
 const SENSITIVE_TOOLS: &[&str] = &["Bash", "Grep", "Glob", "WebSearch", "WebFetch"];
-
-/// Extracts the basename (filename) from a file path.
-///
-/// This function handles various path formats:
-/// - Unix paths: `/home/user/file.rs` -> `file.rs`
-/// - Windows paths: `C:\Users\user\file.rs` -> `file.rs` (on Windows systems)
-/// - Relative paths: `src/file.rs` -> `file.rs`
-/// - Already a basename: `file.rs` -> `file.rs`
-///
-/// # Returns
-///
-/// - `Some(basename)` if a valid basename was extracted
-/// - `None` if the path is empty, ends with a separator, or has no filename
-#[must_use]
-pub fn extract_basename(path: &str) -> Option<String> {
-    // Implementation
-}
 ```
 
 ## Git Conventions
@@ -600,9 +947,10 @@ Format: `type(scope): description`
 | test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
 
-Examples with Phase 5:
-- `feat(monitor): add privacy pipeline with Constitution I compliance`
-- `test(monitor): add 38 unit tests for privacy module`
+Examples with Phase 6:
+- `feat(monitor): implement CLI with init and run commands`
+- `feat(monitor): add HTTP sender with retry and buffering`
+- `feat(monitor): add Ed25519 keypair generation and signing`
 
 ### Branch Naming
 

@@ -267,50 +267,50 @@ VibeTea uses a multi-project structure:
 
 ### Start Phase 6
 
-- [ ] T110 [GIT] Verify working tree is clean before starting Phase 6
-- [ ] T111 [GIT] Pull and rebase on origin/main if needed
-- [ ] T112 [US4] Create retro/P6.md for this phase
+- [X] T110 [GIT] Verify working tree is clean before starting Phase 6
+- [X] T111 [GIT] Pull and rebase on origin/main if needed - Already on latest
+- [X] T112 [US4] Create retro/P6.md for this phase
 
 ### Keypair Generation CLI (FR-8a)
 
-- [ ] T112a [US4] Implement `vibetea init` CLI command in monitor/src/main.rs: check for existing keys, prompt overwrite confirmation, call crypto module, display public key for server registration (use devs:rust-dev agent)
-- [ ] T112b [GIT] Commit: add vibetea init command
+- [X] T112a [US4] Implement `vibetea init` CLI command in monitor/src/main.rs: check for existing keys, prompt overwrite confirmation, call crypto module, display public key for server registration (use devs:rust-dev agent)
+- [X] T112b [GIT] Commit: add vibetea init command - Combined with main entry point commit
 
 ### Cryptography
 
-- [ ] T113 [US4] Implement Ed25519 keypair generation and storage in monitor/src/crypto.rs: generate with OsRng, save key.priv (0600) and key.pub (base64, 0644) to ~/.vibetea/ (use devs:rust-dev agent)
-- [ ] T114 [GIT] Commit: add keypair generation
-- [ ] T115 [US4] Implement event signing in monitor/src/crypto.rs (use devs:rust-dev agent)
-- [ ] T116 [GIT] Commit: add event signing
+- [X] T113 [US4] Implement Ed25519 keypair generation and storage in monitor/src/crypto.rs: generate with OsRng, save key.priv (0600) and key.pub (base64, 0644) to ~/.vibetea/ (use devs:rust-dev agent)
+- [X] T114 [GIT] Commit: add keypair generation
+- [X] T115 [US4] Implement event signing in monitor/src/crypto.rs (use devs:rust-dev agent)
+- [X] T116 [GIT] Commit: add event signing - Combined with keypair commit
 
 ### HTTP Client with Retry
 
-- [ ] T117 [US4] Implement HTTP sender with connection pooling in monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T118 [GIT] Commit: add HTTP sender
-- [ ] T119 [US4] Implement exponential backoff (1s → 60s max, ±25% jitter) in monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T120 [GIT] Commit: add exponential backoff
-- [ ] T121 [US4] Implement event buffering (1000 events max, FIFO eviction) in monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T122 [GIT] Commit: add event buffering
-- [ ] T123 [US4] Implement 429 rate limit handling (respect Retry-After header) in monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T124 [GIT] Commit: add rate limit handling
+- [X] T117 [US4] Implement HTTP sender with connection pooling in monitor/src/sender.rs (use devs:rust-dev agent)
+- [X] T118 [GIT] Commit: add HTTP sender
+- [X] T119 [US4] Implement exponential backoff (1s → 60s max, ±25% jitter) in monitor/src/sender.rs (use devs:rust-dev agent)
+- [X] T120 [GIT] Commit: add exponential backoff - Combined with sender commit
+- [X] T121 [US4] Implement event buffering (1000 events max, FIFO eviction) in monitor/src/sender.rs (use devs:rust-dev agent)
+- [X] T122 [GIT] Commit: add event buffering - Combined with sender commit
+- [X] T123 [US4] Implement 429 rate limit handling (respect Retry-After header) in monitor/src/sender.rs (use devs:rust-dev agent)
+- [X] T124 [GIT] Commit: add rate limit handling - Combined with sender commit
 
 ### Monitor Main Entry Point
 
-- [ ] T125 [US4] Implement monitor main.rs with CLI (init, run commands), logging (use devs:rust-dev agent)
-- [ ] T126 [GIT] Commit: implement monitor main entry point
-- [ ] T127 [US4] Implement monitor lib.rs with public API exports (use devs:rust-dev agent)
-- [ ] T128 [GIT] Commit: add monitor lib.rs
+- [X] T125 [US4] Implement monitor main.rs with CLI (init, run commands), logging (use devs:rust-dev agent)
+- [X] T126 [GIT] Commit: implement monitor main entry point
+- [X] T127 [US4] Implement monitor lib.rs with public API exports (use devs:rust-dev agent)
+- [X] T128 [GIT] Commit: add monitor lib.rs - Combined with main entry point commit
 
 ### Phase 6 Completion
 
-- [ ] T129 [US4] Run /sdd:map incremental for Phase 6 changes
-- [ ] T130 [GIT] Commit: update codebase documents for phase 6
-- [ ] T131 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T132 [GIT] Commit: finalize phase 6 retro
-- [ ] T133 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T134 [GIT] Create/update PR to main with phase summary
-- [ ] T135 [GIT] Verify all CI checks pass
-- [ ] T136 [GIT] Report PR ready status
+- [X] T129 [US4] Run /sdd:map incremental for Phase 6 changes
+- [X] T130 [GIT] Commit: update codebase documents for phase 6
+- [X] T131 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update (phase-specific patterns only)
+- [X] T132 [GIT] Commit: finalize phase 6 retro
+- [X] T133 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [X] T134 [GIT] Create/update PR to main with phase summary
+- [X] T135 [GIT] Verify all CI checks pass
+- [X] T136 [GIT] Report PR ready status
 
 **Checkpoint**: Monitor Server Connection (US4) fully functional - Server and Monitor MVP complete
 

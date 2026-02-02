@@ -139,6 +139,17 @@ From `server/src/config.rs:79-202`:
 - Conditional validation: auth fields required unless `VIBETEA_UNSAFE_NO_AUTH=true` at `server/src/config.rs:108-126`
 - Comprehensive test coverage: `server/src/config.rs:205-415`
 
+### Monitor Configuration Validation (Phase 6)
+
+From `monitor/src/config.rs`:
+
+- **Server URL**: Required for run command, no format validation yet
+- **Source ID**: Optional, defaults to hostname via `gethostname` crate
+- **Key path**: Optional, defaults to `~/.vibetea`
+- **Claude directory**: Optional, defaults to `~/.claude`
+- **Buffer size**: Optional, defaults to 1000 events
+- **Basename allowlist**: Optional extension filter for privacy
+
 ### Sanitization
 
 | Data Type | Sanitization | Location |
@@ -161,8 +172,8 @@ From `server/src/config.rs:79-202`:
 
 | Data Type | Protection | Storage | Notes |
 |-----------|-----------|---------|-------|
-| Private key | File permissions | `~/.vibetea/key.priv` | Monitor loads from disk |
-| Public key | Base64-encoded | Environment variable | On server |
+| Private key | File permissions (0600) | `~/.vibetea/key.priv` | Monitor loads from disk (Phase 6) |
+| Public key | Base64-encoded, file mode 0644 | `~/.vibetea/key.pub` and env var | On server and monitor (Phase 6) |
 | Bearer token | Environment variable | `VIBETEA_SUBSCRIBER_TOKEN` | In-memory, passed by clients in query params |
 | Event payloads | Privacy pipeline sanitization | Memory/transit | Sent over HTTPS/WSS only |
 | JSONL data | Read from disk | `~/.claude/projects/` | Watched by monitor, only metadata extracted |
@@ -187,25 +198,69 @@ From `server/src/config.rs:79-202`:
 
 **Note**: VibeTea does not implement application-level encryption. Sensitive credentials are protected by:
 1. Environment variable isolation
-2. File system permissions (private key in `~/.vibetea/key.priv`)
+2. File system permissions (private key in `~/.vibetea/key.priv` with mode 0600)
 3. HTTPS/WSS transport security
 4. Privacy pipeline sanitization (Phase 5)
 
 ## Cryptography
 
-### Signature Scheme
+### Signature Scheme (Phase 6 - Full Implementation)
 
 | Parameter | Value | Implementation |
 |-----------|-------|-----------------|
 | Algorithm | Ed25519 | `ed25519-dalek` 2.1 with `verify_strict()` |
-| Key format | Base64-encoded public key | In `VIBETEA_PUBLIC_KEYS` |
+| Key format | Base64-encoded public key | In `VIBETEA_PUBLIC_KEYS` and `~/.vibetea/key.pub` |
+| Key storage | Raw 32-byte seed file | `~/.vibetea/key.priv` with mode 0600 |
+| Key generation | OsRng (OS cryptographically secure RNG) | `Crypto::generate()` in `monitor/src/crypto.rs:88-94` |
 | Signature verification | Per-event during POST /events | `server/src/routes.rs:289` |
 | Constant-time token comparison | Via `subtle::ConstantTimeEq` | `server/src/auth.rs:290` |
-| Dependencies | ed25519-dalek, base64, subtle | Production-ready (Phase 3) |
+| Dependencies | ed25519-dalek, base64, subtle, rand | Production-ready (Phase 3-6) |
 
-**Status**: Ed25519 signature verification fully implemented and tested. Token comparison uses constant-time comparison to prevent timing attacks.
+**Status**: Ed25519 signature generation and verification fully implemented and tested. Token comparison uses constant-time comparison to prevent timing attacks.
 
-### Verification Implementation
+### Keypair Generation and Storage (Phase 6)
+
+From `monitor/src/crypto.rs`:
+
+**Generation** (`Crypto::generate()`):
+- Creates 32-byte seed using `rand::rng().fill()` with OS RNG
+- Constructs `SigningKey` from seed bytes
+- Returns `Crypto` struct wrapping the signing key
+
+**Storage** (`Crypto::save()`):
+- Creates `~/.vibetea/` directory if missing
+- Writes raw 32-byte seed to `key.priv` with Unix mode 0600 (owner read/write only)
+- Encodes public key as base64 and writes to `key.pub` with Unix mode 0644 (owner read/write, others read)
+- Both operations atomic on Unix (file creation ensures exclusivity)
+
+**Loading** (`Crypto::load()`):
+- Reads raw 32-byte seed from `key.priv`
+- Validates exactly 32 bytes read (rejects truncated files)
+- Reconstructs `SigningKey` from seed bytes
+- Returns error if file doesn't exist or has wrong length
+
+**Public Key Export**:
+- `public_key_base64()`: Returns base64-encoded 32-byte public key suitable for `VIBETEA_PUBLIC_KEYS`
+- Example format: `base64-string-of-32-bytes` (44 characters with standard padding)
+
+### Event Signing (Phase 6)
+
+From `monitor/src/crypto.rs:259-275`:
+
+**Signing Flow**:
+1. Event serialized to JSON via `serde_json::to_string()`
+2. JSON bytes passed to `Crypto::sign(json_bytes)`
+3. `SigningKey::sign()` produces 64-byte Ed25519 signature (deterministic)
+4. Signature base64-encoded for transmission in `X-Signature` header
+5. Raw signature bytes available via `sign_raw()` if needed
+
+**Signature Properties**:
+- Deterministic: Same message always produces same signature
+- Non-interactive: Only signing key needed (public key for verification)
+- Unforgeable: Cannot create valid signature without private key
+- Non-repudiation: Signer cannot deny signing
+
+### Verification Implementation (Phase 3-6)
 
 From `server/src/auth.rs`:
 
@@ -221,12 +276,16 @@ From `server/src/auth.rs`:
   - Uses `ct_eq()` for byte-level constant-time comparison
   - Tested with 15 test cases covering edge cases (lines 656-757)
 
-### Key Generation (Monitor)
+### Key Management Best Practices
 
-- Private key generated separately (external tool or one-time setup)
-- Stored as binary in `~/.vibetea/key.priv`
-- Public key registered on server as base64 in `VIBETEA_PUBLIC_KEYS`
-- Source ID must match monitor hostname or `VIBETEA_SOURCE_ID` override
+| Practice | Implementation | Status |
+|----------|-----------------|--------|
+| Key generation entropy | OS RNG via rand crate | Phase 6 |
+| Private key permissions | Unix mode 0600 | Phase 6 |
+| Public key distribution | Environment variable registration | Phase 3 |
+| Key rotation | Manual (replace key.priv, update VIBETEA_PUBLIC_KEYS) | Not automated |
+| Secure storage | File system with OS protections | Phase 6 |
+| No hardcoded keys | Keys loaded from files/env | All phases |
 
 ## Privacy Pipeline (Phase 5)
 
@@ -318,6 +377,195 @@ Handles:
 - `assert_no_sensitive_paths()`: Verifies no path patterns in JSON
 - `assert_no_sensitive_commands()`: Verifies no command patterns in JSON
 - Individual checks for specific patterns per tool type
+
+## HTTP Sender (Phase 6)
+
+### Connection and Buffering
+
+From `monitor/src/sender.rs`:
+
+| Feature | Implementation | Details |
+|---------|-----------------|---------|
+| Connection pooling | reqwest Client with pool | 10 connections per host max |
+| Request timeout | 30 seconds | Per-request timeout via `Client::timeout()` |
+| Event buffering | VecDeque with FIFO eviction | 1000 events max (configurable) |
+| Buffer status | `buffer_len()`, `is_empty()` | Methods to query buffer state |
+| Graceful shutdown | `shutdown()` with timeout | Flushes remaining events before exit |
+
+### Event Transmission
+
+**Direct send** (`send(&event)`):
+- Sends single event immediately without buffering
+- Serializes event to JSON
+- Signs JSON with private key (HMAC-like signing)
+- Adds headers: `Content-Type: application/json`, `X-Source-Id`, `X-Signature`
+- Retries with exponential backoff on transient failures
+
+**Batch send** (`send_batch(events)`):
+- Sends multiple events in single request
+- JSON array serialization
+- Single signature for entire batch
+- Used internally by `flush()`
+
+**Buffered queue** (`queue(event)`):
+- Adds event to buffer without sending
+- Evicts oldest events if buffer full
+- Returns number of evicted events
+- Used for background event accumulation
+
+### Retry Strategy
+
+From `monitor/src/sender.rs:350-387`:
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Initial delay | 1 second | First retry wait time |
+| Max delay | 60 seconds | Retry backoff ceiling |
+| Jitter | ±25% | Prevents thundering herd |
+| Max attempts | 10 | Retries before failure |
+| Backoff formula | Exponential (delay * 2 each time) | Doubles until hitting max |
+
+**Retry logic**:
+1. On transient error (timeout, connection error, 5xx): `wait_with_backoff()` then retry
+2. On rate limit (429): Parse `Retry-After` header, wait that duration, retry
+3. On auth error (401): Immediate failure (no retry)
+4. On client error (4xx except 429): Immediate failure (no retry)
+5. On success (2xx): Reset retry delay to 1 second
+
+**Rate limit handling** (lines 292-305):
+- Checks for `Retry-After` header in 429 response
+- Accepts seconds (integer) or HTTP date format
+- Falls back to current retry delay if header missing
+- Respects Retry-After before continuing retries
+
+### Sender Configuration (Phase 6)
+
+From `monitor/src/sender.rs:108-136`:
+
+```rust
+pub struct SenderConfig {
+    pub server_url: String,           // e.g., "https://vibetea.fly.dev"
+    pub source_id: String,            // Monitor identifier
+    pub buffer_size: usize,           // Max events in buffer (default 1000)
+}
+```
+
+**Configuration methods**:
+- `SenderConfig::new(url, source_id, buffer_size)` - Full config
+- `SenderConfig::with_defaults(url, source_id)` - Uses 1000 as buffer size
+
+**Integration with Monitor** (Phase 6 main.rs):
+```rust
+let sender_config = SenderConfig::new(
+    config.server_url.clone(),
+    config.source_id.clone(),
+    config.buffer_size,
+);
+let mut sender = Sender::new(sender_config, crypto);
+```
+
+### Error Handling
+
+From `monitor/src/sender.rs:76-105`:
+
+| Error Type | Cause | Recovery |
+|------------|-------|----------|
+| `Http(reqwest::Error)` | HTTP client failure | Non-retryable |
+| `ServerError { status, message }` | 4xx or 5xx response | Retryable for 5xx |
+| `AuthFailed` | 401 Unauthorized | Non-retryable |
+| `RateLimited { retry_after_secs }` | 429 Too Many Requests | Retryable with backoff |
+| `BufferOverflow { evicted_count }` | Buffer full on queue | Oldest events discarded |
+| `MaxRetriesExceeded { attempts }` | 10 retries exhausted | Operation fails |
+| `Json(serde_json::Error)` | Event serialization failed | Non-retryable |
+
+## CLI Commands (Phase 6)
+
+### Monitor Init Command
+
+From `monitor/src/main.rs:147-190`:
+
+**Purpose**: Generate and register Ed25519 keypair for server authentication
+
+**Flow**:
+1. Check if keys exist: `Crypto::exists(&key_dir)`
+2. If exist and not `--force`: Prompt user for confirmation
+3. Generate keypair: `Crypto::generate()`
+4. Save to `~/.vibetea/`: `crypto.save(&key_dir)`
+5. Display public key for server registration
+6. Show `VIBETEA_PUBLIC_KEYS` format example
+
+**Output**:
+```
+Keypair saved to: /home/user/.vibetea
+
+Public key (register with server):
+
+  <base64-encoded-32-bytes>
+
+To register this monitor with the server, add to VIBETEA_PUBLIC_KEYS:
+
+  export VIBETEA_PUBLIC_KEYS="monitor-name:<public-key>"
+```
+
+**Security**:
+- Prompts confirmation before overwriting existing keys
+- `--force` flag skips confirmation for automation
+- Private key file created with mode 0600 (owner-only access)
+- Public key file created with mode 0644 (world-readable)
+
+### Monitor Run Command
+
+From `monitor/src/main.rs:192-245`:
+
+**Purpose**: Start the monitor daemon for continuous session monitoring
+
+**Flow**:
+1. Initialize structured logging: `init_logging()`
+2. Load config from environment: `Config::from_env()`
+3. Load cryptographic keys: `Crypto::load(&config.key_path)`
+4. Create HTTP sender with pooling: `Sender::new(config, crypto)`
+5. Set up file watcher (placeholder for Phase 7)
+6. Wait for shutdown signal: `wait_for_shutdown()`
+7. Graceful shutdown: `sender.shutdown(5_second_timeout)`
+8. Report unflushed events if any
+
+**Environment setup**:
+- Required: `VIBETEA_SERVER_URL`
+- Optional: `VIBETEA_SOURCE_ID` (defaults to hostname)
+- Optional: `VIBETEA_KEY_PATH` (defaults to `~/.vibetea`)
+- Optional: `VIBETEA_CLAUDE_DIR` (defaults to `~/.claude`)
+- Optional: `VIBETEA_BUFFER_SIZE` (defaults to 1000)
+
+**Logging**:
+- Structured logging via `tracing` crate
+- Log level from `RUST_LOG` env var (default: info)
+- Includes target module and level in output
+
+**Shutdown handling**:
+- Listens for SIGINT (Ctrl+C) and SIGTERM (unix)
+- Waits up to 5 seconds to flush buffered events
+- Reports unsent events in error log
+- Graceful exit code 0
+
+### Help Command
+
+From `monitor/src/main.rs:101-137`:
+
+**Purpose**: Display usage information
+
+**Output format**:
+- Commands list (init, run, help, version)
+- Options per command
+- Environment variable reference
+- Example usage patterns
+
+### Version Command
+
+From `monitor/src/main.rs:139-145`:
+
+**Purpose**: Display application version
+
+**Output**: `vibetea-monitor X.Y.Z` from `CARGO_PKG_VERSION`
 
 ## Rate Limiting
 
@@ -433,6 +681,9 @@ Not yet configured. Recommended headers for production:
 | File watcher events | File creation/modification/removal | `monitor/src/watcher.rs:329-362, 366-400, 426-456` |
 | Parser events | JSONL parsing failures logged as warnings | `monitor/src/parser.rs:357` |
 | Privacy pipeline | Debug logs for context processing | `monitor/src/privacy.rs:369, 382, 385` |
+| Monitor startup | Config loaded, keys loaded, running state | `monitor/src/main.rs:197-230` |
+| Event transmission | Events sent successfully | `monitor/src/sender.rs:284` |
+| Sender errors | Auth failed, rate limited, retries | `monitor/src/sender.rs:289-322` |
 
 **Status**: Basic error logging present. Structured auth decision logging and comprehensive audit trails pending.
 
@@ -451,6 +702,7 @@ Not yet configured. Recommended headers for production:
 | Internal errors | "server configuration error" | Low - no sensitive details exposed |
 | Parser errors | Logged as warnings without details | Low - JSON parsing failures don't expose content |
 | Privacy filter debug | Debug logs only, not exposed in responses | Low - development visibility only |
+| Crypto errors | File not found, invalid key length | Low - no key material exposed |
 
 ### Error Response Handling
 
@@ -463,6 +715,7 @@ Errors from `server/src/routes.rs:188-208` and `server/src/auth.rs:49-92`:
 - `AuthError::InvalidToken` - Returns 401 "invalid token"
 - Rate limit errors - Returns 429 with Retry-After
 - Parser errors - Logged as warnings, non-fatal to file monitoring
+- Sender errors - Logged with context, retried or reported during shutdown
 
 No SQL errors, path traversal details, or stack traces exposed to clients.
 
@@ -487,6 +740,8 @@ No SQL errors, path traversal details, or stack traces exposed to clients.
 | notify | Latest | File watching | Current (Phase 4) |
 | directories | Latest | Home directory resolution | Current (Phase 4) |
 | tracing | Latest | Structured logging | Current (Phase 5) |
+| gethostname | Latest | Monitor hostname detection | Current (Phase 6) |
+| anyhow | Latest | Context error handling | Current (Phase 6) |
 
 ### Dependency Audit
 
@@ -592,6 +847,95 @@ Implementation status:
 
 **Test execution**: Runs during `cargo test --workspace` to ensure privacy guarantees.
 
+## Phase 6 Security Changes
+
+Monitor server connection with cryptography and HTTP sender:
+
+### Cryptography Module (`monitor/src/crypto.rs`)
+
+- **Keypair generation**: OsRng-based Ed25519 key generation via `Crypto::generate()`
+- **Secure storage**: Private key (0600), public key (0644) in `~/.vibetea/`
+- **Keypair loading**: Validation of exact 32-byte seed format from disk
+- **Event signing**: Deterministic Ed25519 signatures for all events
+- **Test coverage**: 15 comprehensive test cases for crypto operations
+
+Implementation status:
+- Fully implemented and tested in `monitor/src/crypto.rs` (439 lines)
+- File permissions enforced on Unix systems (0600 for private, 0644 for public)
+- Round-trip save/load validation with tests
+- Public key export in base64 format for server registration
+- Cryptographic error types properly defined and handled
+
+### HTTP Sender Module (`monitor/src/sender.rs`)
+
+- **Connection pooling**: reqwest Client with 10 connections per host
+- **Event buffering**: 1000-event FIFO buffer with configurable size
+- **Exponential backoff**: 1s → 60s with ±25% jitter on retry
+- **Rate limit handling**: Respects 429 with Retry-After header
+- **Graceful shutdown**: Flushes remaining events on exit
+- **Retry strategy**: 10 max attempts with server error detection
+
+Implementation status:
+- Fully implemented and tested in `monitor/src/sender.rs` (545 lines)
+- 15 comprehensive unit tests for buffering, retry, and configuration
+- Integration with event signing via crypto module
+- Per-batch request signing for authentication
+- Status code handling with different retry strategies per error type
+
+### Monitor CLI (`monitor/src/main.rs`)
+
+- **Init command**: Keypair generation with interactive confirmation
+- **Run command**: Daemon with configuration loading and graceful shutdown
+- **Help/Version**: Usage documentation and version reporting
+- **Signal handling**: SIGINT and SIGTERM for clean shutdown
+- **Structured logging**: Tracing framework with startup diagnostics
+
+Implementation status:
+- Fully implemented in `monitor/src/main.rs` (302 lines)
+- Async runtime with tokio (multi-threaded)
+- Configuration validation before running
+- Graceful shutdown with 5-second timeout for event flushing
+- Error context via `anyhow` crate for better diagnostics
+
+### API Exports (`monitor/src/lib.rs`)
+
+- **Public API**: Crypto, Sender, Config, Event types exported
+- **Module structure**: All modules properly documented
+- **Re-exports**: Convenience re-exports for library users
+
+## Test Coverage (Phase 6)
+
+### Crypto Tests
+
+From `monitor/src/crypto.rs` (lines 278-438):
+
+- `test_generate_creates_valid_keypair()`: Validates base64 public key generation
+- `test_save_and_load_roundtrip()`: Ensures public keys match after save/load
+- `test_exists_returns_false_for_empty_dir()`: Directory check functionality
+- `test_exists_returns_true_after_save()`: Key existence detection
+- `test_sign_produces_verifiable_signature()`: Signature verification against public key
+- `test_sign_raw_produces_64_byte_signature()`: Raw signature format validation
+- `test_different_messages_produce_different_signatures()`: Signature uniqueness
+- `test_same_message_produces_same_signature()`: Signature determinism (Ed25519 property)
+- `test_load_from_nonexistent_dir_fails()`: Error handling for missing files
+- `test_load_from_empty_file_fails()`: Invalid key length detection
+- `test_load_from_short_file_fails()`: Truncated file rejection
+- `test_save_sets_correct_permissions()` (Unix): File mode 0600/0644 verification
+- `test_public_key_file_contains_base64()`: Base64 encoding verification
+
+### Sender Tests
+
+From `monitor/src/sender.rs` (lines 424-544):
+
+- `test_queue_adds_events()`: Buffer state tracking
+- `test_queue_evicts_oldest_when_full()`: FIFO eviction on buffer overflow
+- `test_sender_config_with_defaults()`: Default buffer size (1000)
+- `test_add_jitter_stays_within_bounds()`: Jitter randomness validation (±25%)
+- `test_increase_retry_delay_doubles()`: Exponential backoff progression
+- `test_increase_retry_delay_caps_at_max()`: Max delay cap (60s)
+- `test_reset_retry_delay()`: Delay reset to initial (1s)
+- `test_is_empty()`: Buffer state checking
+
 ## Known Vulnerabilities & Gaps
 
 **Fixed in Phase 3:**
@@ -607,6 +951,16 @@ Implementation status:
 - Summary text neutralization
 - Path anonymization via basename extraction
 
+**Fixed in Phase 6:**
+- Keypair generation with OS RNG entropy
+- Secure key storage with proper Unix file permissions (0600)
+- Event signing implementation (deterministic Ed25519)
+- HTTP sender with connection pooling and retry logic
+- Rate limit handling with Retry-After respect
+- Monitor CLI with init and run commands
+- Graceful shutdown with event buffer flushing
+- Structured logging throughout monitor components
+
 **Remaining gaps:**
 - No rate limiting middleware for other endpoints (only event ingestion protected)
 - No granular authorization/RBAC (design phase)
@@ -616,6 +970,8 @@ Implementation status:
 - No client-side token management (pending)
 - No per-client isolation or scoping (all clients see all events)
 - No TLS certificate validation in monitor HTTP client (reqwest default)
+- No URL format validation in monitor config (pending)
+- No integration tests for watcher + parser + privacy + sender pipeline
 
 ---
 

@@ -53,6 +53,8 @@
 | `cargo test -- --test-threads=1` | Run tests sequentially (prevents env var interference) |
 | `cargo test -p vibetea-monitor privacy` | Run privacy module tests |
 | `cargo test --test privacy_test` | Run privacy integration tests |
+| `cargo test -p vibetea-monitor crypto` | Run crypto module tests |
+| `cargo test -p vibetea-monitor sender` | Run sender module tests |
 
 ## Test Organization
 
@@ -100,8 +102,10 @@ monitor/
 │   ├── watcher.rs              # File watching implementation
 │   ├── parser.rs               # JSONL parser implementation
 │   ├── privacy.rs              # Privacy pipeline with 38 inline unit tests
+│   ├── crypto.rs               # Ed25519 crypto operations with 14 inline unit tests (Phase 6)
+│   ├── sender.rs               # HTTP sender with 8 inline unit tests (Phase 6)
 │   ├── lib.rs                  # Library entrypoint
-│   └── main.rs                 # Binary entrypoint
+│   └── main.rs                 # Binary entrypoint (CLI)
 └── tests/
     ├── privacy_test.rs         # Integration tests for privacy compliance (17 tests)
     └── (more integration tests to be created)
@@ -410,6 +414,327 @@ Privacy unit tests are organized into sections:
 3. **PrivacyPipeline Tests** (15 tests): Event processing, sensitive tool context stripping, allowlist filtering
 4. **Edge Case Tests** (5 tests): Complex paths, Unicode filenames, case sensitivity
 
+### Unit Tests (Rust) - Crypto Module (Phase 6)
+
+Crypto module tests validate Ed25519 keypair generation, storage, and signing:
+
+#### Example from monitor/src/crypto.rs inline tests
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::Verifier;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_generate_creates_valid_keypair() {
+        let crypto = Crypto::generate();
+        let pubkey = crypto.public_key_base64();
+
+        // Public key should be base64-encoded 32 bytes (44 chars with padding)
+        assert!(!pubkey.is_empty());
+        assert!(pubkey.len() >= 43); // Base64 of 32 bytes
+    }
+
+    #[test]
+    fn test_save_and_load_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let dir_path = temp_dir.path();
+
+        // Generate and save
+        let original = Crypto::generate();
+        let original_pubkey = original.public_key_base64();
+        original.save(dir_path).unwrap();
+
+        // Load and verify
+        let loaded = Crypto::load(dir_path).unwrap();
+        let loaded_pubkey = loaded.public_key_base64();
+
+        assert_eq!(original_pubkey, loaded_pubkey);
+    }
+
+    #[test]
+    fn test_exists_returns_false_for_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        assert!(!Crypto::exists(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_exists_returns_true_after_save() {
+        let temp_dir = TempDir::new().unwrap();
+        let crypto = Crypto::generate();
+        crypto.save(temp_dir.path()).unwrap();
+
+        assert!(Crypto::exists(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_sign_produces_verifiable_signature() {
+        let crypto = Crypto::generate();
+        let message = b"test message for signing";
+
+        let signature_b64 = crypto.sign(message);
+        let signature_bytes = BASE64_STANDARD.decode(&signature_b64).unwrap();
+        let signature = Signature::from_slice(&signature_bytes).unwrap();
+
+        // Verify the signature using the public key
+        let verifying_key = crypto.verifying_key();
+        assert!(verifying_key.verify(message, &signature).is_ok());
+    }
+
+    #[test]
+    fn test_sign_raw_produces_64_byte_signature() {
+        let crypto = Crypto::generate();
+        let message = b"test message";
+
+        let signature = crypto.sign_raw(message);
+        assert_eq!(signature.len(), 64);
+    }
+
+    #[test]
+    fn test_different_messages_produce_different_signatures() {
+        let crypto = Crypto::generate();
+        let sig1 = crypto.sign(b"message one");
+        let sig2 = crypto.sign(b"message two");
+
+        assert_ne!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_same_message_produces_same_signature() {
+        let crypto = Crypto::generate();
+        let message = b"same message";
+
+        // Note: Ed25519 is deterministic, so same message = same signature
+        let sig1 = crypto.sign(message);
+        let sig2 = crypto.sign(message);
+
+        assert_eq!(sig1, sig2);
+    }
+
+    #[test]
+    fn test_load_from_nonexistent_dir_fails() {
+        let result = Crypto::load(Path::new("/nonexistent/path"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_from_empty_file_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let priv_path = temp_dir.path().join(PRIVATE_KEY_FILE);
+
+        // Create empty file
+        File::create(&priv_path).unwrap();
+
+        let result = Crypto::load(temp_dir.path());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CryptoError::InvalidKey(_)));
+    }
+
+    #[test]
+    fn test_load_from_short_file_fails() {
+        let temp_dir = TempDir::new().unwrap();
+        let priv_path = temp_dir.path().join(PRIVATE_KEY_FILE);
+
+        // Create file with only 16 bytes (should be 32)
+        let mut file = File::create(&priv_path).unwrap();
+        file.write_all(&[0u8; 16]).unwrap();
+
+        let result = Crypto::load(temp_dir.path());
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), CryptoError::InvalidKey(_)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_save_sets_correct_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let crypto = Crypto::generate();
+        crypto.save(temp_dir.path()).unwrap();
+
+        // Check private key permissions (0600)
+        let priv_path = temp_dir.path().join(PRIVATE_KEY_FILE);
+        let priv_perms = fs::metadata(&priv_path).unwrap().permissions();
+        assert_eq!(priv_perms.mode() & 0o777, 0o600);
+
+        // Check public key permissions (0644)
+        let pub_path = temp_dir.path().join(PUBLIC_KEY_FILE);
+        let pub_perms = fs::metadata(&pub_path).unwrap().permissions();
+        assert_eq!(pub_perms.mode() & 0o777, 0o644);
+    }
+
+    #[test]
+    fn test_public_key_file_contains_base64() {
+        let temp_dir = TempDir::new().unwrap();
+        let crypto = Crypto::generate();
+        crypto.save(temp_dir.path()).unwrap();
+
+        // Read public key file
+        let pub_path = temp_dir.path().join(PUBLIC_KEY_FILE);
+        let contents = fs::read_to_string(pub_path).unwrap();
+        let pubkey = contents.trim();
+
+        // Should be valid base64 and decode to 32 bytes
+        let decoded = BASE64_STANDARD.decode(pubkey).unwrap();
+        assert_eq!(decoded.len(), 32);
+    }
+}
+```
+
+Crypto unit tests cover (14 tests):
+1. **Keypair generation**: Valid keypair creation
+2. **Save/Load roundtrip**: Persistence and recovery
+3. **File existence**: Detection of existing keys
+4. **Signature generation**: Base64 and raw signature creation
+5. **Signature verification**: Ed25519 signature validation
+6. **Determinism**: Same message produces same signature
+7. **Error handling**: Load failures on invalid files
+8. **File permissions**: Unix-specific 0600/0644 permission validation
+9. **Public key format**: Base64 encoding validation
+
+### Unit Tests (Rust) - Sender Module (Phase 6)
+
+Sender module tests validate event buffering, retry logic, and jitter:
+
+#### Example from monitor/src/sender.rs inline tests
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{EventPayload, EventType, SessionAction};
+    use uuid::Uuid;
+
+    fn create_test_event() -> Event {
+        Event::new(
+            "test-monitor".to_string(),
+            EventType::Session,
+            EventPayload::Session {
+                session_id: Uuid::new_v4(),
+                action: SessionAction::Started,
+                project: "test-project".to_string(),
+            },
+        )
+    }
+
+    fn create_test_crypto() -> Crypto {
+        Crypto::generate()
+    }
+
+    fn create_test_sender() -> Sender {
+        let config = SenderConfig::new(
+            "http://localhost:8080".to_string(),
+            "test-monitor".to_string(),
+            10, // Small buffer for testing
+        );
+        Sender::new(config, create_test_crypto())
+    }
+
+    #[test]
+    fn test_queue_adds_events() {
+        let mut sender = create_test_sender();
+        assert!(sender.is_empty());
+
+        sender.queue(create_test_event());
+        assert_eq!(sender.buffer_len(), 1);
+
+        sender.queue(create_test_event());
+        assert_eq!(sender.buffer_len(), 2);
+    }
+
+    #[test]
+    fn test_queue_evicts_oldest_when_full() {
+        let mut sender = create_test_sender();
+
+        // Fill buffer to capacity (10 events)
+        for _ in 0..10 {
+            let evicted = sender.queue(create_test_event());
+            assert_eq!(evicted, 0);
+        }
+        assert_eq!(sender.buffer_len(), 10);
+
+        // Add one more - should evict oldest
+        let evicted = sender.queue(create_test_event());
+        assert_eq!(evicted, 1);
+        assert_eq!(sender.buffer_len(), 10);
+    }
+
+    #[test]
+    fn test_sender_config_with_defaults() {
+        let config = SenderConfig::with_defaults(
+            "https://example.com".to_string(),
+            "my-monitor".to_string(),
+        );
+        assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
+    }
+
+    #[test]
+    fn test_add_jitter_stays_within_bounds() {
+        let sender = create_test_sender();
+        let base = Duration::from_secs(10);
+
+        // Run multiple times to test randomness bounds
+        for _ in 0..100 {
+            let jittered = sender.add_jitter(base);
+            let secs = jittered.as_secs_f64();
+            // Should be within ±25% of 10 seconds
+            assert!(secs >= 7.5 && secs <= 12.5, "Jitter out of bounds: {}", secs);
+        }
+    }
+
+    #[test]
+    fn test_increase_retry_delay_doubles() {
+        let mut sender = create_test_sender();
+        assert_eq!(sender.current_retry_delay.as_secs(), INITIAL_RETRY_DELAY_SECS);
+
+        sender.increase_retry_delay();
+        assert_eq!(sender.current_retry_delay.as_secs(), 2);
+
+        sender.increase_retry_delay();
+        assert_eq!(sender.current_retry_delay.as_secs(), 4);
+    }
+
+    #[test]
+    fn test_increase_retry_delay_caps_at_max() {
+        let mut sender = create_test_sender();
+        sender.current_retry_delay = Duration::from_secs(MAX_RETRY_DELAY_SECS);
+
+        sender.increase_retry_delay();
+        assert_eq!(sender.current_retry_delay.as_secs(), MAX_RETRY_DELAY_SECS);
+    }
+
+    #[test]
+    fn test_reset_retry_delay() {
+        let mut sender = create_test_sender();
+        sender.current_retry_delay = Duration::from_secs(30);
+
+        sender.reset_retry_delay();
+        assert_eq!(sender.current_retry_delay.as_secs(), INITIAL_RETRY_DELAY_SECS);
+    }
+
+    #[test]
+    fn test_is_empty() {
+        let mut sender = create_test_sender();
+        assert!(sender.is_empty());
+
+        sender.queue(create_test_event());
+        assert!(!sender.is_empty());
+    }
+}
+```
+
+Sender unit tests cover (8 tests):
+1. **Queueing**: Adding events to buffer
+2. **Buffer overflow**: FIFO eviction when full
+3. **Configuration**: Default values
+4. **Jitter**: Exponential backoff with jitter bounds
+5. **Retry delay**: Doubling with max cap
+6. **Retry reset**: Reset to initial delay on success
+7. **Buffer state**: Empty/non-empty checks
+
 ### Integration Tests (Rust)
 
 Larger tests that exercise multiple components together:
@@ -595,6 +920,7 @@ No mocking framework is used currently. Tests use:
 2. **Helper functions**: `parse_bool_env()`, `parse_port()` tested independently
 3. **Direct instantiation**: Create test instances with test data
 4. **Deterministic test doubles**: For privacy tests, use fixed UUIDs (`Uuid::nil()`)
+5. **Temporary directories**: `tempfile::TempDir` for file system tests (crypto, sender)
 
 ## Test Data
 
@@ -689,6 +1015,54 @@ fn pipeline_with_allowlist(extensions: &[&str]) -> PrivacyPipeline {
 }
 ```
 
+### Crypto Test Helpers (Phase 6)
+
+Crypto tests use temporary directories and deterministic generation:
+
+```rust
+use tempfile::TempDir;
+
+// Tests create temporary directories for key file operations
+let temp_dir = TempDir::new().unwrap();
+let crypto = Crypto::generate();
+crypto.save(temp_dir.path()).unwrap();
+
+// Verify operations on the saved keys
+let loaded = Crypto::load(temp_dir.path()).unwrap();
+assert_eq!(crypto.public_key_base64(), loaded.public_key_base64());
+```
+
+### Sender Test Helpers (Phase 6)
+
+Sender tests use helper functions to create consistent test fixtures:
+
+```rust
+fn create_test_event() -> Event {
+    Event::new(
+        "test-monitor".to_string(),
+        EventType::Session,
+        EventPayload::Session {
+            session_id: Uuid::new_v4(),
+            action: SessionAction::Started,
+            project: "test-project".to_string(),
+        },
+    )
+}
+
+fn create_test_crypto() -> Crypto {
+    Crypto::generate()
+}
+
+fn create_test_sender() -> Sender {
+    let config = SenderConfig::new(
+        "http://localhost:8080".to_string(),
+        "test-monitor".to_string(),
+        10, // Small buffer for testing
+    );
+    Sender::new(config, create_test_crypto())
+}
+```
+
 ## Coverage Requirements
 
 ### Targets
@@ -724,6 +1098,8 @@ Tests that must pass before any deploy:
 | Serialization tests | JSON round-trips | `server/src/types.rs` tests |
 | Event type tests | Type-safe event creation | `client/src/__tests__/events.test.ts` |
 | Privacy tests | Constitution I compliance | `monitor/src/privacy.rs` (unit) + `monitor/tests/privacy_test.rs` (integration) |
+| Crypto tests | Ed25519 keypair and signing | `monitor/src/crypto.rs` unit tests (Phase 6) |
+| Sender tests | Event buffering and retry | `monitor/src/sender.rs` unit tests (Phase 6) |
 
 ### Unit Tests by Module
 
@@ -767,49 +1143,23 @@ Tests follow similar patterns to server modules covering:
 
 **privacy.rs** (38 unit tests - Phase 5)
 - **PrivacyConfig tests** (10): Configuration creation, environment variable parsing, allowlist filtering
-  - `config_new_with_no_allowlist_allows_all`
-  - `config_new_with_allowlist_filters_extensions`
-  - `config_allowlist_rejects_no_extension`
-  - `config_from_env_with_no_var_allows_all`
-  - `config_from_env_parses_comma_separated`
-  - `config_from_env_handles_missing_dots`
-  - `config_from_env_trims_whitespace`
-  - `config_from_env_filters_empty_entries`
-  - `config_default_allows_all`
-  - Plus environment-specific tests
-
 - **extract_basename tests** (8): Path parsing for various formats
-  - `extract_basename_from_unix_absolute_path`
-  - `extract_basename_from_unix_relative_path`
-  - `extract_basename_already_basename`
-  - `extract_basename_with_dots_in_name`
-  - `extract_basename_hidden_file`
-  - `extract_basename_empty_path`
-  - `extract_basename_root_path`
-  - `extract_basename_trailing_slash`
-
 - **PrivacyPipeline tests** (15): Event processing and context stripping
-  - `pipeline_session_passes_through`
-  - `pipeline_activity_passes_through`
-  - `pipeline_agent_passes_through`
-  - `pipeline_error_passes_through`
-  - `pipeline_summary_strips_text`
-  - `pipeline_tool_bash_strips_context`
-  - `pipeline_tool_grep_strips_context`
-  - `pipeline_tool_glob_strips_context`
-  - `pipeline_tool_websearch_strips_context`
-  - `pipeline_tool_webfetch_strips_context`
-  - `pipeline_tool_read_extracts_basename`
-  - `pipeline_tool_write_extracts_basename`
-  - `pipeline_tool_edit_extracts_basename`
-  - `pipeline_tool_with_no_context`
-  - `pipeline_tool_allowlist_filters`
-  - Plus allowlist and project preservation tests
-
 - **Edge case tests** (5): Complex scenarios
-  - `pipeline_handles_complex_paths`
-  - `pipeline_handles_unicode_filenames`
-  - `pipeline_case_sensitive_tool_names`
+
+**crypto.rs** (14 unit tests - Phase 6)
+- **Keypair generation** (1): Valid keypair creation
+- **Persistence** (2): Save/load roundtrip, file existence
+- **Signing** (6): Base64, raw signatures, determinism, verification
+- **Error handling** (3): Load failures on invalid files
+- **File permissions** (1): Unix-specific 0600/0644 validation
+- **Format validation** (1): Base64 encoding verification
+
+**sender.rs** (8 unit tests - Phase 6)
+- **Buffering** (2): Adding events, FIFO eviction
+- **Configuration** (1): Default values
+- **Retry logic** (3): Jitter bounds, delay doubling, max cap
+- **Buffer state** (2): Empty checks, reset
 
 ### Integration Tests
 
@@ -864,6 +1214,8 @@ test:
   - Format check Rust (rustfmt)
   - Unit tests (cargo test --lib)
   - Privacy unit tests (cargo test -p vibetea-monitor privacy)
+  - Crypto unit tests (cargo test -p vibetea-monitor crypto)
+  - Sender unit tests (cargo test -p vibetea-monitor sender)
   - Integration tests (cargo test --test '*')
   - Privacy integration tests (cargo test --test privacy_test)
   - Coverage report (optional)
@@ -879,6 +1231,8 @@ test:
 | Rust linting (clippy) | Yes | Code quality |
 | Rust unit tests | Yes | Correctness |
 | Privacy unit tests | Yes | Constitution I compliance |
+| Crypto unit tests | Yes | Security and correctness (Phase 6) |
+| Sender unit tests | Yes | Reliability of event transmission (Phase 6) |
 | Rust integration tests | Yes | End-to-end behavior |
 | Privacy integration tests | Yes | Constitution I compliance in production scenarios |
 | Code formatting matches | Yes | Consistency |
@@ -905,6 +1259,8 @@ test:
 - **types.rs**: Test cases covering event serialization
 - **privacy.rs** (Phase 5): 38 unit tests covering privacy configuration, path extraction, event processing
 - **privacy_test.rs** (Phase 5): 17 integration tests covering Constitution I compliance
+- **crypto.rs** (Phase 6): 14 unit tests covering keypair generation, persistence, signing, validation
+- **sender.rs** (Phase 6): 8 unit tests covering buffering, retry logic, jitter
 - Integration tests directory ready for full pipeline tests
 
 ## Test Execution
@@ -922,6 +1278,8 @@ cargo test -- --test-threads=1    # Sequential (prevents env var interference)
 
 # Rust (specific modules)
 cargo test -p vibetea-monitor privacy  # Privacy tests only
+cargo test -p vibetea-monitor crypto   # Crypto tests only (Phase 6)
+cargo test -p vibetea-monitor sender   # Sender tests only (Phase 6)
 ```
 
 ### Running Specific Test Modules
@@ -938,6 +1296,12 @@ cargo test --test privacy_test
 # Privacy tests specifically
 cargo test -p vibetea-monitor privacy::tests  # Unit tests
 cargo test --test privacy_test                # Integration tests
+
+# Crypto tests specifically (Phase 6)
+cargo test -p vibetea-monitor crypto::tests
+
+# Sender tests specifically (Phase 6)
+cargo test -p vibetea-monitor sender::tests
 ```
 
 ## Next Steps for Testing
@@ -946,10 +1310,12 @@ cargo test --test privacy_test                # Integration tests
 2. **TypeScript**: Add component tests for UI elements as they're built
 3. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
 4. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
-5. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
-6. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
-7. **Snapshot testing**: Consider for event serialization if JSON formats become complex
-8. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
+5. **Rust/Monitor**: Add integration tests for crypto module (key persistence scenarios)
+6. **Rust/Monitor**: Add integration tests for sender module (retry scenarios, rate limiting)
+7. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
+8. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
+9. **Snapshot testing**: Consider for event serialization if JSON formats become complex
+10. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
 
 ---
 

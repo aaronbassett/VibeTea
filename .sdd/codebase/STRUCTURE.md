@@ -1,6 +1,6 @@
 # Project Structure
 
-**Status**: Phase 5 incremental update - Monitor privacy pipeline implementation
+**Status**: Phase 6 incremental update - Monitor crypto, sender, and CLI modules
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -12,30 +12,32 @@ VibeTea/
 │   ├── src/
 │   │   ├── main.rs            # Server entry point with graceful shutdown (217 lines)
 │   │   ├── lib.rs             # Public API exports
-│   │   ├── config.rs          # Environment variable configuration (415 lines)
-│   │   ├── error.rs           # Error types and conversions (460 lines)
-│   │   ├── types.rs           # Event definitions (410 lines)
-│   │   ├── routes.rs          # HTTP routes and handlers (1125 lines)
+│   │   ├── config.rs          # Environment variable configuration (425 lines)
+│   │   ├── error.rs           # Error types and conversions (467 lines)
+│   │   ├── types.rs           # Event definitions (401 lines)
+│   │   ├── routes.rs          # HTTP routes and handlers (1124 lines)
 │   │   ├── auth.rs            # Ed25519 verification and token validation (765 lines)
-│   │   ├── broadcast.rs       # Event broadcasting with filtering (1041 lines)
-│   │   ├── rate_limit.rs      # Token bucket rate limiting (719 lines)
+│   │   ├── broadcast.rs       # Event broadcasting with filtering (1040 lines)
+│   │   ├── rate_limit.rs      # Token bucket rate limiting (718 lines)
 │   │   └── Cargo.toml         # Rust dependencies
 │   └── tests/
 │       └── unsafe_mode_test.rs # Integration tests (Phase 3)
 │
 ├── monitor/                    # Rust file watcher and event producer
 │   ├── src/
-│   │   ├── main.rs            # Monitor entry point (placeholder, Phase 4)
-│   │   ├── lib.rs             # Public API exports
-│   │   ├── config.rs          # Environment variable configuration (303 lines)
+│   │   ├── main.rs            # Monitor CLI with init/run commands (301 lines - Phase 6)
+│   │   ├── lib.rs             # Public API exports (45 lines, updated Phase 6)
+│   │   ├── config.rs          # Environment variable configuration (305 lines)
 │   │   ├── error.rs           # Error types and conversions (173 lines)
-│   │   ├── types.rs           # Event definitions (341 lines)
-│   │   ├── watcher.rs         # File system watching with position tracking (Phase 4)
-│   │   ├── parser.rs          # JSONL parsing and event normalization (Phase 4)
-│   │   ├── privacy.rs         # Privacy pipeline for event sanitization (NEW - Phase 5)
+│   │   ├── types.rs           # Event definitions (338 lines)
+│   │   ├── watcher.rs         # File system watching with position tracking (944 lines - Phase 4)
+│   │   ├── parser.rs          # JSONL parsing and event normalization (1098 lines - Phase 4)
+│   │   ├── privacy.rs         # Privacy pipeline for event sanitization (1039 lines - Phase 5)
+│   │   ├── crypto.rs          # Keypair management and event signing (438 lines - Phase 6 NEW)
+│   │   ├── sender.rs          # HTTP client with buffering/retry (544 lines - Phase 6 NEW)
 │   │   └── Cargo.toml         # Rust dependencies
 │   └── tests/
-│       └── privacy_test.rs     # Privacy compliance tests (NEW - Phase 5)
+│       └── privacy_test.rs     # Privacy compliance tests (Phase 5)
 │
 ├── client/                     # TypeScript React web dashboard
 │   ├── src/
@@ -85,14 +87,14 @@ VibeTea/
 | File | Purpose | Lines |
 |------|---------|-------|
 | `main.rs` | Server bootstrap with logging, signal handling, graceful shutdown | 217 |
-| `lib.rs` | Module re-exports for public API | ~10 |
-| `config.rs` | Environment variable parsing (VIBETEA_PUBLIC_KEYS, VIBETEA_SUBSCRIBER_TOKEN, PORT, VIBETEA_UNSAFE_NO_AUTH) | 415 |
-| `error.rs` | Error type definitions and Display implementations | 460 |
-| `types.rs` | Event struct and enum definitions with serde | 410 |
-| `routes.rs` | HTTP route handlers (POST /events, GET /ws, GET /health) and AppState | 1125 |
+| `lib.rs` | Module re-exports for public API | ~46 |
+| `config.rs` | Environment variable parsing (VIBETEA_PUBLIC_KEYS, VIBETEA_SUBSCRIBER_TOKEN, PORT, VIBETEA_UNSAFE_NO_AUTH) | 425 |
+| `error.rs` | Error type definitions and Display implementations | 467 |
+| `types.rs` | Event struct and enum definitions with serde | 401 |
+| `routes.rs` | HTTP route handlers (POST /events, GET /ws, GET /health) and AppState | 1124 |
 | `auth.rs` | Ed25519 signature verification and token validation with constant-time comparison | 765 |
-| `broadcast.rs` | Event broadcaster with multi-subscriber support and filtering | 1041 |
-| `rate_limit.rs` | Per-source token bucket rate limiting with stale entry cleanup | 719 |
+| `broadcast.rs` | Event broadcaster with multi-subscriber support and filtering | 1040 |
+| `rate_limit.rs` | Per-source token bucket rate limiting with stale entry cleanup | 718 |
 
 **Configuration Variables**:
 | Variable | Purpose | Required | Default |
@@ -199,14 +201,139 @@ GET /health:
 
 | File | Purpose | Lines | Status |
 |------|---------|-------|--------|
-| `main.rs` | Monitor entry point | ~10 | Placeholder (Phase 4) |
-| `lib.rs` | Public API (exports modules) | ~40 | Updated (Phase 5) |
-| `config.rs` | Environment variable parsing | 303 | Phase 3 |
+| `main.rs` | Monitor CLI with init/run commands | 301 | Phase 6 NEW |
+| `lib.rs` | Public API (exports modules) | 45 | Updated Phase 6 |
+| `config.rs` | Environment variable parsing | 305 | Phase 3 |
 | `error.rs` | Error types (Config, IO, JSON, HTTP, Crypto, Watch) | 173 | Phase 3 |
-| `types.rs` | Event definitions with ID generation | 341 | Phase 3 |
-| `watcher.rs` | File system watching with position tracking | ~300 | Phase 4 |
-| `parser.rs` | JSONL parsing and event normalization | ~400 | Phase 4 |
-| `privacy.rs` | Privacy pipeline for event sanitization | 1039 | NEW (Phase 5) |
+| `types.rs` | Event definitions with ID generation | 338 | Phase 3 |
+| `watcher.rs` | File system watching with position tracking | 944 | Phase 4 |
+| `parser.rs` | JSONL parsing and event normalization | 1098 | Phase 4 |
+| `privacy.rs` | Privacy pipeline for event sanitization | 1039 | Phase 5 |
+| `crypto.rs` | Keypair management and event signing | 438 | Phase 6 NEW |
+| `sender.rs` | HTTP client with buffering/retry | 544 | Phase 6 NEW |
+
+#### Monitor CLI - `main.rs` (Phase 6 New)
+
+**Purpose**: Command-line interface for keypair generation and daemon execution
+
+**Commands**:
+- `vibetea-monitor init [--force/-f]` - Generate Ed25519 keypair
+- `vibetea-monitor run` - Start the monitor daemon
+- `vibetea-monitor help` - Show help message
+- `vibetea-monitor version` - Show version
+
+**Key Functions**:
+- `parse_args()` - Parse command line arguments into Command enum
+- `run_init(force)` - Generate and save keypair with interactive prompt
+- `run_monitor()` - Bootstrap and run the daemon (async)
+- `wait_for_shutdown()` - Handle SIGINT/SIGTERM signals
+- `init_logging()` - Setup tracing with EnvFilter
+- `get_key_directory()` - Resolve key path
+- `get_default_source_id()` - Get hostname for default source ID
+
+**Async Runtime**:
+- `init`, `help`, `version` run synchronously
+- `run` creates multi-threaded tokio runtime
+- All async operations in `run` command
+
+**Signal Handling**:
+- SIGINT (Ctrl+C) and SIGTERM both trigger graceful shutdown
+- Uses tokio::select! for cross-platform signal waiting
+
+**Logging**:
+- Tracing framework with EnvFilter
+- Default level: info
+- Respects RUST_LOG environment variable
+
+#### Monitor Cryptographic Module - `crypto.rs` (Phase 6 New)
+
+**Purpose**: Manage Ed25519 keypairs for signing events
+
+**File Size**: 438 lines including test cases
+
+**Key Types**:
+- `Crypto` - Main struct holding SigningKey
+- `CryptoError` - Enum for Io, InvalidKey, Base64, KeyExists errors
+
+**Key Methods**:
+- `Crypto::generate()` - Generate new Ed25519 keypair
+- `Crypto::load(dir)` - Load from {dir}/key.priv (32-byte seed)
+- `Crypto::save(dir)` - Save with permissions (0600/0644)
+- `Crypto::exists(dir)` - Check if keypair exists
+- `crypto.sign(&[u8])` - Sign message, return base64
+- `crypto.sign_raw(&[u8])` - Sign message, return 64 raw bytes
+- `crypto.public_key_base64()` - Get base64-encoded public key
+- `crypto.verifying_key()` - Get ed25519_dalek VerifyingKey
+
+**Key Files**:
+- `key.priv` - Raw 32-byte Ed25519 seed (permissions 0600)
+- `key.pub` - Base64-encoded public key with newline (permissions 0644)
+
+**Test Coverage**:
+- Keypair generation and validity
+- Save/load roundtrip verification
+- Existence checking
+- Signature generation and verification
+- File permission verification (Unix)
+- Base64 encoding/decoding
+- Error handling for invalid keys
+
+#### Monitor Sender Module - `sender.rs` (Phase 6 New)
+
+**Purpose**: HTTP event transmission with buffering and resilience
+
+**File Size**: 544 lines including test cases
+
+**Key Types**:
+- `Sender` - Main struct with buffer, crypto, client, retry state
+- `SenderConfig` - Configuration struct
+- `SenderError` - Enum for error types
+
+**Key Methods**:
+- `Sender::new(config, crypto)` - Create sender with HTTP client
+- `sender.queue(event)` - Add event to buffer, evict oldest if full
+- `sender.buffer_len()` - Get buffered event count
+- `sender.is_empty()` - Check if buffer empty
+- `sender.send(event)` - Send single event immediately
+- `sender.flush()` - Flush all buffered events
+- `sender.shutdown(timeout)` - Graceful shutdown with flush
+
+**Event Buffering**:
+- VecDeque with configurable max capacity (default 1000)
+- FIFO eviction when full
+- `queue()` returns count of evicted events
+
+**HTTP Transmission**:
+- Connection pooling (10 idle max)
+- Batching: single or array of events
+- Headers:
+  - `Content-Type: application/json`
+  - `X-Source-Id: {source_id}`
+  - `X-Signature: {base64_signature}`
+- Endpoint: `POST {server_url}/events`
+
+**Retry Strategy**:
+- Initial delay: 1 second
+- Max delay: 60 seconds
+- Jitter: ±25% random
+- Max attempts: 10
+- Retry on: connection errors, timeouts, 5xx, 429
+- Stop on: 401 auth failed, 4xx client errors
+- Parse Retry-After header for 429 responses
+
+**Test Coverage**:
+- Event queueing and buffer overflow
+- Retry delay calculations
+- Jitter application bounds
+- Configuration initialization
+- Buffer state queries
+
+**Configuration Variables**:
+| Variable | Purpose | Required | Default |
+|----------|---------|----------|---------|
+| `VIBETEA_SERVER_URL` | Server URL for event submission | Yes | None |
+| `VIBETEA_SOURCE_ID` | Monitor identifier | No | Hostname |
+| `VIBETEA_BUFFER_SIZE` | Event buffer capacity | No | 1000 |
 
 #### Monitor File Watcher - `watcher.rs` (Phase 4)
 
@@ -402,27 +529,35 @@ main.rs
 - `rate_limit` ← Per-source request rate limiting
 - `main` ← Server startup, logging setup, signal handling, graceful shutdown
 
-### Monitor Module Structure (Phase 5)
+### Monitor Module Structure (Phase 6)
 
 **Public API** (`src/lib.rs`):
 ```rust
 pub mod config;
+pub mod crypto;
 pub mod error;
 pub mod parser;
 pub mod privacy;
+pub mod sender;
 pub mod types;
 pub mod watcher;
 
 pub use config::Config;
+pub use crypto::{Crypto, CryptoError};
 pub use error::{MonitorError, Result};
 pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
+pub use sender::{Sender, SenderConfig, SenderError};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 pub use watcher::{FileWatcher, WatchEvent, WatcherError};
 ```
 
 **Module Dependencies**:
 ```
+main.rs
+  ├── uses: config, crypto, sender (CLI entry point)
+  └── provides: Command-line interface and daemon bootstrap
+
 watcher.rs
   ├── uses: (filesystem + tokio)
   └── provides: FileWatcher, WatchEvent
@@ -431,9 +566,17 @@ parser.rs
   ├── uses: types (Event, EventPayload)
   └── provides: ParsedEvent, SessionParser
 
-privacy.rs (Phase 5 NEW)
+privacy.rs
   ├── uses: types (EventPayload)
   └── provides: PrivacyConfig, PrivacyPipeline, extract_basename
+
+crypto.rs (Phase 6 NEW)
+  ├── uses: (cryptographic libraries only)
+  └── provides: Crypto, CryptoError
+
+sender.rs (Phase 6 NEW)
+  ├── uses: crypto, types (events), config (server URL)
+  └── provides: Sender, SenderConfig, SenderError
 
 config.rs
   ├── uses: (environment only)
@@ -446,10 +589,6 @@ error.rs
 types.rs
   ├── uses: (no dependencies)
   └── provides: Event, EventPayload, EventType
-
-main.rs
-  ├── uses: config, watcher, parser, privacy, types
-  └── provides: Monitor bootstrap (Phase 4 placeholder)
 ```
 
 **Responsibility Separation**:
@@ -458,8 +597,10 @@ main.rs
 - `types` ← Event schema and serialization
 - `watcher` ← File system monitoring and position tracking (Phase 4)
 - `parser` ← JSONL parsing and event normalization (Phase 4)
-- `privacy` ← Event payload sanitization before transmission (Phase 5 NEW)
-- `main` ← File watching, parsing, batching, transmission (Phase 4 placeholder)
+- `privacy` ← Event payload sanitization before transmission (Phase 5)
+- `crypto` ← Keypair management and message signing (Phase 6 NEW)
+- `sender` ← HTTP transmission, buffering, retry logic (Phase 6 NEW)
+- `main` ← CLI parsing, daemon bootstrap, signal handling (Phase 6 NEW)
 
 ### Client Module Structure
 
@@ -480,7 +621,10 @@ main.rs
 | File watching logic | `monitor/src/watcher.rs` | Extend FileWatcher (Phase 4) |
 | JSONL parsing logic | `monitor/src/parser.rs` | Extend SessionParser (Phase 4) |
 | Privacy filtering logic | `monitor/src/privacy.rs` | Extend PrivacyPipeline (Phase 5) |
-| Monitor main logic | `monitor/src/main.rs` | Watch directory, parse files, sanitize, send events (Phase 4+) |
+| Signing/crypto logic | `monitor/src/crypto.rs` | Extend Crypto (Phase 6) |
+| Event transmission logic | `monitor/src/sender.rs` | Extend Sender with new retry strategies (Phase 6) |
+| CLI commands | `monitor/src/main.rs` | New Command enum variant and handler (Phase 6) |
+| Monitor main logic | `monitor/src/main.rs` | Watch directory, parse files, sanitize, send events (Phase 6+) |
 | New React component | `client/src/components/{feature}/` | `client/src/components/sessions/SessionList.tsx` |
 | New client hook | `client/src/hooks/` | `client/src/hooks/useWebSocket.ts` |
 | New utility function | `client/src/utils/` | `client/src/utils/formatDate.ts` |
@@ -510,6 +654,8 @@ use crate::rate_limit::RateLimiter;
 use crate::watcher::FileWatcher;
 use crate::parser::SessionParser;
 use crate::privacy::{PrivacyConfig, PrivacyPipeline, extract_basename};
+use crate::crypto::{Crypto, CryptoError};
+use crate::sender::{Sender, SenderConfig, SenderError};
 ```
 
 ### TypeScript
@@ -543,8 +689,8 @@ import { formatDate } from '@utils/formatDate';
 |------|---------|--------|
 | `server/src/main.rs` | Server application bootstrap with graceful shutdown | Phase 3 complete |
 | `server/src/lib.rs` | Server public library API | Exports all modules |
-| `monitor/src/main.rs` | Monitor application bootstrap | Placeholder (Phase 4) |
-| `monitor/src/lib.rs` | Monitor public library API | Exports watcher, parser, privacy, types (Phase 5) |
+| `monitor/src/main.rs` | Monitor CLI with init/run commands | Phase 6 complete |
+| `monitor/src/lib.rs` | Monitor public library API | Exports watcher, parser, privacy, crypto, sender, types (Phase 6) |
 | `client/src/main.tsx` | React DOM render | Renders App into #root |
 | `client/src/App.tsx` | Root React component | Placeholder (Phase 3) |
 | `client/index.html` | HTML template | Vite entry point |
@@ -560,37 +706,59 @@ Files that are auto-generated or compile-time artifacts:
 | `client/dist/` | `npm run build` (Vite) | Bundled client JavaScript and CSS |
 | `Cargo.lock` | `cargo` | Dependency lock file (committed) |
 
-## Phase 5 Implementation Summary
+## Phase 6 Implementation Summary
 
-The following modules were added/updated in Phase 5 for the monitor:
+The following modules were added/updated in Phase 6 for the monitor:
 
 **Monitor New Modules**:
 
-- `src/privacy.rs` - Privacy pipeline for event sanitization (NEW - Phase 5)
-  - PrivacyConfig for extension allowlist configuration
-  - PrivacyPipeline for multi-stage event payload sanitization
-  - extract_basename() utility for path conversion
-  - Sensitive tool detection (Bash, Grep, Glob, WebSearch, WebFetch)
+- `src/crypto.rs` - Ed25519 keypair management and event signing (NEW - Phase 6)
+  - Crypto struct for keypair operations
+  - Key generation, storage, and loading
+  - Event signing (base64 and raw formats)
+  - Public key export for server registration
+  - Correct file permissions (0600/0644)
+  - Test cases covering all operations
+
+- `src/sender.rs` - HTTP event transmission with resilience (NEW - Phase 6)
+  - Sender struct for event transmission
+  - VecDeque-based event buffering (FIFO eviction)
+  - Exponential backoff retry (1s → 60s with ±25% jitter)
+  - Rate limit handling (429 with Retry-After)
+  - Connection pooling via reqwest
+  - Graceful shutdown with event flush
+  - Test cases covering buffering, retry, and configuration
+
+- `src/main.rs` - CLI with init and run subcommands (NEW - Phase 6)
+  - Command enum for init, run, help, version
+  - parse_args() for command-line parsing
+  - run_init() for keypair generation with interactive prompt
+  - run_monitor() for daemon execution
+  - Signal handling (SIGINT/SIGTERM)
+  - Logging setup with tracing
+  - Graceful shutdown with event buffer flush
+  - 301 lines implementing full CLI
+
+**Monitor Updated Modules** (Phase 6):
+- `src/lib.rs` - Updated public API
+  - Now exports crypto module
+  - Now exports sender module
+  - Exports Crypto, CryptoError, Sender, SenderConfig, SenderError types
+
+**Monitor Phase 5 Modules** (Still in use):
+- `src/privacy.rs` - Privacy pipeline for event sanitization
+  - PrivacyConfig and PrivacyPipeline structs
+  - Multi-stage sanitization pipeline
+  - Sensitive tool detection
   - Extension allowlist filtering
-  - Summary text replacement
-  - Complete documentation with examples
-  - 1039 total lines of code and documentation
+  - Path-to-basename conversion
 
-**Monitor Test Modules**:
-
-- `tests/privacy_test.rs` - Privacy compliance test suite (NEW - Phase 5)
+- `tests/privacy_test.rs` - Privacy compliance test suite
   - Configuration parsing tests
   - Extension allowlist filtering tests
-  - Path-to-basename conversion tests (Unix, Windows, relative)
-  - Sensitive tool context stripping validation
-  - Summary text replacement verification
-  - All event type payload transformations
-  - 951 total lines of tests covering all privacy guarantees
-
-**Monitor Updated Modules** (Phase 5):
-- `src/lib.rs` - Updated public API
-  - Now exports privacy module
-  - Exports PrivacyConfig, PrivacyPipeline, extract_basename types
+  - Path-to-basename conversion tests
+  - Sensitive tool context stripping tests
+  - All event type transformations
 
 **Monitor Phase 4 Modules** (Still in use):
 - `src/watcher.rs` - File system watching with position tracking
@@ -603,8 +771,7 @@ The following modules were added/updated in Phase 5 for the monitor:
   - ParsedEventKind enum (5 event types)
   - Claude Code event format mapping
 
-**Monitor Existing Modules** (Phase 3):
-- `src/main.rs` - Entry point (placeholder, awaiting Phase 4+ implementation)
+**Monitor Phase 3 Modules** (Still in use):
 - `src/config.rs` - Configuration loading
 - `src/error.rs` - Error types
 - `src/types.rs` - Event definitions

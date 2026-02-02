@@ -1,13 +1,13 @@
 # Technology Stack
 
-**Status**: Phase 5 Implementation - Privacy pipeline module for event sanitization
+**Status**: Phase 6 Implementation - CLI, cryptographic signing, and HTTP sender modules
 **Last Updated**: 2026-02-02
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event capture and signing |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 
@@ -21,7 +21,7 @@
 | axum               | 0.8     | HTTP/WebSocket server framework | Server |
 | tower              | 0.5     | Composable middleware | Server |
 | tower-http         | 0.6     | HTTP utilities (CORS, tracing) | Server |
-| reqwest            | 0.12    | HTTP client library | Monitor, Server (tests) |
+| reqwest            | 0.12    | HTTP client library with connection pooling | Monitor, Server (tests) |
 | serde              | 1.0     | Serialization/deserialization | All |
 | serde_json         | 1.0     | JSON serialization | All |
 | ed25519-dalek      | 2.1     | Ed25519 cryptographic signing | Server, Monitor |
@@ -99,18 +99,19 @@
 |--------|---------|
 | Server Runtime | Rust binary (tokio async) |
 | Client Runtime | Browser (ES2020+) |
-| Monitor Runtime | Native binary (Linux/macOS/Windows) |
+| Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI |
 | Node.js | Required for development and client build only |
 | Async Model | Tokio (Rust), Promises (TypeScript) |
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
+| CLI Support | Manual command parsing in monitor main.rs (init, run, help, version) |
 
 ## Communication Protocols & Formats
 
 | Interface | Protocol | Format | Auth Method |
 |-----------|----------|--------|------------|
-| Monitor → Server | HTTPS POST | JSON | Ed25519 signature |
+| Monitor → Server | HTTPS POST | JSON | Ed25519 signature with X-Signature header |
 | Server → Client | WebSocket | JSON | Bearer token |
 | Client → Server | WebSocket | JSON | Bearer token |
 | Monitor → File System | Native | JSONL | N/A (local file access) |
@@ -123,6 +124,7 @@
 | Client | TypeScript/JSON | camelCase for API contracts |
 | Events | serde_json | Standardized event schema across components |
 | Claude Code Files | JSONL (JSON Lines) | Privacy-first parsing extracting only metadata |
+| Cryptographic Keys | Base64 + Raw bytes | Public keys base64 encoded, private keys raw 32-byte seeds |
 
 ## Build Output
 
@@ -160,9 +162,11 @@
 - `types.rs` - Event types
 - `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction)
 - `watcher.rs` - File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
-- `privacy.rs` - **NEW Phase 5**: Privacy pipeline for event sanitization before transmission
+- `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
+- `crypto.rs` - **Phase 6**: Ed25519 keypair generation, loading, saving, and event signing
+- `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
+- `main.rs` - **Phase 6**: CLI entry point with init and run commands
 - `lib.rs` - Public interface
-- `main.rs` - Monitor entry point
 
 ## Deployment Targets
 
@@ -238,8 +242,65 @@
 - Empty entries filtered: `.rs,,.ts,,,` results in `.rs`, `.ts`
 - When not set: All extensions allowed (default privacy-preserving behavior)
 
+## Phase 6 Additions
+
+**Monitor Crypto Module** (`monitor/src/crypto.rs` - 438 lines):
+- **Crypto struct**: Manages Ed25519 signing key and operations
+- **Key generation**: `Crypto::generate()` using OS cryptographically secure RNG
+- **Key persistence**: `save()` with file permissions (0600 private, 0644 public)
+- **Key loading**: `load()` from directory with validation (32-byte seed check)
+- **Public key export**: `public_key_base64()` for server registration
+- **Message signing**: `sign()` returning base64-encoded Ed25519 signatures
+- **CryptoError enum**: Comprehensive error handling (Io, InvalidKey, Base64, KeyExists)
+- **File locations**: `~/.vibetea/key.priv` and `~/.vibetea/key.pub`
+
+**Monitor Sender Module** (`monitor/src/sender.rs` - 544 lines):
+- **Sender struct**: HTTP client with event buffering and retry logic
+- **SenderConfig**: Configuration with server URL, source ID, buffer size
+- **Event buffering**: VecDeque with FIFO eviction when full (1000 events default)
+- **Connection pooling**: Reqwest Client with 10 max idle connections per host
+- **Exponential backoff**: 1s → 60s with ±25% jitter (10 max attempts)
+- **Rate limit handling**: Recognizes 429 status, respects Retry-After header
+- **Batch sending**: `send_batch()` for efficient server transmission
+- **Event queuing**: `queue()` for buffered operations
+- **Flushing**: `flush()` to send all buffered events
+- **Graceful shutdown**: `shutdown()` with timeout for final flush
+- **SenderError enum**: Http, ServerError, AuthFailed, RateLimited, BufferOverflow, MaxRetriesExceeded, Json
+- **Event signing**: Signs JSON payload with X-Signature header using Crypto
+
+**Monitor CLI Module** (`monitor/src/main.rs` - 301 lines):
+- **Command enum**: Init, Run, Help, Version variants
+- **init command**: `vibetea-monitor init [--force]`
+  - Generates new Ed25519 keypair
+  - Saves to ~/.vibetea or VIBETEA_KEY_PATH
+  - Displays public key for server registration
+  - Prompts for confirmation if keys exist (unless --force)
+- **run command**: `vibetea-monitor run`
+  - Loads configuration from environment
+  - Loads cryptographic keys from disk
+  - Creates sender with buffering and retry
+  - Waits for shutdown signal (SIGINT/SIGTERM)
+  - Graceful shutdown with timeout
+- **CLI parsing**: Manual argument parsing with support for flags
+- **Logging initialization**: Environment-based filtering via RUST_LOG
+- **Signal handling**: Unix SIGTERM + SIGINT support (cross-platform)
+- **Help/Version**: Built-in documentation
+
+**Module Exports** (`monitor/src/lib.rs`):
+- Public: Crypto, CryptoError, Sender, SenderConfig, SenderError
+- Documentation updated with new modules (crypto, sender)
+
+**Key Features of Phase 6**:
+- Complete cryptographic pipeline for event authentication
+- Buffered, resilient HTTP client for event transmission
+- User-friendly CLI for key generation and monitor operation
+- Graceful shutdown with event flushing
+- Structured error handling throughout
+- Constant-time signature operations via ed25519-dalek
+
 ## Not Yet Implemented
 
+- Main event loop integration (watcher, parser, privacy, crypto, sender pipeline)
 - Database/persistence layer
 - Advanced state management patterns (beyond Context + Zustand)
 - Session persistence beyond memory
@@ -248,5 +309,5 @@
 - Automatic reconnection on WebSocket disconnection
 - Per-user authentication tokens
 - Token rotation and expiration
-- Monitor integration with file watcher, parser, and privacy pipeline (Phase 5 in progress)
 - Chunked event sending for high-volume sessions
+- Background task spawning for async file watching and sending
