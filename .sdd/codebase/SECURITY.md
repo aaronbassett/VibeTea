@@ -10,24 +10,27 @@
 
 | Method | Implementation | Configuration | Status |
 |--------|----------------|---------------|--------|
-| Ed25519 Signatures | ed25519-dalek library | `VIBETEA_PUBLIC_KEYS` env var | Integrated (Phase 2) |
-| Bearer Token | Custom string token | `VIBETEA_SUBSCRIBER_TOKEN` env var | Integrated (Phase 2) |
+| Ed25519 Signatures | ed25519-dalek library with verify_strict() | `VIBETEA_PUBLIC_KEYS` env var | Implemented (Phase 3) |
+| Bearer Token | Constant-time comparison in validate_token() | `VIBETEA_SUBSCRIBER_TOKEN` env var | Implemented (Phase 3) |
 | Development bypass | `VIBETEA_UNSAFE_NO_AUTH=true` | Environment variable | Development only |
 
 ### Authentication Flow
 
-**Monitor to Server**:
-- Monitor signs events with Ed25519 private key
-- Signature sent with each event batch
-- Server verifies using public key from `VIBETEA_PUBLIC_KEYS` mapping
-- Public keys stored as base64-encoded Ed25519 keys
-- Format: `source_id:base64_pubkey,...`
+**Monitor to Server (Event Ingestion)**:
+- Monitor signs event payload with Ed25519 private key using `SigningKey::sign()`
+- Signature sent as base64-encoded value in `X-Signature` header
+- Source ID sent in `X-Source-ID` header for public key lookup
+- Server verifies using `verify_signature()` function in `server/src/auth.rs:192-233`
+- Verification uses `verify_strict()` for strict Ed25519 verification per RFC 8032
+- Public keys stored as base64-encoded Ed25519 keys (32 bytes) in `VIBETEA_PUBLIC_KEYS` mapping
+- Format: `source_id:base64_pubkey,...` parsed in `server/src/config.rs:157-203`
 
-**Client to Server**:
-- Client sends bearer token in Authorization header
+**Client to Server (WebSocket)**:
+- Client sends bearer token in `token` query parameter (e.g., `?token=xxx`)
 - Token value from `VIBETEA_SUBSCRIBER_TOKEN` configuration
-- Server validates token presence and value
-- No token expiration mechanism implemented
+- Server validates token presence and value using `validate_token()` in `server/src/auth.rs:269-295`
+- Comparison uses constant-time bit comparison via `subtle::ConstantTimeEq` to prevent timing attacks
+- No token expiration mechanism implemented (planned for Phase 3+)
 - No per-client token scope differentiation
 
 ### Development Mode Bypass
@@ -35,10 +38,32 @@
 | Setting | Impact | Location |
 |---------|--------|----------|
 | `VIBETEA_UNSAFE_NO_AUTH=true` | Disables all auth (dev only) | `server/src/config.rs:57-58` |
-| Behavior | Accepts any client, any source | Validated in `Config::validate()` at `server/src/config.rs:108-126` |
+| Behavior | Accepts any client, any source, any token | Validated in `Config::validate()` at `server/src/config.rs:108-126` |
 | Logging | Warning logged on startup | `server/src/config.rs:94-98` |
+| Route enforcement | Auth skipped in `server/src/routes.rs:272-304` | Conditional check before `verify_signature()` |
 
 **Warning**: This setting logs a warning but is not otherwise restricted. Production deployments must never enable this. Configuration validation is enforced with comprehensive tests in `server/src/config.rs:205-415`.
+
+### Signature Verification Details
+
+From `server/src/auth.rs:192-233`:
+
+1. **Source lookup**: Retrieves public key for source_id from `VIBETEA_PUBLIC_KEYS` map
+2. **Key decoding**: Decodes base64 public key (must be exactly 32 bytes for Ed25519)
+3. **Key parsing**: Constructs `VerifyingKey` from decoded bytes
+4. **Signature decoding**: Decodes base64 signature (must be exactly 64 bytes)
+5. **Verification**: Uses `verify_strict()` for RFC 8032 strict verification
+6. **Error classification**: Returns specific `AuthError` variants for each failure mode
+
+### Token Validation Details
+
+From `server/src/auth.rs:269-295`:
+
+1. **Trimming**: Leading/trailing whitespace removed from both tokens
+2. **Empty check**: Both tokens must be non-empty after trimming
+3. **Length check**: Token lengths must match (not constant-time, acceptable)
+4. **Bit comparison**: `ct_eq()` constant-time comparison prevents timing attacks
+5. **Error handling**: Returns `AuthError::InvalidToken` on any mismatch
 
 ## Authorization
 
@@ -46,17 +71,18 @@
 
 | Model | Implementation | Scope |
 |-------|----------------|-------|
-| Token-based | Bearer token presence check | Client access |
-| Source verification | Public key verification via Ed25519 | Monitor identity |
+| Token-based | Bearer token presence check via `validate_token()` | Client access to WebSocket |
+| Source verification | Public key verification via Ed25519 signature | Monitor identity for events |
 | No granular RBAC | Not implemented | - |
 
 ### Permission Structure
 
-- **Server accepts from**: Any monitor with registered public key (source_id matching)
-- **Client receives from**: Any client with valid bearer token
-- **Server publishes to**: All connected WebSocket clients
+- **Server accepts from**: Any monitor with registered public key (source_id matching in `VIBETEA_PUBLIC_KEYS`)
+- **Client receives from**: Any client with valid bearer token matching `VIBETEA_SUBSCRIBER_TOKEN`
+- **Server publishes to**: All connected WebSocket clients equally
 - **No resource-level permissions**: All clients see all events
 - **No user-level isolation**: No per-user filtering of events
+- **WebSocket filtering available**: Clients can filter by source/type/project via query parameters (advisory, not enforced)
 
 ### Authorization Gaps
 
@@ -64,7 +90,7 @@
 - No role-based access control (RBAC)
 - No scope limitation on token capabilities
 - All authenticated clients access identical data streams
-- No event filtering based on source or topic
+- No server-side enforcement of client-specified filters
 
 ## Input Validation
 
@@ -74,8 +100,8 @@
 |-------|--------|-----------------|
 | Event parsing | Deserialization validation | `serde` with Rust type system |
 | Configuration | Structured parsing | `Config::from_env()` with validation |
-| API input | Type safety | Rust compiler enforces |
-| Field format validation | Manual checks | In config parsing functions |
+| API input | Type safety | Rust compiler enforces types |
+| Signature/Token validation | Cryptographic checks | `verify_signature()` and `validate_token()` |
 
 ### Event Validation (Server Types)
 
@@ -87,7 +113,7 @@ Event structure from `server/src/types.rs:1-163`:
 - **Session ID**: UUID format validated by chrono
 - **Event ID**: Prefixed format (`evt_` + 20 alphanumeric chars)
 
-All event fields are type-checked at deserialization via serde. Invalid JSON fails before reaching application logic.
+All event fields are type-checked at deserialization via serde. Invalid JSON fails before reaching application logic. Validation occurs at `server/src/routes.rs:325-338`.
 
 ### Configuration Validation (Server)
 
@@ -100,26 +126,16 @@ From `server/src/config.rs:79-202`:
 - Conditional validation: auth fields required unless `VIBETEA_UNSAFE_NO_AUTH=true` at `server/src/config.rs:108-126`
 - Comprehensive test coverage: `server/src/config.rs:205-415`
 
-### Configuration Validation (Monitor)
-
-From `monitor/src/config.rs:79-143`:
-
-- Server URL: Required, must be present (no format validation)
-- Buffer size: Parsed as `usize` with error handling at `monitor/src/config.rs:119-125`
-- File paths: Converted to PathBuf
-- Allowlist: Comma-separated, filtered for empty entries at `monitor/src/config.rs:128-133`
-- Source ID: Uses hostname as default fallback via `gethostname` crate
-
 ### Sanitization
 
 | Data Type | Sanitization | Location |
 |-----------|--------------|----------|
-| Event payloads | None - passed through | `server/src/types.rs` |
+| Event payloads | None - passed through | `server/src/routes.rs:344-352` |
 | Configuration strings | Trimmed in parsing | `config.rs` functions |
 | File paths | None - OS handles | `monitor/src/config.rs` |
-| Base64 keys | Assumed valid during parsing | `Config::parse_public_keys()` |
-
-**Note**: Base64 public keys are not validated at parse time - validation happens during signature verification in actual cryptographic operations.
+| Base64 keys | Validated during signature verification | `auth.rs:204-215` |
+| Signatures | Base64 decoding with error handling | `auth.rs:218-225` |
+| Tokens | Trimmed and length-checked | `auth.rs:270-287` |
 
 ## Data Protection
 
@@ -129,7 +145,7 @@ From `monitor/src/config.rs:79-143`:
 |-----------|-----------|---------|-------|
 | Private key | File permissions | `~/.vibetea/key.priv` | Monitor loads from disk |
 | Public key | Base64-encoded | Environment variable | On server |
-| Bearer token | Environment variable | `VIBETEA_SUBSCRIBER_TOKEN` | In-memory, passed by clients |
+| Bearer token | Environment variable | `VIBETEA_SUBSCRIBER_TOKEN` | In-memory, passed by clients in query params |
 | Event payloads | No encryption | Memory/transit | Sent over HTTPS/WSS only |
 
 ### Encryption in Transit
@@ -160,40 +176,108 @@ From `monitor/src/config.rs:79-143`:
 
 | Parameter | Value | Implementation |
 |-----------|-------|-----------------|
-| Algorithm | Ed25519 | `ed25519-dalek` 2.1 |
+| Algorithm | Ed25519 | `ed25519-dalek` 2.1 with `verify_strict()` |
 | Key format | Base64-encoded public key | In `VIBETEA_PUBLIC_KEYS` |
-| Signature verification | Per-event batch | Location TBD (implementation pending) |
-| Dependencies | ed25519-dalek, base64, rand | Integrated in Phase 2 |
+| Signature verification | Per-event during POST /events | `server/src/routes.rs:289` |
+| Constant-time token comparison | Via `subtle::ConstantTimeEq` | `server/src/auth.rs:290` |
+| Dependencies | ed25519-dalek, base64, subtle | Production-ready (Phase 3) |
 
-**Status**: Ed25519 dependencies are integrated and configured. Actual signature verification logic is pending implementation.
+**Status**: Ed25519 signature verification fully implemented and tested. Token comparison uses constant-time comparison to prevent timing attacks.
+
+### Verification Implementation
+
+From `server/src/auth.rs`:
+
+- `verify_signature()`: Handles full verification flow (lines 192-233)
+  - Returns specific `AuthError` types for debugging
+  - Validates key length and format
+  - Uses strict verification per RFC 8032
+  - Tested with 13 comprehensive test cases (lines 334-586)
+
+- `validate_token()`: Handles constant-time token comparison (lines 269-295)
+  - Trims whitespace from both sides
+  - Performs length check first (acceptable, not timing-sensitive)
+  - Uses `ct_eq()` for byte-level constant-time comparison
+  - Tested with 15 test cases covering edge cases (lines 656-757)
 
 ### Key Generation (Monitor)
 
 - Private key generated separately (external tool or one-time setup)
-- Stored as PEM or binary in `~/.vibetea/key.priv`
+- Stored as binary in `~/.vibetea/key.priv`
 - Public key registered on server as base64 in `VIBETEA_PUBLIC_KEYS`
 - Source ID must match monitor hostname or `VIBETEA_SOURCE_ID` override
+
+## Rate Limiting
+
+### Implementation
+
+| Aspect | Details | Location |
+|--------|---------|----------|
+| Algorithm | Token bucket | `server/src/rate_limit.rs:94-196` |
+| Rate | Configurable (default 100 tokens/sec) | `server/src/rate_limit.rs:42-46` |
+| Capacity | Configurable (default 100 tokens) | `server/src/rate_limit.rs:42-46` |
+| Per-source tracking | `HashMap<String, TokenBucket>` | `server/src/rate_limit.rs:233-243` |
+| Granularity | Per X-Source-ID header | `server/src/routes.rs:307` |
+| Status | Fully implemented and integrated | `server/src/main.rs:84-91` |
+
+### Rate Limiter Details
+
+From `server/src/rate_limit.rs`:
+
+**Token Bucket Algorithm**:
+- Each source gets independent bucket with `capacity` tokens
+- Tokens refill at `rate` tokens per second
+- Each request consumes 1 token
+- No tokens = request rejected with 429 Too Many Requests
+- Retry-After header indicates seconds until next token available
+
+**RateLimiter Structure**:
+- Thread-safe via `RwLock` for concurrent access
+- Automatic bucket creation on first request per source
+- Stale entry cleanup every 60 seconds (configurable via `cleanup_stale_entries_with_timeout()`)
+- Background cleanup task spawned at server startup (line 85-91 in main.rs)
+
+**Integration**:
+- Middleware check in `server/src/routes.rs:306-322`
+- Returns 429 with `Retry-After` header when limited
+- Applied to all event ingestion regardless of auth mode
+- Independent per source ID to prevent cross-source throttling
+
+### Response Handling
+
+From `server/src/routes.rs:307-322`:
+
+```
+If allowed: Continue to authentication/processing
+If limited: Return 429 Too Many Requests
+  - Header: Retry-After: {seconds}
+  - Body: {"error": "rate limit exceeded", "code": "rate_limited"}
+  - Log: info!(source, retry_after, "Rate limit exceeded")
+```
 
 ## CORS Configuration
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| Allowed origins | Via tower-http | Not yet configured |
+| Allowed origins | Via tower-http (not configured) | Not yet configured |
 | Methods | GET, POST | Likely via tower-http |
 | Headers | Authorization, Content-Type | Likely via tower-http |
 | Credentials | true | If client auth needed |
 
 **Status**: CORS is available via `tower-http` dependency but configuration is pending implementation.
 
-## Rate Limiting
+## Security Headers
 
-| Endpoint | Limit | Implementation |
-|----------|-------|-----------------|
-| Event ingestion | Not implemented | - |
-| WebSocket connections | Not implemented | - |
-| Global | Not implemented | - |
+Not yet configured. Recommended headers for production:
 
-**Status**: Error type supports rate limiting (`ServerError::RateLimit` at `server/src/error.rs:84-94`) but middleware is not yet implemented.
+| Header | Recommended Value | Purpose |
+|--------|-------------------|---------|
+| Strict-Transport-Security | `max-age=31536000; includeSubDomains` | HTTPS enforcement |
+| X-Content-Type-Options | `nosniff` | MIME sniffing prevention |
+| X-Frame-Options | `DENY` | Clickjacking protection |
+| Content-Security-Policy | `default-src 'self'` | XSS protection |
+
+**Action needed**: Configure via tower-http middleware before production.
 
 ## Secrets Management
 
@@ -224,63 +308,45 @@ From `monitor/src/config.rs:79-143`:
 
 **Note**: No `.env` example file included in repo. Secrets are documented here and set during deployment.
 
+## Audit Logging
+
+| Event | Logged Data | Implementation |
+|-------|-------------|-----------------|
+| Auth failures | Via error variants and warn logs | `server/src/routes.rs:290, 459` |
+| Rate limiting | source identifier and retry_after | `server/src/routes.rs:310-314` |
+| Configuration errors | At startup | Via `tracing::warn!` in config validation |
+| Development mode enabled | Warning message | In `server/src/config.rs:94-98` |
+| WebSocket connections | Connection/disconnection events | `server/src/routes.rs:493, 554` |
+| Event broadcasts | Per-event trace logs | `server/src/routes.rs:345-350` |
+
+**Status**: Basic error logging present. Structured auth decision logging and comprehensive audit trails pending.
+
 ## Error Handling Security
 
 ### Information Disclosure
 
 | Error Type | Message Content | Risk |
 |------------|-----------------|------|
-| Auth failures | "authentication failed: {msg}" | Moderate - reveals auth failure |
-| Validation errors | "validation error: {msg}" | Low - field-level errors acceptable |
-| Rate limit | "rate limit exceeded for {source}" | Low - expected for clients |
+| Auth failures | Specific error codes | Low - helpful for debugging |
+| Unknown source | "unknown source: {source_id}" | Low - expected behavior |
+| Invalid signature | "invalid signature" | Low - doesn't expose details |
+| Base64 errors | "invalid base64 encoding for {field}" | Low - field name only |
+| Rate limit | "rate limit exceeded" | Low - expected for clients |
 | Config errors | "configuration validation failed" | Low - visible only to operator |
-| Internal errors | "internal server error" | Low - no sensitive details exposed |
+| Internal errors | "server configuration error" | Low - no sensitive details exposed |
 
 ### Error Response Handling
 
-Errors from `server/src/error.rs:67-236`:
+Errors from `server/src/routes.rs:188-208` and `server/src/auth.rs:49-92`:
 
-- `ServerError::Auth` - Indicates auth failure without exposing mechanism details
-- `ServerError::Validation` - Safe for clients to see
-- `ServerError::RateLimit` - Includes source identifier for debugging
-- `ServerError::Internal` - Generic message, details logged server-side
-- `ServerError::WebSocket` - Connection issues without exposing internals
+- `AuthError::UnknownSource` - Returns 401 "unknown source"
+- `AuthError::InvalidSignature` - Returns 401 "invalid signature"
+- `AuthError::InvalidBase64` - Returns 401 "invalid signature encoding"
+- `AuthError::InvalidPublicKey` - Returns 500 "server configuration error"
+- `AuthError::InvalidToken` - Returns 401 "invalid token"
+- Rate limit errors - Returns 429 with Retry-After
 
 No SQL errors, path traversal details, or stack traces exposed to clients.
-
-### Monitor Error Handling
-
-Errors from `monitor/src/error.rs:26-60`:
-
-- `MonitorError::Crypto` - Covers key loading and signature errors
-- `MonitorError::Http` - HTTP communication failures
-- `MonitorError::Io` - File system errors
-- `MonitorError::Watch` - File watcher errors
-- Clear error messages for debugging without exposing sensitive paths
-
-## Audit Logging
-
-| Event | Logged Data | Implementation |
-|-------|-------------|-----------------|
-| Auth failures | Via error messages | In error variants |
-| Rate limiting | source identifier | In `RateLimit` variant |
-| Configuration errors | At startup | Via `tracing::warn!` |
-| Development mode enabled | Warning message | In `server/src/config.rs:94-98` |
-
-**Status**: Basic error logging present. Comprehensive audit logging (user IP, timestamp, detailed action logs) not yet implemented.
-
-## Security Headers
-
-Not yet configured. Recommended headers for production:
-
-| Header | Recommended Value | Purpose |
-|--------|-------------------|---------|
-| Strict-Transport-Security | `max-age=31536000; includeSubDomains` | HTTPS enforcement |
-| X-Content-Type-Options | `nosniff` | MIME sniffing prevention |
-| X-Frame-Options | `DENY` | Clickjacking protection |
-| Content-Security-Policy | `default-src 'self'` | XSS protection |
-
-**Action needed**: Configure via tower-http middleware before production.
 
 ## Dependency Security
 
@@ -288,11 +354,14 @@ Not yet configured. Recommended headers for production:
 
 | Package | Version | Purpose | Status |
 |---------|---------|---------|--------|
-| ed25519-dalek | 2.1 | Cryptographic signing | Current |
-| base64 | 0.22 | Key encoding | Current |
+| ed25519-dalek | 2.1 | Cryptographic signing/verification | Current, production |
+| base64 | 0.22 | Key/signature encoding | Current |
+| subtle | Latest | Constant-time comparison | Critical for security |
 | reqwest | 0.12 | HTTPS client | Current |
 | serde | 1.0 | Safe deserialization | Current |
 | rand | 0.9 | Random number gen | Current |
+| tokio | Latest | Async runtime | Current |
+| axum | Latest | HTTP framework | Current |
 | thiserror | Latest | Error handling | Current |
 | uuid | Latest | Session IDs | Current |
 | chrono | Latest | Timestamps | Current |
@@ -336,14 +405,20 @@ From `client/src/hooks/useEventStore.ts:1-172`:
 
 ## Known Vulnerabilities & Gaps
 
-- No rate limiting middleware implemented (pending)
+**Fixed in Phase 3:**
+- Ed25519 signature verification fully implemented with strict verification
+- Token comparison using constant-time comparison to prevent timing attacks
+- Per-source rate limiting with token bucket algorithm
+- Comprehensive error handling with specific AuthError variants
+
+**Remaining gaps:**
+- No rate limiting middleware for other endpoints (only event ingestion protected)
 - No granular authorization/RBAC (design phase)
 - No encryption at rest for configuration/events (acceptable for MVP)
-- No audit logging beyond error messages (pending)
+- No comprehensive audit logging beyond error messages
 - No CORS header configuration (pending)
-- Base64 public key validation happens during use, not parsing
 - No client-side token management (pending)
-- No per-client isolation or scoping
+- No per-client isolation or scoping (all clients see all events)
 
 ---
 

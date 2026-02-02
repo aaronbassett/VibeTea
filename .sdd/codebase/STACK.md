@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 2 Implementation - Core modules and types completed
+**Status**: Phase 3 Implementation - Authentication, broadcasting, and rate limiting modules complete
 **Last Updated**: 2026-02-02
 
 ## Languages & Runtimes
@@ -36,6 +36,8 @@
 | rand               | 0.9     | Random number generation | Server, Monitor |
 | directories        | 6.0     | Standard directory paths | Monitor |
 | gethostname        | 1.0     | System hostname retrieval | Monitor |
+| subtle             | 2.6     | Constant-time comparison for cryptography | Server (auth) |
+| futures-util       | 0.3     | WebSocket stream utilities | Server |
 
 ### TypeScript/JavaScript (Client)
 
@@ -137,6 +139,10 @@
 
 ### Server (`server/src`)
 - `config.rs` - Environment variable parsing and validation (public keys, subscriber token, port)
+- `auth.rs` - Ed25519 signature verification and token validation with constant-time comparison
+- `broadcast.rs` - Event broadcaster using tokio broadcast channels with subscriber filtering
+- `rate_limit.rs` - Per-source token bucket rate limiting (100 events/sec default)
+- `routes.rs` - HTTP endpoints (POST /events, GET /ws, GET /health)
 - `error.rs` - Error types and handling
 - `types.rs` - Event types and data models
 - `lib.rs` - Public library interface
@@ -157,21 +163,53 @@
 | Client | CDN | Static files | Optimized builds with compression |
 | Monitor | Local | Native binary | Users download and run locally |
 
-## Phase 2 Additions
+## Phase 3 Additions
 
-- **Event Store**: Zustand-based state management (`useEventStore`) with 1000-event buffer and FIFO eviction
-- **Type Guards**: TypeScript type guards for event discrimination (`isSessionEvent`, `isActivityEvent`, etc.)
-- **Event Payload Mapping**: Discriminated union types for type-safe event payload access
-- **Session Tracking**: Client-side session derivation from event aggregation
-- **Configuration Validation**: Comprehensive environment variable validation for all components
+**Server Authentication Module** (`server/src/auth.rs`):
+- Ed25519 signature verification with `subtle::ConstantTimeEq` for timing-resistant comparison
+- Token validation for WebSocket clients
+- Comprehensive AuthError enum with detailed error types
+- Support for unknown sources, invalid signatures, base64 encoding failures, malformed keys
+- Unsafe mode support for development (skips signature verification when enabled)
+
+**Server Broadcasting Module** (`server/src/broadcast.rs`):
+- EventBroadcaster wrapping tokio broadcast channels
+- SubscriberFilter for filtering events by type, source, and project
+- 1000-event channel capacity for handling burst traffic
+- Thread-safe, cloneable broadcaster for sharing across async tasks
+
+**Server Rate Limiting Module** (`server/src/rate_limit.rs`):
+- Per-source token bucket rate limiting
+- 100 events/second default rate with 100-token burst capacity
+- Per-source configuration with automatic stale entry cleanup
+- Returns Retry-After value for rate-limited clients
+
+**Server Routes Module** (`server/src/routes.rs`):
+- AppState struct containing config, broadcaster, rate limiter, and uptime tracking
+- POST /events endpoint with signature verification and event broadcasting
+- GET /ws endpoint with WebSocket upgrade and token validation
+- GET /health endpoint with uptime reporting
+- Rate limiting applied per source via X-Source-ID header
+- Comprehensive error handling with HTTP status codes (401, 429, 400, 202, 101)
+
+**Integration Tests** (`server/tests/unsafe_mode_test.rs`):
+- 18 comprehensive integration tests for unsafe mode functionality
+- Tests for POST /events without signature, with invalid/malformed signatures
+- Tests for GET /ws upgrade without token and with invalid tokens
+- Tests for event broadcasting and ordering
+- Tests for rate limiting persistence in unsafe mode
+- Tests for source ID requirement and event validation
+
+**New Dependency**: `subtle` 2.6 for constant-time comparison in signature verification
+**New Dependency**: `futures-util` 0.3 for WebSocket stream handling
 
 ## Not Yet Implemented
 
 - Database/persistence layer
 - Advanced state management patterns (beyond Context + Zustand)
 - Session persistence beyond memory
-- Rate limiting middleware
 - Request/response logging to external services
 - Enhanced error tracking
 - Automatic reconnection on WebSocket disconnection
 - Per-user authentication tokens
+- Token rotation and expiration

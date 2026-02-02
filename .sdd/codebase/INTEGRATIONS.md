@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 2 - Foundational architecture with cryptographic authentication
+**Status**: Phase 3 - Authentication, broadcasting, and rate limiting operational
 **Last Updated**: 2026-02-02
 
 ## Summary
@@ -14,15 +14,16 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 
 ## Authentication & Authorization
 
-### Monitor Authentication (Server → Monitor)
+### Monitor Authentication (Monitor → Server)
 
 | Aspect | Details | Configuration |
 |--------|---------|---------------|
 | **Method** | Ed25519 digital signatures | Rust `ed25519-dalek` crate |
-| **Protocol** | HTTPS POST with signed payload | Event signatures in request |
+| **Protocol** | HTTPS POST with signed payload | Event signatures in X-Signature header |
 | **Key Management** | Source-specific public key registration | `VIBETEA_PUBLIC_KEYS` env var |
 | **Key Format** | Base64-encoded Ed25519 public keys | `source1:pubkey1,source2:pubkey2` |
-| **Flow** | Monitor signs event → Server validates signature | `server/src/config.rs`, `server/src/types.rs` |
+| **Verification** | Constant-time comparison using `subtle` crate | `server/src/auth.rs` |
+| **Flow** | Monitor signs event → Server validates signature | `server/src/auth.rs`, `server/src/routes.rs` |
 | **Fallback** | Unsafe no-auth mode (dev only) | `VIBETEA_UNSAFE_NO_AUTH=true` |
 
 **Configuration Location**: `server/src/config.rs`
@@ -41,6 +42,14 @@ VIBETEA_PUBLIC_KEYS=monitor-prod:dGVzdHB1YmtleTEx,monitor-dev:dGVzdHB1YmtleTIy
 - Public keys stored in plain text (no decryption needed)
 - Empty public_keys map allowed if unsafe_no_auth is enabled
 - Error handling with ConfigError enum for missing/invalid formats
+- Constant-time comparison prevents timing attacks on signature verification
+
+**Signature Verification Process** (`server/src/auth.rs`):
+- Decode base64 signature from X-Signature header
+- Decode base64 public key from configuration
+- Extract Ed25519 VerifyingKey from public key bytes
+- Use `ed25519_dalek::Signature::verify()` for verification
+- Apply `subtle::ConstantTimeEq` to compare results
 
 ### Client Authentication (Server → Client)
 
@@ -48,14 +57,14 @@ VIBETEA_PUBLIC_KEYS=monitor-prod:dGVzdHB1YmtleTEx,monitor-dev:dGVzdHB1YmtleTIy
 |--------|---------|---------------|
 | **Method** | Bearer token in WebSocket headers | Static token per deployment |
 | **Protocol** | WebSocket upgrade with `Authorization: Bearer <token>` | Client sends on connect |
-| **Token Type** | Opaque string (no expiration in Phase 2) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
+| **Token Type** | Opaque string (no expiration in Phase 3) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
 | **Scope** | All clients use the same token | No per-user differentiation |
-| **Storage** | Server-side validation only | In-memory, no persistence |
+| **Validation** | Server-side validation only | In-memory, no persistence |
 
 **Configuration Location**: `server/src/config.rs`
 - Parses `VIBETEA_SUBSCRIBER_TOKEN` (required unless unsafe mode enabled)
 - Token required for all WebSocket connections
-- No token refresh mechanism in Phase 2
+- No token refresh mechanism in Phase 3
 - Stored as `Option<String>` in Config struct
 
 **Future Enhancements**: Per-user tokens, token expiration, refresh tokens
@@ -92,7 +101,7 @@ Event {
 - TypeScript types: `client/src/types/events.ts`
 - Event validation: Serde deserialization with untagged union handling
 
-**Phase 2 TypeScript Enhancements** (`client/src/types/events.ts`):
+**Phase 3 TypeScript Enhancements** (`client/src/types/events.ts`):
 - Discriminated union type for type-safe payload access
 - `EventPayload` union with type discriminators
 - `EventPayloadMap` interface mapping event types to payloads
@@ -144,15 +153,23 @@ export interface EventStore {
 
 **Endpoint**: `https://<server-url>/events`
 **Method**: POST
-**Authentication**: Ed25519 signature in request header or body
+**Authentication**: Ed25519 signature in X-Signature header
 **Content-Type**: application/json
 
 **Flow**:
 1. Monitor captures event from file system
 2. Monitor signs event payload with Ed25519 private key
-3. Monitor POSTs signed event to server
+3. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers
 4. Server validates signature against registered public key
-5. Server broadcasts to all connected clients via WebSocket
+5. Server rate limits based on source ID (100 events/sec default)
+6. Server broadcasts to all connected clients via WebSocket
+
+**Rate Limiting** (`server/src/rate_limit.rs`):
+- Token bucket algorithm per source
+- 100.0 tokens/second refill rate (configurable)
+- 100 token capacity (configurable)
+- Exceeded limit returns 429 Too Many Requests with Retry-After header
+- Automatic cleanup of inactive sources after 60 seconds
 
 **Client Library**: `reqwest` crate (HTTP client)
 **Configuration**: `monitor/src/config.rs`
@@ -170,9 +187,22 @@ export interface EventStore {
 **Flow**:
 1. Client initiates WebSocket connection with Bearer token
 2. Server validates token and establishes connection
-3. Server sends events as they arrive from monitors
-4. Client processes and stores events in Zustand state via `addEvent()`
-5. Client UI renders session information from state
+3. Server broadcasts events as they arrive from monitors
+4. Optional: Server filters events based on query parameters (source, type, project)
+5. Client processes and stores events in Zustand state via `addEvent()`
+6. Client UI renders session information from state
+
+**Server Broadcasting** (`server/src/broadcast.rs`):
+- EventBroadcaster wraps tokio broadcast channel
+- 1000-event capacity for burst handling
+- Thread-safe, cloneable for sharing across handlers
+- SubscriberFilter enables selective delivery by event type, source, project
+
+**WebSocket Upgrade** (`server/src/routes.rs`):
+- GET /ws endpoint handles upgrade requests
+- Validates bearer token before upgrade
+- Returns 101 Switching Protocols on success
+- Returns 401 Unauthorized on token validation failure
 
 **Client-Side Handling**:
 - WebSocket proxy configured in `client/vite.config.ts` (target: ws://localhost:8080)
@@ -183,9 +213,80 @@ export interface EventStore {
 **Connection Details**:
 - Address/port: Configured via `PORT` environment variable (default: 8080)
 - Persistent connection model
-- No automatic reconnection (Phase 2)
+- No automatic reconnection (Phase 3 - future enhancement)
 - No message queuing (direct streaming)
 - Events processed with selective subscriptions to prevent unnecessary re-renders
+
+## HTTP API Endpoints
+
+### POST /events
+
+**Purpose**: Ingest events from monitors
+
+**Request Headers**:
+| Header | Required | Value |
+|--------|----------|-------|
+| X-Source-ID | Yes | Monitor identifier (non-empty string) |
+| X-Signature | No* | Base64-encoded Ed25519 signature |
+| Content-Type | Yes | application/json |
+
+*Required unless `VIBETEA_UNSAFE_NO_AUTH=true`
+
+**Request Body**: Single Event or array of Events (JSON)
+
+**Response Codes**:
+- 202 Accepted - Events accepted and broadcasted
+- 400 Bad Request - Invalid JSON or malformed events
+- 401 Unauthorized - Missing/empty X-Source-ID or signature verification failed
+- 429 Too Many Requests - Rate limit exceeded (includes Retry-After header)
+
+**Flow** (`server/src/routes.rs`):
+1. Extract X-Source-ID from headers
+2. Check rate limit for source
+3. If unsafe_no_auth is false, verify X-Signature against public key
+4. Deserialize event(s) from body
+5. Broadcast each event via EventBroadcaster
+6. Return 202 Accepted
+
+### GET /ws
+
+**Purpose**: WebSocket subscription for event streaming
+
+**Query Parameters**:
+| Parameter | Required | Example |
+|-----------|----------|---------|
+| token | No* | my-secret-token |
+| source | No | monitor-1 |
+| type | No | session |
+| project | No | my-project |
+
+*Required unless `VIBETEA_UNSAFE_NO_AUTH=true`
+
+**WebSocket Messages**: JSON-encoded Event objects (one per message)
+
+**Response Codes**:
+- 101 Switching Protocols - WebSocket upgrade successful
+- 401 Unauthorized - Token validation failed
+
+**Filtering** (`server/src/broadcast.rs`):
+- SubscriberFilter applied if query parameters provided
+- Matches event.event_type against type parameter
+- Matches event.source against source parameter
+- Matches event.payload.project against project parameter
+
+### GET /health
+
+**Purpose**: Health check and uptime reporting
+
+**Response**:
+```json
+{
+  "status": "ok",
+  "uptime_secs": 3600
+}
+```
+
+**Response Code**: 200 OK (always succeeds, no auth required)
 
 ## Development & Local Configuration
 
@@ -197,12 +298,13 @@ PORT=8080                                        # Server port
 VIBETEA_PUBLIC_KEYS=localhost:cHVia2V5MQ==      # Monitor public key (base64)
 VIBETEA_SUBSCRIBER_TOKEN=dev-token-secret        # Client WebSocket token
 VIBETEA_UNSAFE_NO_AUTH=false                     # Set true to disable all auth
+RUST_LOG=debug                                   # Logging level
 ```
 
 **Unsafe Development Mode**:
 When `VIBETEA_UNSAFE_NO_AUTH=true`:
-- All monitor authentication is bypassed
-- All client authentication is bypassed
+- All monitor authentication is bypassed (X-Signature ignored)
+- All client authentication is bypassed (token parameter ignored)
 - Suitable for local development only
 - Never use in production
 - Warning logged on startup when enabled
@@ -223,6 +325,7 @@ VIBETEA_KEY_PATH=~/.vibetea                      # Directory with private/public
 VIBETEA_CLAUDE_DIR=~/.claude                     # Claude Code directory to watch
 VIBETEA_BUFFER_SIZE=1000                         # Event buffer capacity
 VIBETEA_BASENAME_ALLOWLIST=ts,tsx,rs             # Optional file extension filter
+RUST_LOG=debug                                   # Logging level
 ```
 
 **Configuration Loading**: `monitor/src/config.rs`
@@ -281,7 +384,7 @@ server: {
    - Port number must be valid u16
    - If unsafe_no_auth is false, both public_keys and subscriber_token required
    - Public keys format: `source_id:pubkey` pairs
-2. Event signature validation on POST
+2. Event signature validation on POST (with constant-time comparison)
 3. Event schema validation (serde untagged enum)
 4. Bearer token validation on WebSocket connect
 
@@ -290,6 +393,13 @@ server: {
 - InvalidFormat { var: String, message: String } - Format/parsing error
 - InvalidPort(ParseIntError) - Port not valid u16
 - ValidationError(String) - Config validation failed
+
+**Auth Error Types** (`server/src/auth.rs`):
+- UnknownSource(String) - Source not found in public keys
+- InvalidSignature - Signature verification failed
+- InvalidBase64(String) - Base64 decoding failed
+- InvalidPublicKey - Malformed public key
+- InvalidToken - Bearer token mismatch
 
 ### Monitor-Side Error Handling
 
@@ -342,11 +452,11 @@ server: {
 - Structured context in logs
 
 **Components**:
-- Server: Logs configuration, connection events, errors
+- Server: Logs configuration, connection events, errors, rate limiting
 - Monitor: Logs file system events, HTTP requests, signing operations
 - Warning logged when VIBETEA_UNSAFE_NO_AUTH is enabled
 
-**No External Service Integration** (Phase 2):
+**No External Service Integration** (Phase 3):
 - Logs to stdout/stderr only
 - Future: Integration with logging services (e.g., ELK, Datadog)
 
@@ -359,23 +469,33 @@ server: {
 - Key generation: 32-byte seed
 - Signature verification: Base64-encoded public keys per source
 - Private key storage: User's filesystem (unencrypted)
+- Timing attack prevention: `subtle::ConstantTimeEq` for comparison
 
 **Security Implications**:
 - Private keys must be protected with file permissions
 - Public keys registered on server must match monitor's keys
 - Signature validation prevents spoofed events
+- Constant-time comparison prevents timing attacks on verification
 
 ### Token-Based Client Authentication
 
 **Bearer Token**:
 - Currently a static string per deployment
 - No encryption in transit (relies on TLS via HTTPS)
-- No expiration or refresh (Phase 2 limitation)
+- No expiration or refresh (Phase 3 limitation)
 
 **Security Implications**:
 - Token should be treated like a password
 - Compromise affects all connected clients
 - Future: Implement token rotation, per-user tokens
+
+### Rate Limiting Security
+
+**Token Bucket Protection**:
+- Per-source rate limiting prevents single monitor from overwhelming server
+- Default 100 events/second per source
+- Automatic cleanup prevents memory leaks from zombie sources
+- Retry-After header guides clients on backoff strategy
 
 ### Data in Transit
 
@@ -388,11 +508,11 @@ server: {
 
 ### Planned (Not Yet Integrated)
 
-- **Database/Persistence**: Store events beyond memory (Phase 3+)
-- **Authentication Providers**: OAuth2, API key rotation (Phase 3+)
-- **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 3+)
-- **Message Queues**: Redis, RabbitMQ for event buffering (Phase 4+)
-- **Webhooks**: External service notifications (Phase 4+)
+- **Database/Persistence**: Store events beyond memory (Phase 4+)
+- **Authentication Providers**: OAuth2, API key rotation (Phase 4+)
+- **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 4+)
+- **Message Queues**: Redis, RabbitMQ for event buffering (Phase 5+)
+- **Webhooks**: External service notifications (Phase 5+)
 
 ## Configuration Quick Reference
 
@@ -404,6 +524,7 @@ server: {
 | `VIBETEA_PUBLIC_KEYS` | string | - | Yes* | Source public keys (source:key,source:key) |
 | `VIBETEA_SUBSCRIBER_TOKEN` | string | - | Yes* | Bearer token for clients |
 | `VIBETEA_UNSAFE_NO_AUTH` | boolean | false | No | Disable all authentication (dev only) |
+| `RUST_LOG` | string | info | No | Logging level (debug, info, warn, error) |
 
 *Not required if `VIBETEA_UNSAFE_NO_AUTH=true`
 
@@ -417,29 +538,38 @@ server: {
 | `VIBETEA_CLAUDE_DIR` | string | ~/.claude | No | Claude Code directory to watch |
 | `VIBETEA_BUFFER_SIZE` | number | 1000 | No | Event buffer capacity |
 | `VIBETEA_BASENAME_ALLOWLIST` | string | - | No | Comma-separated file extensions to watch |
+| `RUST_LOG` | string | info | No | Logging level (debug, info, warn, error) |
 
 ### Client Environment Variables
 
 None required for production (future configuration planned).
 
-## Phase 2 Changes
+## Phase 3 Changes
 
-**Server Config Enhancement**:
-- Added comprehensive validation with detailed error messages
-- Support for unsafe_no_auth mode for development
-- Proper HashMap-based key storage for multiple sources
+**Server Authentication Module** (`server/src/auth.rs`):
+- Ed25519 signature verification with timing-resistant comparison
+- Token validation for WebSocket clients
+- Comprehensive error handling with detailed error types
 
-**Monitor Config Enhancement**:
-- Home directory detection via directories crate
-- Hostname fallback using gethostname crate
-- Path expansion support (~/.vibetea, ~/.claude)
-- Buffer size validation
-- Allowlist parsing with whitespace handling
+**Server Broadcasting Module** (`server/src/broadcast.rs`):
+- EventBroadcaster for efficient multi-subscriber delivery
+- SubscriberFilter for selective event distribution
+- Burst-tolerant 1000-event capacity
 
-**Client Event Integration**:
-- Zustand store with selective subscriptions
-- Discriminated union types for events
-- Type-safe event payload access
-- Session aggregation from events
-- ConnectionStatus tracking
-- Event filtering utilities
+**Server Rate Limiting** (`server/src/rate_limit.rs`):
+- Per-source token bucket algorithm
+- Automatic stale entry cleanup
+- Retry-After header support
+
+**Server Routes Enhancement** (`server/src/routes.rs`):
+- AppState with shared components (config, broadcaster, rate limiter)
+- Rate limiting on POST /events
+- Query parameter filtering on GET /ws
+- Comprehensive HTTP status codes
+
+**Integration Tests** (`server/tests/unsafe_mode_test.rs`):
+- 18 tests covering unsafe mode scenarios
+- Tests for signature handling variations
+- Tests for WebSocket upgrade and filtering
+- Tests for event broadcasting and ordering
+- Tests for rate limiting and source ID validation

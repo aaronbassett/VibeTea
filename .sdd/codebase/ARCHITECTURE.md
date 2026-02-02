@@ -1,6 +1,6 @@
 # Architecture
 
-**Status**: Phase 1-2 implementation - Configuration, error handling, and type system in place
+**Status**: Phase 3 core server implementation - Auth, broadcast, and rate limiting complete
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -20,10 +20,97 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 |---------|-------------|
 | **Hub-and-Spoke** | Monitors push events to the server, clients subscribe via WebSocket |
 | **Event-Driven** | All state changes flow through immutable, versioned events |
-| **Layered** | Monitor: Config → Types; Server: Config → Types → Error; Client: Types → Hooks → Components |
+| **Layered** | Monitor: Config → Types; Server: Routes → Auth/Broadcast/RateLimit → Types; Client: Types → Hooks → Components |
 | **Pub/Sub** | Server acts as event broker with asymmetric authentication (monitors sign, clients consume) |
+| **Token Bucket** | Per-source rate limiting using token bucket algorithm with stale entry cleanup |
 
 ## Core Components
+
+### Server Routes & HTTP Layer
+
+**Purpose**: Handle HTTP requests and WebSocket upgrades
+**Location**: `server/src/routes.rs`
+**Responsibility**: Route handling, request parsing, response generation
+
+**Key Functions**:
+- `create_router()` - Axum router setup with three endpoints (POST /events, GET /ws, GET /health)
+- `post_events()` - Event ingestion handler with signature verification and rate limiting
+- `get_ws()` - WebSocket upgrade handler with token validation
+- `get_health()` - Health check endpoint (uptime and subscriber count)
+- `handle_websocket()` - WebSocket connection handler with event forwarding and filtering
+
+**AppState Structure**:
+```rust
+pub struct AppState {
+    pub config: Arc<Config>,           // Server configuration (auth settings, port)
+    pub broadcaster: EventBroadcaster,  // Event distribution hub
+    pub rate_limiter: RateLimiter,      // Per-source rate limiting
+    pub start_time: Instant,            // Server uptime tracking
+}
+```
+
+**API Contracts**:
+- `POST /events` - Accepts single or batch events with Ed25519 signature verification
+- `GET /ws` - WebSocket subscription with optional filtering (source, type, project)
+- `GET /health` - Returns status, connection count, and uptime
+
+### Authentication Module
+
+**Purpose**: Verify Ed25519 signatures and validate bearer tokens
+**Location**: `server/src/auth.rs`
+**Responsibility**: Cryptographic verification and security
+
+**Key Functions**:
+- `verify_signature()` - Ed25519 signature verification against request body
+- `validate_token()` - Constant-time token comparison for WebSocket clients
+- Error handling with specific failure reasons (UnknownSource, InvalidSignature, InvalidBase64, InvalidPublicKey, InvalidToken)
+
+**Security Features**:
+- Constant-time comparison using `subtle` crate to prevent timing attacks
+- Base64 decoding with error handling
+- Configurable public keys from environment variables
+- Per-source authentication for monitors
+
+### Event Broadcasting
+
+**Purpose**: Distribute events to multiple WebSocket subscribers
+**Location**: `server/src/broadcast.rs`
+**Responsibility**: Multi-producer, multi-consumer event distribution
+
+**Key Components**:
+- `EventBroadcaster` - Central hub using tokio broadcast channel
+  - Default capacity: 1000 events
+  - `broadcast()` - Send event to all subscribers
+  - `subscribe()` - Create new receiver
+  - `subscriber_count()` - Get active connection count
+
+- `SubscriberFilter` - Optional filtering criteria using AND logic
+  - Filter by source ID
+  - Filter by event type
+  - Filter by project name
+  - Extraction of project field from event payload
+
+**Design Pattern**: Tokio broadcast channel with overflow handling (oldest events dropped)
+
+### Rate Limiting
+
+**Purpose**: Protect against excessive requests from individual sources
+**Location**: `server/src/rate_limit.rs`
+**Responsibility**: Token bucket rate limiting with stale entry cleanup
+
+**Key Components**:
+- `RateLimiter` - Thread-safe per-source tracking
+  - Default: 100 requests/second per source, burst capacity 100
+  - `check_rate_limit()` - Check if request is allowed
+  - `cleanup_stale_entries()` - Remove inactive sources
+  - `spawn_cleanup_task()` - Background cleanup every 30 seconds
+
+- `TokenBucket` - Per-source bucket implementation
+  - Refill at configurable rate
+  - Constant capacity
+  - Returns retry-after duration when exhausted
+
+**Cleanup Strategy**: Removes sources inactive for >60 seconds to prevent memory growth
 
 ### Monitor Component
 
@@ -32,38 +119,11 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 **Technologies**: Rust, tokio, file watching, Ed25519 cryptography
 
 **Key Modules**:
-- `config.rs` - Environment variable parsing for monitor configuration (server URL, keys, buffer size)
-- `types.rs` - Event definitions shared with server (EventType, EventPayload, Event)
-- `error.rs` - Error hierarchy covering configuration, I/O, JSON, HTTP, cryptographic, and file watch errors
-- `lib.rs` - Public API (re-exports Event, EventPayload, EventType, SessionAction, ToolStatus)
-- `main.rs` - Application entry point (placeholder for Phase 3)
-
-**Dependencies**:
-- `types` ← defined in `monitor/src/types.rs`
-- `config` ← defined in `monitor/src/config.rs` (internal use only)
-- `error` ← defined in `monitor/src/error.rs` (internal use only)
-
-**Public API**: Only the event types are exported (Event, EventPayload, EventType, SessionAction, ToolStatus). Configuration and error handling are internal implementation details not exposed to external consumers.
-
-### Server Component
-
-**Purpose**: Receives authenticated events from monitors, broadcasts to subscribed clients
-**Location**: `server/src/`
-**Technologies**: Rust, tokio, axum, WebSocket, cryptographic verification
-
-**Key Modules**:
-- `config.rs` - Environment variable parsing (public keys, subscriber tokens, port)
-- `error.rs` - Error hierarchy for config, auth, validation, rate limiting, WebSocket, and internal errors
-- `types.rs` - Event definitions with untagged serde deserialization (EventType, EventPayload, Event)
-- `lib.rs` - Module declarations for public API (config, error, types all exported)
-- `main.rs` - Application entry point (placeholder for Phase 3)
-
-**Dependencies**:
-- `types` ← defined in `server/src/types.rs`
-- `config` ← defined in `server/src/config.rs`
-- `error` ← defined in `server/src/error.rs`
-
-**Public API**: All three core modules (config, error, types) are part of the public library API, allowing other crates to integrate server functionality.
+- `config.rs` - Environment variable parsing for monitor configuration
+- `types.rs` - Event definitions shared with server
+- `error.rs` - Error hierarchy
+- `lib.rs` - Public API (re-exports Event types)
+- `main.rs` - Application entry point (Phase 3 placeholder)
 
 ### Client Component
 
@@ -73,13 +133,9 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 
 **Key Modules**:
 - `types/events.ts` - TypeScript definitions matching Rust types with type guards
-- `hooks/useEventStore.ts` - Zustand store for event state management and session aggregation
-- `App.tsx` - Root component (placeholder for Phase 3)
+- `hooks/useEventStore.ts` - Zustand store for event state management
+- `App.tsx` - Root component (Phase 3 placeholder)
 - `main.tsx` - React entry point
-
-**Dependencies**:
-- `types/events` ← defined in `client/src/types/events.ts`
-- `hooks/useEventStore` ← defined in `client/src/hooks/useEventStore.ts`
 
 ## Data Flow
 
@@ -94,15 +150,17 @@ Claude Code Session Activity
          ↓
     Sign with Ed25519 Private Key
          ↓
-    HTTPS POST to Server
+    HTTPS POST to /events
          ↓
-    Server (Rust)
+    Server Route Handler
          ↓
-    Verify Signature with Public Key
+    Verify Signature (Auth Module)
+         ↓
+    Check Rate Limit (RateLimiter)
          ↓
     Validate Event Schema
          ↓
-    Broadcast via WebSocket
+    Broadcast via WebSocket (EventBroadcaster)
 ```
 
 **Flow Steps**:
@@ -110,18 +168,24 @@ Claude Code Session Activity
 2. Events are generated with unique ID (evt_ + 20 chars), source ID, and timestamp
 3. Events are buffered and signed with the monitor's private key
 4. Signed batch is sent to server's `/events` endpoint via HTTPS POST
-5. Server verifies signature using configured public key for the source
-6. Server validates event schema against types
-7. Server broadcasts to all connected WebSocket clients
+5. Server route handler extracts source ID from X-Source-ID header
+6. Auth module verifies signature using configured public key
+7. Rate limiter checks request allowance for source
+8. Event schema is validated
+9. EventBroadcaster immediately forwards to all subscribed WebSocket clients
 
 ### Server → Client Flow
 
 ```
 Authenticated Event
         ↓
-   Server (Rust)
+   Route Handler
         ↓
-   WebSocket Broadcast
+   EventBroadcaster
+        ↓
+   WebSocket Handler
+        ↓
+   SubscriberFilter
         ↓
    Client (TypeScript)
         ↓
@@ -135,132 +199,156 @@ Authenticated Event
 ```
 
 **Flow Steps**:
-1. Server receives validated events from monitor
-2. Event is immediately broadcast to all connected WebSocket clients
-3. Client receives event via WebSocket listener
-4. Event is added to Zustand store via `addEvent` action
-5. Store performs session aggregation (create/update session state)
-6. Components subscribed to store state re-render
-7. UI displays updated sessions and activities
+1. Route handler accepts and validates events
+2. EventBroadcaster sends event to all active WebSocket subscriptions
+3. WebSocket handler forwards event to client
+4. Client's event listener receives WebSocket message
+5. SubscriberFilter matches event against connection criteria
+6. Event is added to Zustand store
+7. Store performs session aggregation
+8. Components subscribed to store state re-render
+9. UI displays updated sessions and activities
 
 ## Layer Boundaries
 
 | Layer | Responsibility | Can Access | Cannot Access |
 |-------|----------------|----------|---------------|
-| **Monitor HTTP Layer** | Serialize events, sign payload, send HTTPS | Config, Types, Error | Server internals |
-| **Monitor Config Layer** | Parse env vars, validate paths | Filesystem, environment | Types directly |
-| **Server HTTP/WS Layer** | Accept events, verify signatures, broadcast | Config, Types, Error | Stores, databases |
-| **Server Config Layer** | Parse env vars, validate auth credentials | Filesystem, environment | HTTP layer |
-| **Client HTTP/WS Layer** | Connect to server, receive events | Types, Zustand store | Server internals |
-| **Client Store Layer** | Manage event buffer, aggregate sessions | Types, event stream | Server directly |
-| **Client Component Layer** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
+| **Server Routes** | HTTP request handling, response formatting, WebSocket upgrade | Config, Auth, Broadcast, RateLimit | Database, external services |
+| **Auth Module** | Signature verification, token validation | Config (public keys, tokens) | Routes, broadcast |
+| **Broadcast Module** | Event distribution, subscriber filtering | Types (event schema) | Routes, auth, config |
+| **RateLimit Module** | Token bucket tracking, stale entry cleanup | None (self-contained) | Routes, auth, broadcast |
+| **Monitor Config** | Parse env vars, validate paths | Filesystem, environment | Types directly |
+| **Client Component** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
 
 ## Dependency Rules
 
-- **No circular dependencies**: Monitor → Types → (nothing), Server → Types → (nothing), Client → Store → Types → (nothing)
-- **No persistent storage**: All layers are ephemeral; events exist only in memory
-- **Asymmetric auth**: Monitors authenticate with cryptographic signatures; clients authenticate with bearer tokens
+- **No circular dependencies**: Routes → (Auth, Broadcast, RateLimit), Auth → Config, Broadcast → Types, RateLimit → (no deps)
+- **Auth is read-only**: Auth module never modifies config, only reads public keys and tokens
+- **Rate limiting is stateless to requests**: Each request gets its own check, no persistent memory beyond buckets
+- **Broadcast is fire-and-forget**: Events are sent but no confirmation/acknowledgment required
 - **Type safety**: All three languages use strong typing; event schema is enforced at compile time
-- **Layered imports**: Higher layers (HTTP) depend on lower layers (Config, Types, Error), not vice versa
-- **API boundaries**: Monitor's config and error are internal; Server's are public; Client follows module organization pattern
+- **Asymmetric auth**: Monitors authenticate with cryptographic signatures; clients authenticate with bearer tokens
 
 ## Key Interfaces & Contracts
 
-### Monitor ↔ Server Contract
+### Server Routes → Auth Contract
+
+```rust
+// Route handler calls auth to verify signature
+verify_signature(
+    source_id: &str,           // From X-Source-ID header
+    signature_base64: &str,    // From X-Signature header
+    message: &[u8],            // Request body bytes
+    public_keys: &HashMap<String, String>, // From config
+) -> Result<(), AuthError>
+```
+
+### Server Routes → Broadcast Contract
+
+```rust
+// Route handler sends event to broadcaster
+broadcaster.broadcast(event: Event) -> usize  // Returns subscriber count
+
+// WebSocket handler subscribes
+let mut rx = broadcaster.subscribe() // Returns Receiver<Event>
+```
+
+### Server Routes → RateLimit Contract
+
+```rust
+// Route handler checks rate limit
+rate_limiter.check_rate_limit(source_id: &str).await -> RateLimitResult
+// Returns Allowed or Limited { retry_after_secs }
+```
+
+### Monitor ↔ Server HTTP Contract
 
 **Endpoint**: `POST /events`
-**Auth**: Ed25519 signature in header
-**Body**: JSON array of events
+**Required Headers**:
+- `X-Source-ID` - Monitor identifier
+- `X-Signature` - Base64-encoded Ed25519 signature of request body
 
-```json
-[
-  {
-    "id": "evt_k7m2n9p4q1r6s3t8u5v0",
-    "source": "macbook-pro",
-    "timestamp": "2026-02-02T14:30:00Z",
-    "type": "tool",
-    "payload": {
-      "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-      "tool": "Read",
-      "status": "completed",
-      "context": "main.rs",
-      "project": "vibetea"
-    }
-  }
-]
-```
+**Response Codes**:
+- `202 Accepted` - Events received and queued for broadcast
+- `400 Bad Request` - Invalid event format
+- `401 Unauthorized` - Missing/invalid source ID or signature
+- `429 Too Many Requests` - Rate limit exceeded (includes `Retry-After` header)
 
-**Server Config**:
-```
-VIBETEA_PUBLIC_KEYS=source1:base64key1,source2:base64key2
-VIBETEA_SUBSCRIBER_TOKEN=secret-token
-PORT=8080
-```
+### Server ↔ Client WebSocket Contract
 
-### Server ↔ Client Contract
+**Endpoint**: `GET /ws`
+**Query Parameters** (optional):
+- `token` - Authentication token
+- `source` - Filter by source ID
+- `type` - Filter by event type
+- `project` - Filter by project name
 
-**Endpoint**: `WS /subscribe`
-**Auth**: Bearer token in query param or header
-**Message Format**: JSON-serialized VibeteaEvent
-
-```json
-{
-  "id": "evt_k7m2n9p4q1r6s3t8u5v0",
-  "source": "macbook-pro",
-  "timestamp": "2026-02-02T14:30:00Z",
-  "type": "tool",
-  "payload": {
-    "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-    "tool": "Read",
-    "status": "completed",
-    "context": "main.rs",
-    "project": "vibetea"
-  }
-}
-```
+**Response Codes**:
+- `101 Switching Protocols` - WebSocket upgrade successful
+- `401 Unauthorized` - Invalid or missing token
 
 ## State Management
 
 | State Type | Location | Pattern | Scope |
 |-----------|----------|---------|-------|
-| **Event Buffer** | Client Zustand store | FIFO with max 1000 events | Client-side only |
-| **Session State** | Client Zustand store | Derived from events (created/updated on new events) | Client-side only |
-| **Connection Status** | Client Zustand store | ConnectionStatus union (connecting/connected/disconnected/reconnecting) | Client-side only |
-| **Config State** | Monitor/Server | Immutable, parsed at startup | Process lifetime |
-| **Auth Credentials** | Server memory | Public keys map, subscriber token | Process lifetime |
+| **Request Validation** | Routes layer | Immediate rejection on invalid format | Single request |
+| **Rate Limit State** | RateLimiter (token buckets) | Per-source token tracking | All requests for source |
+| **Event Buffer** | EventBroadcaster (broadcast channel) | FIFO with capacity 1000 | All subscribed clients |
+| **Subscriber Filters** | Per WebSocket connection | Builder pattern applied at connect | Single connection lifetime |
+| **Server Config** | AppState (Arc<Config>) | Immutable, loaded at startup | Server process lifetime |
+| **Client State** | Zustand store | Event buffer + session derivation | Client session lifetime |
 
 ## Cross-Cutting Concerns
 
 | Concern | Implementation | Location |
 |---------|----------------|----------|
-| **Error Handling** | Type-specific error enums with `thiserror` (Rust) | `server/src/error.rs`, `monitor/src/error.rs` |
-| **Configuration** | Environment variable parsing with validation | `server/src/config.rs`, `monitor/src/config.rs` |
-| **Cryptographic Signing** | Ed25519 for monitor → server authentication | Monitor to be implemented in Phase 3 |
-| **Event Schema** | Shared types defined in both Rust and TypeScript | `server/src/types.rs`, `monitor/src/types.rs`, `client/src/types/events.ts` |
-| **Logging** | Rust: tracing crate; TypeScript: console (to be enhanced) | Integrated in config parsing |
-| **Session Aggregation** | Client-side state machine based on event type | `client/src/hooks/useEventStore.ts` |
+| **Error Handling** | Result types with ErrorResponse JSON | `routes.rs` (error_to_response pattern) |
+| **Authentication** | Ed25519 for monitors, bearer tokens for clients | `auth.rs` |
+| **Rate Limiting** | Token bucket per source | `rate_limit.rs` |
+| **Logging** | Structured JSON logging with tracing | `main.rs` (init_logging) + route handlers |
+| **Graceful Shutdown** | Signal handling (SIGTERM/SIGINT) with timeout | `main.rs` (shutdown_signal) |
+| **Cleanup Tasks** | Background cleanup of stale rate limit entries | `main.rs` (spawn_cleanup_task) |
+| **WebSocket Protocol** | Ping/pong handling, text messages, close frames | `routes.rs` (handle_websocket) |
 
-## Event Schema
+## Testing Strategy
 
-All events follow the same structure:
+**Server Tests**: Located in `routes.rs` using axum test utilities
+- Health endpoint tests (uptime reporting, subscriber counting)
+- Event ingestion tests (single/batch, with/without auth)
+- Authentication tests (valid signature, missing header, invalid signature, unknown source)
+- Rate limiting tests (under limit, over limit, retry-after)
+- WebSocket filter tests (source, event type, project filtering)
+- AppState initialization tests
 
-```rust
-pub struct Event {
-    pub id: String,              // evt_ + 20 alphanumeric
-    pub source: String,          // Monitor identifier
-    pub timestamp: DateTime<Utc>, // RFC 3339 UTC
-    pub event_type: EventType,   // session|activity|tool|agent|summary|error
-    pub payload: EventPayload,   // Type-specific data
-}
+**Integration Tests**: Located in `server/tests/unsafe_mode_test.rs`
+- End-to-end scenarios in unsafe mode (auth disabled)
+
+**Running Tests**:
+```bash
+cargo test --package vibetea-server  # All tests
+cargo test --package vibetea-server routes  # Route tests only
 ```
 
-**EventPayload Variants**:
-- **Session**: `sessionId`, `action` (started/ended), `project`
-- **Activity**: `sessionId`, `project` (optional)
-- **Tool**: `sessionId`, `tool` (name), `status` (started/completed), `context` (optional), `project` (optional)
-- **Agent**: `sessionId`, `state` (string)
-- **Summary**: `sessionId`, `summary` (string)
-- **Error**: `sessionId`, `category` (string)
+## Graceful Shutdown Flow
+
+```
+Signal (SIGTERM/SIGINT)
+         ↓
+shutdown_signal() async
+         ↓
+Log shutdown initiation
+         ↓
+axum graceful shutdown
+         ↓
+Abort cleanup task
+         ↓
+Allow in-flight requests to complete (30s timeout)
+         ↓
+Exit with success
+```
+
+**Shutdown Timeout**: 30 seconds for in-flight requests to complete
+**Cleanup Interval**: Rate limiter cleans up every 30 seconds
 
 ---
 
