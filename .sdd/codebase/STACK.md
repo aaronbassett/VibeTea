@@ -1,76 +1,166 @@
 # Technology Stack
 
-**Status**: Greenfield project - stack defined, not yet implemented
+**Status**: Phase 2 Implementation - Core modules and types completed
 **Last Updated**: 2026-02-02
 
-## Languages
+## Languages & Runtimes
 
-| Component | Language   | Version | Rationale                                           |
-| --------- | ---------- | ------- | --------------------------------------------------- |
-| Monitor   | Rust       | 2021    | Small binary, low memory, native file watching      |
-| Server    | Rust       | 2021    | High performance async, single-binary deployment    |
-| Client    | TypeScript | 5.x     | Type safety, React ecosystem compatibility          |
+| Component | Language   | Version | Purpose |
+|-----------|-----------|---------|---------|
+| Monitor   | Rust      | 2021    | Native file watching, event capture and signing |
+| Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
+| Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 
-## Frameworks & Runtimes
+## Frameworks & Runtime Libraries
 
 ### Rust (Monitor & Server)
 
-| Framework/Library | Purpose                     | Notes                            |
-| ----------------- | --------------------------- | -------------------------------- |
-| tokio             | Async runtime               | Standard for async Rust          |
-| axum              | HTTP/WebSocket server       | Well-integrated with tokio       |
-| notify            | File watching               | Cross-platform (inotify/FSEvents)|
-| ed25519-dalek     | Ed25519 signing/verification| Cryptographic authentication     |
-| serde             | Serialization               | JSON handling                    |
-| reqwest           | HTTP client                 | Monitor → Server communication   |
-| thiserror/anyhow  | Error handling              | Per constitution standards       |
+| Package            | Version | Purpose | Used By |
+|--------------------|---------|---------|----------|
+| tokio              | 1.43    | Async runtime with full features | Server, Monitor |
+| axum               | 0.8     | HTTP/WebSocket server framework | Server |
+| tower              | 0.5     | Composable middleware | Server |
+| tower-http         | 0.6     | HTTP utilities (CORS, tracing) | Server |
+| reqwest            | 0.12    | HTTP client library | Monitor, Server (tests) |
+| serde              | 1.0     | Serialization/deserialization | All |
+| serde_json         | 1.0     | JSON serialization | All |
+| ed25519-dalek      | 2.1     | Ed25519 cryptographic signing | Server, Monitor |
+| uuid               | 1.11    | Unique identifiers for events | Server, Monitor |
+| chrono             | 0.4     | Timestamp handling | Server, Monitor |
+| thiserror          | 2.0     | Error type derivation | Server, Monitor |
+| anyhow             | 1.0     | Flexible error handling | Server, Monitor |
+| tracing            | 0.1     | Structured logging framework | Server, Monitor |
+| tracing-subscriber | 0.3     | Logging implementation (JSON, env-filter) | Server, Monitor |
+| notify             | 8.0     | File system watching | Monitor |
+| base64             | 0.22    | Base64 encoding/decoding | Server, Monitor |
+| rand               | 0.9     | Random number generation | Server, Monitor |
+| directories        | 6.0     | Standard directory paths | Monitor |
+| gethostname        | 1.0     | System hostname retrieval | Monitor |
 
-### TypeScript (Client)
+### TypeScript/JavaScript (Client)
 
-| Framework/Library | Purpose          | Notes                          |
-| ----------------- | ---------------- | ------------------------------ |
-| React             | UI framework     | Functional components + hooks  |
-| TypeScript        | Language         | Strict mode enabled            |
-| Vite              | Build tool       | Fast dev server, optimized build|
-| TBD               | State management | May not need external library  |
+| Package                    | Version  | Purpose |
+|---------------------------|----------|---------|
+| React                      | ^19.2.4  | UI framework |
+| React DOM                  | ^19.2.4  | DOM rendering |
+| TypeScript                 | ^5.9.3   | Language and type checking |
+| Vite                       | ^7.3.1   | Build tool and dev server |
+| Tailwind CSS               | ^4.1.18  | Utility-first CSS framework |
+| Zustand                    | ^5.0.11  | Lightweight state management |
+| @tanstack/react-virtual    | ^3.13.18 | Virtual scrolling for large lists |
+| @vitejs/plugin-react       | ^5.1.3   | React Fast Refresh for Vite |
+| @tailwindcss/vite          | ^4.1.18  | Tailwind CSS Vite plugin |
+| vite-plugin-compression2   | ^2.4.0   | Brotli compression for builds |
 
-## Development Tools
+## Build Tools & Package Managers
 
-### Rust
+| Tool     | Version  | Purpose |
+|----------|----------|---------|
+| cargo    | -        | Rust package manager and build system |
+| pnpm     | -        | Node.js package manager (client) |
+| rustfmt  | -        | Rust code formatter |
+| clippy   | -        | Rust linter |
+| prettier | ^3.8.1   | Code formatter (TypeScript) |
+| ESLint   | ^9.39.2  | JavaScript/TypeScript linter |
 
-| Tool     | Purpose    | Configuration          |
-| -------- | ---------- | ---------------------- |
-| rustfmt  | Formatting | Default settings       |
-| clippy   | Linting    | Default lints minimum  |
-| cargo    | Build/test | Workspace for monorepo |
+## Development & Testing
 
-### TypeScript
+### Rust Testing
+| Package      | Version | Purpose |
+|--------------|---------|---------|
+| tokio-test   | 0.4     | Tokio testing utilities |
 
-| Tool     | Purpose    | Configuration           |
-| -------- | ---------- | ----------------------- |
-| Prettier | Formatting | Default + project rules |
-| ESLint   | Linting    | Recommended + React     |
-| Vitest   | Testing    | Fast, Vite-native       |
+### TypeScript Testing
+| Package                | Version  | Purpose |
+|------------------------|----------|---------|
+| Vitest                 | ^4.0.18  | Unit/component testing framework |
+| @testing-library/react | ^16.3.2  | React testing utilities |
+| @testing-library/jest-dom | ^6.9.1 | DOM matchers for testing |
+| jsdom                  | ^28.0.0  | DOM implementation for Node.js |
 
-## Deployment
+## Configuration Files
 
-| Component | Target    | Format           | Notes                     |
-| --------- | --------- | ---------------- | ------------------------- |
-| Server    | Fly.io    | Docker container | Single Rust binary        |
-| Client    | CDN       | Static files     | Netlify/Vercel/Cloudflare |
-| Monitor   | Local     | Binary           | User downloads and runs   |
+| File | Framework | Purpose |
+|------|-----------|---------|
+| `client/vite.config.ts` | Vite | Build configuration, WebSocket proxy to server |
+| `client/tsconfig.json` | TypeScript | Strict mode, ES2020 target |
+| `Cargo.toml` (workspace) | Cargo | Rust workspace configuration and shared dependencies |
+| `server/Cargo.toml` | Cargo | Server package configuration |
+| `monitor/Cargo.toml` | Cargo | Monitor package configuration |
 
-## Communication Protocols
+## Runtime Environment
 
-| Interface          | Protocol       | Format |
-| ------------------ | -------------- | ------ |
-| Monitor → Server   | HTTPS POST     | JSON   |
-| Server → Client    | WebSocket      | JSON   |
-| Monitor auth       | Ed25519 sigs   | Base64 |
-| Client auth        | Bearer token   | String |
+| Aspect | Details |
+|--------|---------|
+| Server Runtime | Rust binary (tokio async) |
+| Client Runtime | Browser (ES2020+) |
+| Monitor Runtime | Native binary (Linux/macOS/Windows) |
+| Node.js | Required for development and client build only |
+| Async Model | Tokio (Rust), Promises (TypeScript) |
+| WebSocket Support | Native (server-side via axum, client-side via browser) |
 
-## Not Yet Determined
+## Communication Protocols & Formats
 
-- State management library for Client (may use React Context)
-- Specific versions for all dependencies (to be pinned at implementation)
-- CI/CD tooling (GitHub Actions likely)
+| Interface | Protocol | Format | Auth Method |
+|-----------|----------|--------|------------|
+| Monitor → Server | HTTPS POST | JSON | Ed25519 signature |
+| Server → Client | WebSocket | JSON | Bearer token |
+| Client → Server | WebSocket | JSON | Bearer token |
+
+## Data Serialization
+
+| Component | Serialization | Notes |
+|-----------|---------------|-------|
+| Server/Monitor | serde (Rust) | JSON with snake_case for env configs |
+| Client | TypeScript/JSON | camelCase for API contracts |
+| Events | serde_json | Standardized event schema across components |
+
+## Build Output
+
+| Component | Output | Format | Deployment |
+|-----------|--------|--------|-----------|
+| Server | Binary | ELF (Linux) | Docker container on Fly.io |
+| Monitor | Binary | ELF/Mach-O/PE | Standalone executable for users |
+| Client | Static files | JS + CSS (Brotli compressed) | CDN (Netlify/Vercel/Cloudflare) |
+
+## Module Organization
+
+### Client (`client/src`)
+- `components/` - React components
+- `hooks/` - Custom hooks (including `useEventStore` for Zustand state)
+- `types/events.ts` - Event type definitions matching Rust schema
+- `utils/` - Utility functions
+- `App.tsx` - Root component
+- `main.tsx` - Entry point
+- `index.css` - Global styles
+
+### Server (`server/src`)
+- `config.rs` - Environment variable parsing and validation
+- `error.rs` - Error types and handling
+- `types.rs` - Event types and data models
+- `lib.rs` - Public library interface
+- `main.rs` - Server entry point
+
+### Monitor (`monitor/src`)
+- `config.rs` - Configuration from environment variables
+- `error.rs` - Error types
+- `types.rs` - Event types
+- `lib.rs` - Public interface
+- `main.rs` - Monitor entry point
+
+## Deployment Targets
+
+| Component | Target | Container | Notes |
+|-----------|--------|-----------|-------|
+| Server | Fly.io | Docker | Single Rust binary, minimal base image |
+| Client | CDN | Static files | Optimized builds with compression |
+| Monitor | Local | Native binary | Users download and run locally |
+
+## Not Yet Implemented
+
+- Database/persistence layer
+- Advanced state management patterns (currently Context + Zustand)
+- Session persistence beyond memory
+- Rate limiting middleware
+- Request/response logging to external services
+- Enhanced error tracking
