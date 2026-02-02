@@ -2,7 +2,34 @@
 //!
 //! This crate provides functionality for monitoring Claude Code sessions
 //! and reporting events to the VibeTea server.
+//!
+//! # Overview
+//!
+//! The monitor watches `~/.claude/projects/**/*.jsonl` files for changes and emits
+//! events when files are created, modified, or removed. These events can be used
+//! to track Claude Code session activity in real-time.
+//!
+//! # Privacy
+//!
+//! All parsing is privacy-first: only metadata (tool names, timestamps, file basenames)
+//! is extracted, never code content, prompts, or assistant responses.
+//!
+//! # Modules
+//!
+//! - [`types`]: Event types for session monitoring
+//! - [`watcher`]: File system watcher for JSONL files
+//! - [`parser`]: Claude Code JSONL parsing
+//! - [`config`]: Configuration from environment variables
+//! - [`error`]: Error types for monitor operations
 
+pub mod config;
+pub mod error;
+pub mod parser;
 pub mod types;
+pub mod watcher;
 
+pub use config::Config;
+pub use error::{MonitorError, Result};
+pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
+pub use watcher::{FileWatcher, WatchEvent, WatcherError};

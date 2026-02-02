@@ -44,5 +44,9 @@ chrono.workspace = true
 directories.workspace = true
 gethostname.workspace = true
 
+# Async utilities
+futures = "0.3"
+
 [dev-dependencies]
 tokio-test.workspace = true
+tempfile = "3.15"
