@@ -13,6 +13,7 @@
 | Ed25519 Signatures | ed25519-dalek library with verify_strict() | `VIBETEA_PUBLIC_KEYS` env var | Implemented (Phase 3) |
 | Bearer Token | Constant-time comparison in validate_token() | `VIBETEA_SUBSCRIBER_TOKEN` env var | Implemented (Phase 3) |
 | Development bypass | `VIBETEA_UNSAFE_NO_AUTH=true` | Environment variable | Development only |
+| Client Token Storage | localStorage with password input | `vibetea_token` key | Implemented (Phase 7) |
 
 ### Authentication Flow
 
@@ -26,12 +27,38 @@
 - Format: `source_id:base64_pubkey,...` parsed in `server/src/config.rs:157-203`
 
 **Client to Server (WebSocket)**:
-- Client sends bearer token in `token` query parameter (e.g., `?token=xxx`)
-- Token value from `VIBETEA_SUBSCRIBER_TOKEN` configuration
+- Client stores bearer token in localStorage via `TokenForm` component (`client/src/components/TokenForm.tsx`)
+- Token storage key: `vibetea_token` (defined in `useWebSocket.ts:18` and `TokenForm.tsx:15`)
+- Token sent in WebSocket URL query parameter: `?token=xxx` via `buildWebSocketUrl()` (`useWebSocket.ts:75-79`)
 - Server validates token presence and value using `validate_token()` in `server/src/auth.rs:269-295`
 - Comparison uses constant-time bit comparison via `subtle::ConstantTimeEq` to prevent timing attacks
 - No token expiration mechanism implemented (planned for Phase 3+)
 - No per-client token scope differentiation
+
+### Client Token Management (Phase 7)
+
+From `client/src/components/TokenForm.tsx`:
+
+- **Token input**: HTML password input field for user entry (`<input type="password">`)
+- **Storage**: localStorage via `localStorage.setItem(TOKEN_STORAGE_KEY, token)`
+- **Retrieval**: Retrieved by `useWebSocket()` at connection time: `localStorage.getItem(TOKEN_STORAGE_KEY)`
+- **Status tracking**: Component tracks saved/not-saved state via visual indicator
+- **Clear functionality**: `localStorage.removeItem()` to delete token
+- **Cross-tab sync**: Listens to `storage` events to detect changes from other tabs/windows
+- **Validation**: Token trimmed before save, empty tokens rejected
+
+### Client WebSocket Connection (Phase 7)
+
+From `client/src/hooks/useWebSocket.ts`:
+
+- **Auto-reconnect**: Exponential backoff (1s initial, 60s max, ±25% jitter)
+- **Calculation**: `calculateBackoff()` function doubles delay per attempt, capped at 60s
+- **Jitter formula**: `1 + (Math.random() * 2 - 1) * 0.25` prevents thundering herd
+- **Missing token handling**: Warns to console and prevents connection if token missing
+- **Structural validation**: Basic event validation via `parseEventMessage()` (lines 97-122)
+  - Checks for required fields: `id`, `source`, `timestamp`, `type`, `payload`
+  - Invalid events silently dropped (logged only on parse error)
+  - No schema validation against event types
 
 ### Development Mode Bypass
 
@@ -84,8 +111,9 @@ From `server/src/auth.rs:269-295`:
 - **No user-level isolation**: No per-user filtering of events
 - **WebSocket filtering available**: Clients can filter by source/type/project via query parameters (advisory, not enforced)
 
-### Authorization Gaps
+### Client Authorization Gaps
 
+- No token management beyond localStorage storage
 - No per-user or per-resource permissions
 - No role-based access control (RBAC)
 - No scope limitation on token capabilities
@@ -103,6 +131,8 @@ From `server/src/auth.rs:269-295`:
 | API input | Type safety | Rust compiler enforces types |
 | Signature/Token validation | Cryptographic checks | `verify_signature()` and `validate_token()` |
 | JSONL parsing | JSON deserialization + error handling | `monitor/src/parser.rs:354-359` |
+| Client WebSocket messages | Basic structural validation | `parseEventMessage()` in `useWebSocket.ts:97-122` |
+| Client token input | Trimming only | `TokenForm.tsx:103` |
 
 ### Event Validation (Server Types)
 
@@ -115,6 +145,22 @@ Event structure from `server/src/types.rs:1-163`:
 - **Event ID**: Prefixed format (`evt_` + 20 alphanumeric chars)
 
 All event fields are type-checked at deserialization via serde. Invalid JSON fails before reaching application logic. Validation occurs at `server/src/routes.rs:325-338`.
+
+### Client Event Validation (Phase 7)
+
+From `client/src/hooks/useWebSocket.ts:97-122`:
+
+- **Message type check**: Validates `typeof data === 'string'`
+- **JSON parsing**: Wrapped in try-catch, invalid JSON returns null
+- **Field validation**: Checks for required properties: `id`, `source`, `timestamp`, `type`, `payload`
+- **Type coercion**: Casts to `VibeteaEvent` without runtime schema validation
+- **Silent failure**: Invalid events logged via console but not re-thrown
+
+From `client/src/types/events.ts`:
+
+- **TypeScript types**: EventType union, SessionPayload, ToolPayload, etc. (read-only properties)
+- **Type guards**: Type narrowing possible with discriminated union
+- **No runtime validators**: serde validation only available on server
 
 ### Claude Code JSONL Parsing
 
@@ -160,6 +206,7 @@ From `monitor/src/config.rs`:
 | Base64 keys | Validated during signature verification | `auth.rs:204-215` |
 | Signatures | Base64 decoding with error handling | `auth.rs:218-225` |
 | Tokens | Trimmed and length-checked | `auth.rs:270-287` |
+| Client token input | Trimmed before storage | `TokenForm.tsx:103` |
 | JSONL lines | Whitespace trimmed, empty lines filtered | `monitor/src/parser.rs:348-350`, `monitor/src/watcher.rs:562-565` |
 | File paths from tool input | Basename extraction via privacy pipeline | `monitor/src/privacy.rs:433-442` |
 | Project names | URL decoding with validation | `monitor/src/parser.rs:491-529` |
@@ -175,6 +222,7 @@ From `monitor/src/config.rs`:
 | Private key | File permissions (0600) | `~/.vibetea/key.priv` | Monitor loads from disk (Phase 6) |
 | Public key | Base64-encoded, file mode 0644 | `~/.vibetea/key.pub` and env var | On server and monitor (Phase 6) |
 | Bearer token | Environment variable | `VIBETEA_SUBSCRIBER_TOKEN` | In-memory, passed by clients in query params |
+| Client token | localStorage (browser) | `vibetea_token` key | Accessible to JavaScript, not secure storage (Phase 7) |
 | Event payloads | Privacy pipeline sanitization | Memory/transit | Sent over HTTPS/WSS only |
 | JSONL data | Read from disk | `~/.claude/projects/` | Watched by monitor, only metadata extracted |
 | Tool context | Extension allowlist filtering | Memory/transit | Sensitive tools stripped, others filtered by extension |
@@ -185,6 +233,7 @@ From `monitor/src/config.rs`:
 |---------|----------|-----------------|
 | Monitor → Server | HTTPS | TLS 1.2+ required (enforced by reqwest) |
 | Server → Client | WSS (WebSocket Secure) | TLS 1.2+ (depends on deployment) |
+| Client → Server (WebSocket) | WSS | TLS 1.2+ (depends on browser and deployment) |
 
 **Deployment note**: VibeTea server endpoints must be served over HTTPS/WSS. Currently no explicit header configuration for security headers (HSTS, CSP, etc.).
 
@@ -195,12 +244,14 @@ From `monitor/src/config.rs`:
 | Event payloads | None | Not applicable |
 | Private keys | None (file permissions) | OS filesystem security |
 | Configuration | None | Environment variables |
+| Client token | None (localStorage) | Browser's localStorage encryption (varies) |
 
 **Note**: VibeTea does not implement application-level encryption. Sensitive credentials are protected by:
 1. Environment variable isolation
 2. File system permissions (private key in `~/.vibetea/key.priv` with mode 0600)
 3. HTTPS/WSS transport security
 4. Privacy pipeline sanitization (Phase 5)
+5. Browser localStorage (Phase 7) - varies by browser and OS
 
 ## Cryptography
 
@@ -684,6 +735,8 @@ Not yet configured. Recommended headers for production:
 | Monitor startup | Config loaded, keys loaded, running state | `monitor/src/main.rs:197-230` |
 | Event transmission | Events sent successfully | `monitor/src/sender.rs:284` |
 | Sender errors | Auth failed, rate limited, retries | `monitor/src/sender.rs:289-322` |
+| Client WebSocket messages | Invalid message format logged | `useWebSocket.ts:119-120` |
+| Token operations | Token save/clear in client | `TokenForm.tsx:108, 121` (localStorage ops, not logged) |
 
 **Status**: Basic error logging present. Structured auth decision logging and comprehensive audit trails pending.
 
@@ -703,6 +756,8 @@ Not yet configured. Recommended headers for production:
 | Parser errors | Logged as warnings without details | Low - JSON parsing failures don't expose content |
 | Privacy filter debug | Debug logs only, not exposed in responses | Low - development visibility only |
 | Crypto errors | File not found, invalid key length | Low - no key material exposed |
+| Client token errors | Warning to console if token missing | Low - development debugging only |
+| Invalid WebSocket message | Silently dropped, no client error | Low - malformed events ignored |
 
 ### Error Response Handling
 
@@ -774,167 +829,116 @@ From `client/src/hooks/useEventStore.ts:1-172`:
 - **No authentication state**: Bearer token not stored in client-side store
 - **No sensitive data**: Events are passed through without validation
 
+### WebSocket Connection (Phase 7)
+
+From `client/src/hooks/useWebSocket.ts`:
+
+**Token Management**:
+- Token stored in localStorage under `vibetea_token` key
+- Retrieved at connection time from localStorage
+- Built into WebSocket URL as query parameter: `?token={token}`
+- No token expiration check on client side
+- No refresh token mechanism
+
+**Reconnection**:
+- Exponential backoff: 1s → 60s with ±25% jitter
+- Auto-reconnect enabled by default, disabled on manual disconnect
+- Attempt counter resets on successful connection
+- Missing token prevents connection with console warning
+
+**Event Handling**:
+- Events validated with `parseEventMessage()` (structural check only)
+- Invalid events silently dropped
+- Valid events dispatched to Zustand store
+- No schema validation against expected event types
+
 ### Client Authorization Gaps
 
-- No token management implementation
+- No token management implementation (localStorage only)
 - No authorization checks in event filtering
 - No rate limiting on client side
 - No CORS origin validation (server responsibility)
+- All authenticated clients see all events
+- No user-scoped filtering of data
 
-## Phase 4 Security Changes
+### Token Form Component (Phase 7)
 
-New components added for Claude Code monitoring:
+From `client/src/components/TokenForm.tsx`:
 
-### File Watcher (`monitor/src/watcher.rs`)
+**Token Storage**:
+- Password input field for user entry
+- Stored in localStorage via `localStorage.setItem()`
+- Retrieved and checked via `localStorage.getItem()`
+- Cleared via `localStorage.removeItem()`
+- Cross-tab sync via `storage` event listener
 
-- **Privacy-safe file monitoring**: Watches `~/.claude/projects/**/*.jsonl` for changes only
-- **Position tracking**: Efficient tailing without re-reading via byte-offset map
-- **Error handling**: Graceful handling of permission denied, I/O errors, missing files
-- **Async implementation**: Uses tokio for non-blocking file operations
-- **Thread safety**: `Arc<RwLock>` protects position map for concurrent access
+**Security Properties**:
+- Token displayed as password field (hidden from UI)
+- Token trimmed before storage (removes whitespace)
+- Empty token submission rejected
+- Clear button allows immediate token removal
+- Status indicator shows saved/not-saved state
 
-Security considerations:
-- Only JSONL files processed (extension filtering)
-- Position map prevents event replay
-- File removal cleanup automatic
-- Errors logged but don't crash watcher
+**Security Gaps**:
+- localStorage is not secure storage (accessible to all JavaScript)
+- No encryption of token at rest (browser-dependent)
+- Token visible in browser dev tools and network tab
+- No CSRF token for form submission
+- No HTTPS enforcement at client level
 
-### JSONL Parser (`monitor/src/parser.rs`)
+### Connection Status Component (Phase 7)
 
-- **Privacy-first extraction**: Only metadata (tool names, file basenames, timestamps) extracted
-- **Safe path handling**: `extract_basename()` prevents full path transmission
-- **URL decoding**: Safe project name decoding with validation
-- **Error resilience**: Malformed JSON skipped with warnings
-- **Type safety**: Rust enums prevent invalid event kinds
+From `client/src/components/ConnectionStatus.tsx`:
 
-Security guarantees:
-- Code content never extracted (text blocks skipped)
-- Prompts never extracted (thinking blocks skipped)
-- Tool results never extracted
-- Full file paths never transmitted (basenames only)
-- Session start/end tracking for lifecycle management
+- Visual status indicator (colored dot + optional label)
+- Color mapping: Green (connected), Yellow (connecting/reconnecting), Red (disconnected)
+- Selective Zustand subscription to status changes
+- No authentication or authorization checks
+- Purely informational UI component
 
-## Phase 5 Security Changes
+## Phase 7 Security Changes
 
-Privacy pipeline for event sanitization:
+New client-side components for user authentication:
 
-### Privacy Pipeline (`monitor/src/privacy.rs`)
+### TokenForm Component (`client/src/components/TokenForm.tsx`)
 
-- **Mandatory processing**: All event payloads processed before transmission
-- **Sensitive tool detection**: Bash, Grep, Glob, WebSearch, WebFetch contexts stripped
-- **Path anonymization**: Full paths reduced to basenames via `extract_basename()`
-- **Extension allowlist**: Optional filtering by file type via `VIBETEA_BASENAME_ALLOWLIST`
-- **Summary neutralization**: Session summary text replaced with "Session ended"
-- **Debug logging**: Privacy decisions logged at debug level for visibility
+- **Purpose**: Manage bearer token for WebSocket authentication
+- **Storage**: localStorage (browser storage, not cryptographically protected)
+- **Key**: `vibetea_token` (consistent with useWebSocket)
+- **User interaction**: Password input with save/clear buttons
+- **Status tracking**: Visual indicator of saved/not-saved state
+- **Cross-tab sync**: Listens to storage events for multi-window updates
 
-Implementation status:
-- Fully implemented in `monitor/src/privacy.rs` (442 lines)
-- Comprehensive test coverage in `monitor/tests/privacy_test.rs` (951 lines)
-- 10+ test categories covering all privacy guarantees
-- No privacy leaks detected in test suite
+Security properties:
+- Token hidden in password field during input
+- Token trimmed before storage
+- Token never logged or displayed after saving
+- Clear button allows immediate token removal
+- localStorage accessible to all JavaScript in origin
 
-### Privacy Test Suite
+### useWebSocket Hook (`client/src/hooks/useWebSocket.ts`)
 
-951 lines of comprehensive privacy verification tests:
+- **Purpose**: Manage WebSocket connection with auto-reconnect
+- **Token retrieval**: localStorage.getItem(TOKEN_STORAGE_KEY)
+- **Connection URL**: Includes token as query parameter: `?token={token}`
+- **Auto-reconnect**: Exponential backoff (1s → 60s, ±25% jitter)
+- **Event validation**: Basic structural validation via parseEventMessage()
+- **Status tracking**: connection state (connecting/connected/disconnected/reconnecting)
 
-**Coverage areas**:
-1. **Sensitive tool stripping**: Bash, Grep, Glob, WebSearch, WebFetch all verified
-2. **Path anonymization**: 10 path format tests with various separators
-3. **Extension allowlist**: Filtering verified for sensitive file types
-4. **All event types**: Comprehensive safety check across all event payload variants
-5. **Edge cases**: Unicode filenames, case sensitivity, complex paths
-6. **Privacy assertions**: Checks for path patterns, command patterns, sensitive strings
+Security properties:
+- Token missing blocks connection with console warning
+- Reconnection disabled on manual disconnect
+- Attempt counter resets on successful connection
+- Invalid events silently dropped
+- No schema validation of event structure
 
-**Test execution**: Runs during `cargo test --workspace` to ensure privacy guarantees.
+### ConnectionStatus Component (`client/src/components/ConnectionStatus.tsx`)
 
-## Phase 6 Security Changes
-
-Monitor server connection with cryptography and HTTP sender:
-
-### Cryptography Module (`monitor/src/crypto.rs`)
-
-- **Keypair generation**: OsRng-based Ed25519 key generation via `Crypto::generate()`
-- **Secure storage**: Private key (0600), public key (0644) in `~/.vibetea/`
-- **Keypair loading**: Validation of exact 32-byte seed format from disk
-- **Event signing**: Deterministic Ed25519 signatures for all events
-- **Test coverage**: 15 comprehensive test cases for crypto operations
-
-Implementation status:
-- Fully implemented and tested in `monitor/src/crypto.rs` (439 lines)
-- File permissions enforced on Unix systems (0600 for private, 0644 for public)
-- Round-trip save/load validation with tests
-- Public key export in base64 format for server registration
-- Cryptographic error types properly defined and handled
-
-### HTTP Sender Module (`monitor/src/sender.rs`)
-
-- **Connection pooling**: reqwest Client with 10 connections per host
-- **Event buffering**: 1000-event FIFO buffer with configurable size
-- **Exponential backoff**: 1s → 60s with ±25% jitter on retry
-- **Rate limit handling**: Respects 429 with Retry-After header
-- **Graceful shutdown**: Flushes remaining events on exit
-- **Retry strategy**: 10 max attempts with server error detection
-
-Implementation status:
-- Fully implemented and tested in `monitor/src/sender.rs` (545 lines)
-- 15 comprehensive unit tests for buffering, retry, and configuration
-- Integration with event signing via crypto module
-- Per-batch request signing for authentication
-- Status code handling with different retry strategies per error type
-
-### Monitor CLI (`monitor/src/main.rs`)
-
-- **Init command**: Keypair generation with interactive confirmation
-- **Run command**: Daemon with configuration loading and graceful shutdown
-- **Help/Version**: Usage documentation and version reporting
-- **Signal handling**: SIGINT and SIGTERM for clean shutdown
-- **Structured logging**: Tracing framework with startup diagnostics
-
-Implementation status:
-- Fully implemented in `monitor/src/main.rs` (302 lines)
-- Async runtime with tokio (multi-threaded)
-- Configuration validation before running
-- Graceful shutdown with 5-second timeout for event flushing
-- Error context via `anyhow` crate for better diagnostics
-
-### API Exports (`monitor/src/lib.rs`)
-
-- **Public API**: Crypto, Sender, Config, Event types exported
-- **Module structure**: All modules properly documented
-- **Re-exports**: Convenience re-exports for library users
-
-## Test Coverage (Phase 6)
-
-### Crypto Tests
-
-From `monitor/src/crypto.rs` (lines 278-438):
-
-- `test_generate_creates_valid_keypair()`: Validates base64 public key generation
-- `test_save_and_load_roundtrip()`: Ensures public keys match after save/load
-- `test_exists_returns_false_for_empty_dir()`: Directory check functionality
-- `test_exists_returns_true_after_save()`: Key existence detection
-- `test_sign_produces_verifiable_signature()`: Signature verification against public key
-- `test_sign_raw_produces_64_byte_signature()`: Raw signature format validation
-- `test_different_messages_produce_different_signatures()`: Signature uniqueness
-- `test_same_message_produces_same_signature()`: Signature determinism (Ed25519 property)
-- `test_load_from_nonexistent_dir_fails()`: Error handling for missing files
-- `test_load_from_empty_file_fails()`: Invalid key length detection
-- `test_load_from_short_file_fails()`: Truncated file rejection
-- `test_save_sets_correct_permissions()` (Unix): File mode 0600/0644 verification
-- `test_public_key_file_contains_base64()`: Base64 encoding verification
-
-### Sender Tests
-
-From `monitor/src/sender.rs` (lines 424-544):
-
-- `test_queue_adds_events()`: Buffer state tracking
-- `test_queue_evicts_oldest_when_full()`: FIFO eviction on buffer overflow
-- `test_sender_config_with_defaults()`: Default buffer size (1000)
-- `test_add_jitter_stays_within_bounds()`: Jitter randomness validation (±25%)
-- `test_increase_retry_delay_doubles()`: Exponential backoff progression
-- `test_increase_retry_delay_caps_at_max()`: Max delay cap (60s)
-- `test_reset_retry_delay()`: Delay reset to initial (1s)
-- `test_is_empty()`: Buffer state checking
+- **Purpose**: Visual indicator of WebSocket connection status
+- **Display**: Colored dot (green/yellow/red) with optional label
+- **Selective rendering**: Zustand subscription prevents unnecessary re-renders
+- **ARIA labels**: Accessibility support for screen readers
+- **No security impact**: Purely informational
 
 ## Known Vulnerabilities & Gaps
 
@@ -961,17 +965,28 @@ From `monitor/src/sender.rs` (lines 424-544):
 - Graceful shutdown with event buffer flushing
 - Structured logging throughout monitor components
 
+**New in Phase 7:**
+- Client-side token management via TokenForm component
+- WebSocket connection with auto-reconnect via useWebSocket hook
+- Connection status visual indicator via ConnectionStatus component
+- Token storage in localStorage with cross-tab sync
+- Basic event validation via parseEventMessage()
+
 **Remaining gaps:**
 - No rate limiting middleware for other endpoints (only event ingestion protected)
 - No granular authorization/RBAC (design phase)
 - No encryption at rest for configuration/events (acceptable for MVP)
 - No comprehensive audit logging beyond error messages
 - No CORS header configuration (pending)
-- No client-side token management (pending)
+- No secure token storage (localStorage is insecure)
+- No token refresh mechanism (client side)
+- No token expiration validation (client side)
 - No per-client isolation or scoping (all clients see all events)
 - No TLS certificate validation in monitor HTTP client (reqwest default)
 - No URL format validation in monitor config (pending)
 - No integration tests for watcher + parser + privacy + sender pipeline
+- No CSRF protection on token form
+- No encryption of token in localStorage (browser-dependent)
 
 ---
 

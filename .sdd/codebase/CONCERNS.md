@@ -19,12 +19,15 @@ Security-related issues requiring attention:
 | SEC-008 | Monitor | Private key stored unencrypted (file perms only) | Medium | High | Open | Consider OS keychain integration |
 | SEC-009 | Config | Development bypass enabled on startup | Medium | Low | Open | Remove VIBETEA_UNSAFE_NO_AUTH from production |
 | SEC-010 | Monitor - Config | No URL format validation for VIBETEA_SERVER_URL | Low | Low | Open | Add URL parsing validation in monitor config |
-| SEC-012 | Client | No bearer token management implementation | High | High | Open | Implement token storage and refresh logic |
+| SEC-012 | Client | No bearer token management implementation | High | High | Partial | Basic localStorage implementation added (Phase 7) |
 | SEC-013 | Client | No client-side authorization checks | Medium | Medium | Open | Add event filtering before rendering |
 | SEC-014 | All | No per-client session isolation | High | High | Open | Implement user/client-based event filtering |
 | SEC-015 | Monitor | File permissions on ~/.claude/projects not validated | Medium | Low | Open | Warn if directory is world-readable |
 | SEC-016 | Parser | No size limits on JSONL files | Medium | Medium | Open | Add max file size configuration |
 | SEC-017 | Watcher | No limit on concurrent file operations | Low | Medium | Open | Add semaphore for file I/O concurrency |
+| SEC-018 | Client - Token | Token stored in localStorage (not secure storage) | High | Medium | Open | Implement secure storage or session-based auth |
+| SEC-019 | Client - Token | Token visible in localStorage (accessible to all JS) | High | Low | Open | Document security implications in README |
+| SEC-020 | Client - Token | Token sent in WebSocket URL query parameter | Medium | Medium | Open | Use WebSocket subprotocol or headers instead |
 | SEC-021 | Monitor - Sender | No integration test for signing + sending pipeline | Medium | Medium | Open | Add e2e tests with mock server |
 
 **Fixed in Phase 3:**
@@ -45,6 +48,12 @@ Security-related issues requiring attention:
 - Rate limit handling respects Retry-After header
 - Graceful shutdown with event buffer flushing
 - CLI commands with proper error reporting
+
+**Phase 7 Updates:**
+- SEC-012 partially addressed: TokenForm component provides localStorage-based token management
+- SEC-018 added: localStorage is not cryptographically secure storage
+- SEC-019 added: Token accessible to all JavaScript in origin
+- SEC-020 added: Token sent as query parameter (visible in logs and network tab)
 
 ## Technical Debt
 
@@ -67,6 +76,8 @@ Items that should be addressed before scaling:
 | TD-035 | Monitor - Crypto | Keypair generation and storage fully implemented | Crypto module provides secure operations | Low | Resolved |
 | TD-036 | Monitor - Sender | HTTP sender with retry, buffering, and rate limit handling | Sender module provides production-ready transmission | Low | Resolved |
 | TD-037 | Monitor - CLI | Main entry point with init and run commands | CLI provides user interface for monitor | Low | Resolved |
+| TD-043 | Client - Auth | Token management via localStorage in TokenForm | Basic implementation complete but insecure | Medium | Partial |
+| TD-044 | Client - Conn | WebSocket connection with auto-reconnect via useWebSocket | Handles reconnection but token not validated on client | Medium | Partial |
 
 ### Medium Priority
 
@@ -88,6 +99,8 @@ Items to address when working in the area:
 | TD-038 | Monitor - Tests | No integration tests for sender + signing pipeline | Can't verify auth headers are sent correctly | Medium | Open |
 | TD-039 | Monitor - Signal handling | Signal handlers set up in main.rs for SIGINT/SIGTERM | Graceful shutdown implemented | Low | Resolved |
 | TD-040 | Monitor - Config | Hostname detection via gethostname crate | Source ID defaults to hostname correctly | Low | Resolved |
+| TD-045 | Client - Storage | localStorage persistence for token across page reloads | Works correctly but has security implications | Low | Resolved |
+| TD-046 | Client - Event validation | parseEventMessage does basic structural validation only | No schema validation of event content | Low | Open |
 
 ### Low Priority
 
@@ -105,6 +118,8 @@ Nice to have improvements:
 | TD-034 | Tests | Privacy test coverage documentation | Explain what privacy tests verify | Low | Resolved |
 | TD-041 | Monitor - Crypto | Add crypto module examples to README | Help users understand keypair generation | Low | Open |
 | TD-042 | Monitor - Sender | Add sender configuration examples | Help users understand buffer/retry settings | Low | Open |
+| TD-047 | Client - Components | Document Phase 7 client components in README | Help users understand token management | Low | Open |
+| TD-048 | Client - Styling | Add loading states and error messages to TokenForm | Better UX feedback | Low | Open |
 
 ## Missing Security Controls
 
@@ -118,13 +133,16 @@ Critical gaps in security infrastructure:
 | Audit logging | Centralized audit log | Compliance & debugging | Phase 2/3 | New logging module | Open |
 | Security headers | CORS, CSP, HSTS headers | Production deployment | Phase 2 | tower-http configuration | Open |
 | Certificate validation | TLS validation in reqwest | Prevent MITM attacks | Phase 2 | Monitor HTTP client config | Open |
-| Client auth state | Token storage and refresh | Client authentication | Phase 2/3 | Client useAuthStore hook | Open |
+| Client auth state | Token storage and refresh | Client authentication | Phase 2/3 | Client useAuthStore hook | Partial (Phase 7) |
 | File monitoring auth | Authentication for monitor startup | Prevent unauthorized monitoring | Phase 4+ | Monitor main entry point | Open |
 | Privacy guarantees | Verification that code/prompts not leaked | User trust | Phase 4+ | Integration tests | Resolved (Phase 5) |
 | Privacy pipeline | Event sanitization before transmission | Compliance with Constitution I | Phase 5 | `monitor/src/privacy.rs` | Resolved |
 | Crypto operations | Ed25519 signing and verification | Secure event authentication | Phase 6 | `monitor/src/crypto.rs` | Resolved |
 | HTTP transmission | Connection pooling and retry logic | Reliable event delivery | Phase 6 | `monitor/src/sender.rs` | Resolved |
 | CLI interface | User-friendly keypair generation | Easy onboarding | Phase 6 | `monitor/src/main.rs` | Resolved |
+| Client token form | Token input and storage UI | Client-side authentication | Phase 7 | `client/src/components/TokenForm.tsx` | Resolved |
+| WebSocket hook | Connection management with reconnect | Reliable event stream | Phase 7 | `client/src/hooks/useWebSocket.ts` | Resolved |
+| Secure token storage | Encryption or session-based auth | Replace localStorage | Phase 8+ | TBD | Open |
 
 ## Fragile Areas
 
@@ -147,6 +165,9 @@ Code areas that are brittle or risky to modify:
 | `monitor/src/crypto.rs:165-199` | Key file storage with permissions | Verify 0600/0644 modes on Unix | save() controls private key protection | Open |
 | `monitor/src/sender.rs:251-349` | Signature generation for each batch | Verify signatures are computed before retry | send_batch creates signatures inline | Open |
 | `monitor/src/sender.rs:361-387` | Exponential backoff with jitter | Verify randomness doesn't cause issues | add_jitter prevents thundering herd | Open |
+| `client/src/components/TokenForm.tsx` | localStorage token storage without encryption | Use password field, trim input, clear button | TokenForm manages token lifecycle | Partial |
+| `client/src/hooks/useWebSocket.ts:75-79` | Token passed in URL query parameter | Token visible in logs/network tab | buildWebSocketUrl includes token | Partial |
+| `client/src/hooks/useWebSocket.ts:97-122` | Basic structural event validation only | No schema validation of event types | parseEventMessage checks required fields | Open |
 | Error handling | Custom ServerError type, widely used now | Error handling tests in place | `server/src/error.rs` | Partial |
 | Client state | Zustand store with no auth isolation | Add user-scoped state selector before multi-tenant | `client/src/hooks/useEventStore.ts` | Open |
 
@@ -163,6 +184,9 @@ Active bugs that haven't been fixed:
 | BUG-005 | Monitor - Parser | UUID validation accepts any valid UUID format in filename | Low | Expect valid UUIDs from Claude Code only | Open |
 | BUG-006 | Monitor - Watcher | Rapid file modifications may batch events in notify | Low | Expected behavior of OS file system | Open |
 | BUG-007 | Monitor - Sender | Retry delay jitter could theoretically add up to 100% variance | Low | Jitter limited to ±25%, acceptable | Open |
+| BUG-008 | Client - Token | Token stored in localStorage is vulnerable to XSS attacks | Medium | Content Security Policy not configured, no secure storage | Open |
+| BUG-009 | Client - Connection | WebSocket token in query parameter visible in browser history | Low | Use subprotocol or custom headers instead | Open |
+| BUG-010 | Client - Events | Invalid WebSocket messages silently dropped without indication | Low | Add error boundary or error logging to UI | Open |
 
 ## Deprecated Code
 
@@ -172,6 +196,7 @@ Code marked for removal or replacement:
 |------|--------|--------|-------------|----------|--------|
 | `VIBETEA_UNSAFE_NO_AUTH` | Active | Development only, security risk | None - remove from production | Before Phase 1 ship | Required for production safety |
 | Default bearer token handling | Implemented | Basic env var with validation middleware | Enhanced token validation in routes | Phase 3 | Now enforced |
+| localStorage token storage | Experimental | Phase 7 MVP, not secure | Session-based auth or OS keychain | Phase 8+ | Client security |
 
 ## Monitoring Gaps
 
@@ -191,6 +216,8 @@ Areas lacking proper observability:
 | Privacy filtering | What events were filtered and why | Audit privacy decisions | Medium | Add structured logging to privacy pipeline |
 | Event transmission | Monitor → server latency and success rate | Can't track delivery reliability | High | Add metrics to sender module |
 | Crypto operations | Signature generation time and failures | Can't detect crypto bottlenecks | Medium | Add instrumentation to crypto module |
+| Client connection | WebSocket connection/disconnection events | Can't track client connection stability | Medium | Add logging to useWebSocket hook (Phase 7) |
+| Token operations | Token storage/retrieval events | Audit token lifecycle | Medium | Add logging to TokenForm component (Phase 7) |
 
 ## Performance Concerns
 
@@ -210,6 +237,8 @@ Potential performance issues:
 | PERF-010 | Monitor - Privacy | Privacy pipeline processes every event | CPU overhead for context extraction | Consider lazy/on-demand processing | Low |
 | PERF-011 | Monitor - Sender | Retries may accumulate for slow server | Exponential backoff could delay recovery | Monitor server performance | Medium |
 | PERF-012 | Monitor - Sender | Event buffering uses VecDeque allocation | Memory overhead for large buffers | Consider streaming to disk on backpressure | Low |
+| PERF-013 | Client | localStorage operations on every token access | May impact performance on frequent connections | Cache token in memory during session | Low |
+| PERF-014 | Client | Full event list re-render on each event | O(N) render with 1000 events max | Implement virtual scrolling or pagination | Medium |
 
 ## Dependency Risks
 
@@ -230,6 +259,7 @@ Dependencies that may need attention:
 | anyhow | Context error handling | Error propagation via ?, no special concerns | Ongoing | Low |
 | base64 | Encoding/decoding for keys and signatures | Keep current for security patches | Ongoing | High |
 | rand | Random number generation for OsRng | Critical for key generation entropy | Ongoing | Critical |
+| react | Frontend framework, XSS surface area | Keep dependencies up-to-date | Ongoing | High |
 
 ## Improvement Opportunities
 
@@ -243,13 +273,15 @@ Areas that could benefit from refactoring or enhancement:
 | Logging | Basic tracing usage | Structured JSON logging with context | Better observability | Low |
 | Testing | Unit tests comprehensive | Additional integration tests for auth flows | Regression prevention | Medium |
 | Documentation | Code comments present | Inline security considerations | Better review | Low |
-| Client auth | Token in env variable | Secure token storage and refresh | Better client UX | High |
+| Client auth | Token in localStorage | Secure token storage and refresh | Better client UX | High |
 | Event filtering | Broadcast to all | Per-client filtered streams | Better security and performance | High |
 | File monitoring | Reactive to changes | Proactive verification of privacy | User trust | High |
 | Parser resilience | Skips malformed lines silently | User feedback on parsing issues | Better diagnostics | Low |
 | Privacy audit | Basic test coverage | Comprehensive integration tests with real Claude Code logs | User confidence | Medium |
 | Sender integration | Mocked tests only | End-to-end tests with real server | Production confidence | Medium |
 | Key management | File-based only | CLI support for key rotation | Better operations | Medium |
+| Token lifecycle | localStorage only | Token refresh and expiration | Better security | High |
+| WebSocket transport | Query parameter | WSS subprotocol or custom headers | Better security | Medium |
 
 ## TODO Items
 
@@ -278,6 +310,7 @@ Configuration-related issues:
 | Privacy allowlist documentation | Users may not know feature exists | Add to README and environment guide | Low | Phase 5+ |
 | Keypair generation UX | Users may not know how to init | Add to README with examples | Low | Phase 6+ |
 | Sender configuration | Default buffer/retry may not suit all | Document tuning parameters | Low | Phase 6+ |
+| Client token storage | No guidance on secure token handling | Document localStorage security implications | Low | Phase 7+ |
 
 ## Code Quality Concerns
 
@@ -296,6 +329,7 @@ Configuration-related issues:
 | Privacy verification | Extensive unit test coverage | Real-world scenario testing | Medium | Open |
 | Crypto tests | 15 comprehensive test cases present | Integration with sender, real key usage | Medium | Partial |
 | Sender tests | 15 comprehensive unit tests present | Integration tests with real server, auth verification | Medium | Partial |
+| Client components | No tests for Phase 7 components | Add unit tests for TokenForm and useWebSocket | Medium | Open |
 
 ## Security Review Checklist
 
@@ -330,8 +364,11 @@ Items to verify before production:
 - [x] HTTP sender with retry logic (Phase 6)
 - [x] Rate limit handling with Retry-After (Phase 6)
 - [x] Monitor CLI with init and run (Phase 6)
+- [ ] Client token storage properly secured (Phase 7 - localStorage only)
+- [ ] WebSocket auto-reconnect tested (Phase 7 - basic implementation)
 - [ ] Real-world Claude Code JSONL testing with privacy pipeline
 - [ ] Integration test for watcher + parser + privacy + sender pipeline
+- [ ] Integration test for client auth + WebSocket connection
 
 ## External Risk Factors
 
@@ -350,6 +387,8 @@ Items to verify before production:
 | Sensitive content in debug logs | Medium | High | Review logging for privacy | Phase 5+ |
 | Key file permissions not enforced on Windows | Low | Medium | Document platform-specific protection | Phase 6+ |
 | Sender retry storm on misconfigured server | Low | Medium | Add maximum retry cap (10 attempts) | Phase 6 |
+| XSS via localStorage token exposure | Medium | High | Implement secure token storage | Phase 7+ |
+| Token leakage in browser history/logs | Low | Medium | Use WebSocket subprotocol instead of query param | Phase 7+ |
 
 ## Phase 4 Changes Summary
 
@@ -470,6 +509,57 @@ Monitor server connection with cryptography and HTTP sender:
 - CLI provides clear user feedback during keypair generation
 - Structured logging throughout with tracing framework
 - Configuration validation before runtime
+
+## Phase 7 Changes Summary
+
+Client-side UI components for token management and connection status:
+
+**Added Components:**
+- `client/src/components/TokenForm.tsx` - Token input and storage UI (200 lines)
+- `client/src/hooks/useWebSocket.ts` - WebSocket connection with auto-reconnect (320 lines)
+- `client/src/components/ConnectionStatus.tsx` - Visual connection status indicator (106 lines)
+
+**New Client-Side Features:**
+- Token input form with password masking
+- Token storage in localStorage (`vibetea_token` key)
+- Token clearing via button
+- Cross-tab sync via storage events
+- WebSocket auto-reconnect with exponential backoff (1s → 60s, ±25% jitter)
+- Connection status visual indicator (green/yellow/red)
+- Basic event message validation
+- Zustand store integration for state management
+
+**Security Considerations:**
+- localStorage is not cryptographically secure (accessible to JavaScript)
+- Token visible in browser history, dev tools, and network tab
+- Token sent as WebSocket URL query parameter (visible in logs)
+- No token refresh or expiration mechanism
+- No schema validation of incoming events
+- No per-user event filtering
+
+**Outstanding Work:**
+- Secure token storage (OS keychain or session-based)
+- Token refresh and expiration handling
+- CSRF protection on token form
+- Event schema validation on client
+- Error handling and user feedback
+- Component unit tests
+- Integration tests with mock WebSocket server
+
+**Implementation Status:**
+- TokenForm component functional with localStorage persistence
+- useWebSocket hook implements auto-reconnect and event dispatch
+- ConnectionStatus component provides visual feedback
+- All three components integrated into React app
+- Cross-tab token sync working
+- Basic error handling via console logs
+
+**Known Issues:**
+- localStorage token not encrypted
+- Token in query parameter visible in logs
+- No client-side token expiration
+- Invalid events silently dropped
+- No user feedback for auth failures
 
 ---
 

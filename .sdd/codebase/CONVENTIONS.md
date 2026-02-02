@@ -46,11 +46,11 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Components | PascalCase | N/A (placeholder dir) |
-| Hooks | camelCase with `use` prefix | `useEventStore.ts` |
+| Components | PascalCase | `ConnectionStatus.tsx`, `TokenForm.tsx` |
+| Hooks | camelCase with `use` prefix | `useEventStore.ts`, `useWebSocket.ts` |
 | Types | PascalCase in `types/` folder | `types/events.ts` contains `VibeteaEvent` |
 | Utilities | camelCase | `utils/` exists (placeholder) |
-| Constants | SCREAMING_SNAKE_CASE in const files | `MAX_EVENTS = 1000` |
+| Constants | SCREAMING_SNAKE_CASE in const files | `MAX_EVENTS = 1000`, `TOKEN_STORAGE_KEY` |
 | Test files | Same as source + `.test.ts` | `__tests__/events.test.ts` |
 | Test directories | `__tests__/` at feature level | Co-located with related source |
 
@@ -58,14 +58,15 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Variables | camelCase | `sessionId`, `eventCount` |
-| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `DEFAULT_BUFFER_SIZE` |
-| Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()` |
+| Variables | camelCase | `sessionId`, `eventCount`, `wsRef`, `connectRef` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `DEFAULT_BUFFER_SIZE`, `TOKEN_STORAGE_KEY` |
+| Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()`, `parseEventMessage()`, `calculateBackoff()` |
 | Classes | PascalCase (rare in modern React) | N/A |
-| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent` |
-| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus` |
+| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent`, `UseWebSocketReturn`, `ConnectionStatusProps` |
+| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus`, `TokenStatus` |
 | Type guards | `is` prefix | `isSessionEvent()`, `isValidEventType()` |
 | Enums | PascalCase | N/A (use union types instead) |
+| Refs | camelCase with `Ref` suffix | `wsRef`, `reconnectTimeoutRef`, `connectRef` |
 
 ### Rust/Server/Monitor
 
@@ -99,6 +100,8 @@ Client error handling uses:
 - Try/catch for async operations
 - Type guards for runtime validation (e.g., `isValidEventType()`)
 - Discriminated unions for safe event handling (see Common Patterns section)
+- Null checks with explicit error paths (e.g., `parseEventMessage()` returns `null` on invalid input)
+- Console logging for error visibility (e.g., `console.error()`, `console.warn()`)
 
 #### Rust/Server
 
@@ -232,6 +235,14 @@ The `tracing` crate is used for structured logging across async Rust code:
 
 **Note**: Logging is initialized using `tracing_subscriber` with `EnvFilter` to control verbosity via `RUST_LOG` environment variable.
 
+In TypeScript, use console methods with contextual prefixes:
+
+```typescript
+console.warn('[useWebSocket] No authentication token found in localStorage');
+console.error('[useWebSocket] Connection error:', event);
+console.error('[useWebSocket] Failed to create WebSocket:', error);
+```
+
 ## Common Patterns
 
 ### Event-Driven Architecture
@@ -317,6 +328,203 @@ export function selectActiveSessions(state: EventStore): Session[] {
   return Array.from(state.sessions.values()).filter(s => s.status !== 'ended');
 }
 ```
+
+### React Hook Pattern (TypeScript - Phase 7)
+
+Custom React hooks follow a structured pattern with refs, callbacks, and effects:
+
+**From `useWebSocket.ts`** (Phase 7):
+
+```typescript
+/**
+ * WebSocket connection hook with auto-reconnect and exponential backoff.
+ *
+ * Manages WebSocket lifecycle and automatically dispatches received events
+ * to the event store. Supports manual connection control and automatic
+ * reconnection with exponential backoff (1s initial, 60s max, ±25% jitter).
+ */
+export function useWebSocket(url?: string): UseWebSocketReturn {
+  // Refs for persistent values across renders
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef<number>(0);
+  const shouldReconnectRef = useRef<boolean>(true);
+
+  // Get store selectors and actions
+  const addEvent = useEventStore((state) => state.addEvent);
+  const setStatus = useEventStore((state) => state.setStatus);
+
+  // Callbacks for event handlers
+  const connect = useCallback(() => {
+    // Establish connection logic
+  }, [dependencies]);
+
+  const disconnect = useCallback(() => {
+    // Cleanup logic
+  }, [dependencies]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      // Cleanup resources
+    };
+  }, [dependencies]);
+
+  return { connect, disconnect, isConnected: status === 'connected' };
+}
+```
+
+Key patterns:
+1. **Refs**: Use for WebSocket instance, timers, and mutable state that shouldn't trigger re-renders
+2. **Callbacks**: Wrap event handlers in `useCallback` to prevent infinite effect loops
+3. **Effects**: Handle setup/cleanup, reconnection scheduling, and external subscriptions
+4. **Derived state**: Return computed values like `isConnected: status === 'connected'`
+5. **Documentation**: Include JSDoc with examples showing usage patterns
+
+### React Component Pattern (TypeScript - Phase 7)
+
+Functional components follow a consistent structure:
+
+**From `ConnectionStatus.tsx`** (Phase 7):
+
+```typescript
+/**
+ * Props for the ConnectionStatus component.
+ */
+interface ConnectionStatusProps {
+  /** Whether to show the status text label. Defaults to false. */
+  readonly showLabel?: boolean;
+  /** Additional CSS classes to apply to the container. */
+  readonly className?: string;
+}
+
+/**
+ * Displays the current WebSocket connection status.
+ *
+ * Uses selective Zustand subscription to only re-render when status changes,
+ * preventing unnecessary updates during high-frequency event streams.
+ */
+export function ConnectionStatus({
+  showLabel = false,
+  className = '',
+}: ConnectionStatusProps) {
+  // Selective subscription: only re-render when status changes
+  const status = useEventStore((state) => state.status);
+
+  const config = STATUS_CONFIG[status];
+
+  return (
+    <div className={`inline-flex items-center gap-2 ${className}`}>
+      {/* Component JSX */}
+    </div>
+  );
+}
+```
+
+Key patterns:
+1. **Props interface**: Define props with JSDoc annotations for optional fields and defaults
+2. **Selective subscriptions**: Use Zustand selectors to minimize re-renders
+3. **Constants**: Define configuration objects outside components (e.g., `STATUS_CONFIG`)
+4. **Accessibility**: Include ARIA attributes and semantic roles
+5. **Tailwind classes**: Use utility-first approach for styling
+
+### Form Handling Pattern (TypeScript - Phase 7)
+
+Form components manage state and handle submissions:
+
+**From `TokenForm.tsx`** (Phase 7):
+
+```typescript
+/**
+ * Form for managing the authentication token.
+ *
+ * Provides a password input for entering the token, with save and clear buttons.
+ * Token is persisted to localStorage for use by the WebSocket connection.
+ */
+export function TokenForm({
+  onTokenChange,
+  className = '',
+}: TokenFormProps) {
+  // State management
+  const [tokenInput, setTokenInput] = useState<string>('');
+  const [status, setStatus] = useState<TokenStatus>(() =>
+    hasStoredToken() ? 'saved' : 'not-saved'
+  );
+
+  // Listen to storage changes from other tabs
+  useEffect(() => {
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === TOKEN_STORAGE_KEY) {
+        setStatus(event.newValue !== null ? 'saved' : 'not-saved');
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
+  // Event handlers with proper types
+  const handleSave = useCallback(
+    (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmedToken = tokenInput.trim();
+      if (trimmedToken === '') return;
+
+      localStorage.setItem(TOKEN_STORAGE_KEY, trimmedToken);
+      setStatus('saved');
+      setTokenInput('');
+      onTokenChange?.();
+    },
+    [tokenInput, onTokenChange]
+  );
+
+  return (
+    <form onSubmit={handleSave}>
+      {/* Form fields */}
+    </form>
+  );
+}
+```
+
+Key patterns:
+1. **useState with lazy init**: Use callback for initialization based on localStorage
+2. **useCallback dependencies**: Include all dependencies to prevent stale closures
+3. **Event types**: Use React event types like `React.FormEvent<HTMLFormElement>`
+4. **Optional callbacks**: Use optional chaining with callbacks (`onTokenChange?.()`)
+5. **localStorage handling**: Abstract into helper functions (e.g., `hasStoredToken()`)
+6. **Cross-tab sync**: Listen to `storage` events for multi-tab consistency
+
+### Exponential Backoff Pattern (TypeScript - Phase 7)
+
+Implement reconnection delays with jitter:
+
+**From `useWebSocket.ts`** (Phase 7):
+
+```typescript
+/**
+ * Calculate reconnection delay with exponential backoff and jitter.
+ *
+ * @param attempt - Current reconnection attempt number (0-indexed)
+ * @returns Delay in milliseconds with jitter applied
+ */
+function calculateBackoff(attempt: number): number {
+  // Exponential backoff: initial * 2^attempt, capped at max
+  const exponentialDelay = Math.min(
+    INITIAL_BACKOFF_MS * Math.pow(2, attempt),
+    MAX_BACKOFF_MS
+  );
+
+  // Apply jitter: ±25% randomization
+  const jitter = 1 + (Math.random() * 2 - 1) * JITTER_FACTOR;
+
+  return Math.round(exponentialDelay * jitter);
+}
+```
+
+Constants match Rust implementation:
+- `INITIAL_BACKOFF_MS = 1000` (1 second)
+- `MAX_BACKOFF_MS = 60000` (60 seconds)
+- `JITTER_FACTOR = 0.25` (±25% randomization)
 
 ### Configuration Pattern (Rust)
 
@@ -646,6 +854,23 @@ Standard import order (enforced conceptually, no linter config):
 3. Relative imports (`./App`, `../sibling`)
 4. Type imports (`import type { ... }`)
 
+Example from `useWebSocket.ts` (Phase 7):
+
+```typescript
+import { useCallback, useEffect, useRef } from 'react';
+
+import type { VibeteaEvent } from '../types/events';
+import { useEventStore } from './useEventStore';
+```
+
+Example from `ConnectionStatus.tsx` (Phase 7):
+
+```typescript
+import { useEventStore } from '../hooks/useEventStore';
+
+import type { ConnectionStatus as ConnectionStatusType } from '../hooks/useEventStore';
+```
+
 Example from `useEventStore.ts`:
 
 ```typescript
@@ -713,6 +938,36 @@ use vibetea_monitor::sender::{Sender, SenderConfig};
 | Section dividers | Logically group related code | `// -------` comment blocks |
 | TODO | Planned work | `// TODO: description` |
 | FIXME | Known issues | `// FIXME: description` |
+
+Example from `useWebSocket.ts` (Phase 7):
+
+```typescript
+/**
+ * WebSocket connection hook for VibeTea client.
+ *
+ * Provides WebSocket connection management with automatic reconnection
+ * using exponential backoff. Integrates with useEventStore for event dispatch.
+ */
+
+/**
+ * Calculate reconnection delay with exponential backoff and jitter.
+ *
+ * @param attempt - Current reconnection attempt number (0-indexed)
+ * @returns Delay in milliseconds with jitter applied
+ */
+function calculateBackoff(attempt: number): number {
+  // Exponential backoff: initial * 2^attempt, capped at max
+  const exponentialDelay = Math.min(
+    INITIAL_BACKOFF_MS * Math.pow(2, attempt),
+    MAX_BACKOFF_MS
+  );
+
+  // Apply jitter: ±25% randomization
+  const jitter = 1 + (Math.random() * 2 - 1) * JITTER_FACTOR;
+
+  return Math.round(exponentialDelay * jitter);
+}
+```
 
 Example from `useEventStore.ts`:
 
@@ -946,6 +1201,11 @@ Format: `type(scope): description`
 | refactor | Code restructure | `refactor(config): simplify validation` |
 | test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
+
+Examples with Phase 7:
+- `feat(client): add WebSocket connection hook with auto-reconnect`
+- `feat(client): add connection status indicator component`
+- `feat(client): add token form for authentication`
 
 Examples with Phase 6:
 - `feat(monitor): implement CLI with init and run commands`

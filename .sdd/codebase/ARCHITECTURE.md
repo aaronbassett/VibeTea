@@ -1,6 +1,6 @@
 # Architecture
 
-**Status**: Phase 6 incremental update - Monitor crypto, sender, and CLI modules
+**Status**: Phase 7 incremental update - Client WebSocket, authentication, and status components
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -10,7 +10,7 @@ VibeTea is a three-tier real-time event streaming system with clear separation o
 
 - **Monitor** (Rust): Event producer that watches Claude Code session files and captures activity with privacy guarantees
 - **Server** (Rust): Event hub that authenticates monitors and broadcasts to clients
-- **Client** (TypeScript/React): Event consumer that displays sessions and activities
+- **Client** (TypeScript/React): Event consumer that displays sessions and activities with WebSocket connection management
 
 The system follows a hub-and-spoke pattern where monitors are trusted publishers and clients are passive subscribers. All communication is event-driven with no persistent state required on the server.
 
@@ -27,6 +27,8 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 | **Privacy Pipeline** | Multi-stage data sanitization ensuring no sensitive data leaves the monitor (Phase 5) |
 | **Command-Line Interface** | Monitor CLI with `init` and `run` subcommands for key generation and daemon execution (Phase 6) |
 | **Event Buffering** | Monitor buffers events in memory (1000 max, FIFO) before batch transmission with exponential backoff retry (Phase 6) |
+| **Client Connection Management** | WebSocket hook with auto-reconnect, exponential backoff, and bearer token authentication (Phase 7) |
+| **Client State Management** | Zustand store for event buffer and session aggregation with selective subscriptions (Phase 7) |
 
 ## Core Components
 
@@ -466,6 +468,249 @@ monitor/src/
 - HTTP event transmission with buffering and exponential backoff retry (Phase 6)
 - Graceful shutdown with event flush timeout (Phase 6)
 
+### Client WebSocket Connection Hook
+
+**Purpose**: Manage WebSocket lifecycle with automatic reconnection and bearer token authentication
+**Location**: `client/src/hooks/useWebSocket.ts`
+**Responsibility**: Connection management, reconnection logic, event message parsing and dispatch
+
+**Phase 7 New - WebSocket Hook Pattern**:
+
+The hook provides automatic connection management with exponential backoff reconnection:
+
+**Connection Management**:
+- `connect()` - Establish WebSocket connection
+  - Validates token from localStorage before connecting
+  - Prevents multiple simultaneous connection attempts
+  - Sets connection status to 'connecting' or 'connected'
+- `disconnect()` - Graceful disconnection
+  - Disables auto-reconnect flag
+  - Clears pending reconnection timeouts
+  - Closes WebSocket if open
+  - Sets status to 'disconnected'
+
+**Reconnection Strategy**:
+- Exponential backoff: 1s initial, 2^attempt formula, capped at 60s
+- Jitter: ±25% randomization to prevent thundering herd
+- Automatic reconnection on connection loss
+- Manual disconnect disables auto-reconnect
+- Reconnect attempt counter resets on successful connection
+
+**Token Authentication**:
+- Bearer token stored in localStorage (key: `vibetea_token`)
+- Token included in WebSocket URL as query parameter
+- Token validation occurs before connection attempt
+- If token missing, logs warning and sets status to 'disconnected'
+
+**Event Message Handling**:
+- Parses incoming WebSocket messages as VibeteaEvent JSON
+- Basic structural validation (id, source, timestamp, type, payload fields)
+- Dispatches valid events to useEventStore via `addEvent()`
+- Silently discards invalid/malformed messages (logs nothing)
+
+**Connection Status States**:
+- `'connecting'` - WebSocket creation initiated, handshake in progress
+- `'connected'` - WebSocket open, connection established
+- `'disconnecting'` - (implicit, no separate state)
+- `'disconnected'` - WebSocket closed or never connected
+- `'reconnecting'` - Auto-reconnect scheduled after connection loss
+
+**Key Functions**:
+- `calculateBackoff(attempt)` - Compute exponential delay with jitter
+- `buildWebSocketUrl(baseUrl, token)` - Add token as query parameter
+- `getDefaultUrl()` - Construct URL from current window location (ws:// or wss://)
+- `parseEventMessage(data)` - Parse and validate incoming JSON message
+
+**Key Types**:
+- `UseWebSocketReturn` - Hook return interface with connect, disconnect, isConnected
+- Constants: INITIAL_BACKOFF_MS (1000), MAX_BACKOFF_MS (60000), JITTER_FACTOR (0.25)
+
+**Example Usage**:
+```tsx
+function EventMonitor() {
+  const { connect, disconnect, isConnected } = useWebSocket();
+
+  useEffect(() => {
+    connect();
+    return () => disconnect();
+  }, [connect, disconnect]);
+
+  return <div>Status: {isConnected ? 'Connected' : 'Disconnected'}</div>;
+}
+```
+
+**Memory Management**:
+- Uses React useRef for WebSocket and timeout references
+- Cleanup on unmount: closes WebSocket, clears timeouts, disables reconnect
+- Prevents memory leaks through proper ref cleanup
+
+### Client State Management Hook
+
+**Purpose**: Centralized Zustand store for event buffer and session aggregation
+**Location**: `client/src/hooks/useEventStore.ts`
+**Responsibility**: Event state management with session aggregation and selective subscriptions
+
+**Phase 7 Integration**:
+
+The Zustand store manages WebSocket events with session-level aggregation:
+
+**Store State**:
+- `status` - Current connection status (connecting, connected, disconnected, reconnecting)
+- `events` - Event buffer (last 1000 events, newest first, FIFO eviction)
+- `sessions` - Session map keyed by sessionId, tracking project, activity, event count
+
+**Actions**:
+- `addEvent(event)` - Add event to buffer, update session state
+  - Enforces FIFO eviction when buffer exceeds 1000 events
+  - Creates new session entry on first event
+  - Updates session with latest project, timestamp, status, event count
+  - Marks session as 'ended' on summary event type
+- `setStatus(status)` - Update connection status
+- `clearEvents()` - Clear event buffer and sessions (for testing/reset)
+
+**Selector Utilities**:
+- `selectEventsBySession(state, sessionId)` - Get events for specific session
+- `selectActiveSessions(state)` - Get sessions with status !== 'ended'
+- `selectSession(state, sessionId)` - Get single session by ID
+
+**Key Types**:
+- `ConnectionStatus` - Union: 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
+- `Session` - Contains sessionId, source, project, startedAt, lastEventAt, status, eventCount
+- `EventStore` - Full state and action interface
+
+**Performance Optimization**:
+- Selective subscriptions: components subscribe to specific fields (e.g., `state.status`)
+- Prevents re-renders when other fields update
+- Map-based session storage for O(1) lookups
+- Event buffer limited to 1000 to prevent unbounded memory growth
+
+**Example Usage**:
+```tsx
+// Subscribe to status only (re-renders only on status change)
+const status = useEventStore((state) => state.status);
+
+// Subscribe to events only
+const events = useEventStore((state) => state.events);
+
+// Get actions (don't trigger re-renders)
+const addEvent = useEventStore((state) => state.addEvent);
+const setStatus = useEventStore((state) => state.setStatus);
+```
+
+### Client Connection Status Component
+
+**Purpose**: Visual indicator of WebSocket connection state
+**Location**: `client/src/components/ConnectionStatus.tsx`
+**Responsibility**: Display connection status with colored indicator and optional label
+
+**Phase 7 New - Status Component**:
+
+Provides visual feedback for WebSocket connection state:
+
+**Display States**:
+- `'connected'` - Green dot with "Connected" label
+- `'connecting'` - Yellow dot with "Connecting" label
+- `'reconnecting'` - Yellow dot with "Reconnecting" label
+- `'disconnected'` - Red dot with "Disconnected" label
+
+**Props**:
+- `showLabel` (boolean, default false) - Whether to display status text
+- `className` (string, default '') - Additional CSS classes for container
+
+**Styling**:
+- Inline flex layout with gap-2
+- Tailwind classes: bg-green-500, bg-yellow-500, bg-red-500 for status
+- Responsive typography for labels
+- ARIA attributes for accessibility (role="status", aria-label with status)
+
+**Performance**:
+- Selective Zustand subscription to `state.status` only
+- Prevents re-renders during high-frequency event streams
+- Memoized STATUS_CONFIG mapping for O(1) lookups
+
+**Accessibility**:
+- `role="status"` announces dynamic status changes
+- `aria-label` provides description for screen readers
+- `aria-hidden="true"` on decorative dot
+
+**Example Usage**:
+```tsx
+// Compact indicator only
+<ConnectionStatus />
+
+// With status text
+<ConnectionStatus showLabel />
+
+// With custom positioning
+<ConnectionStatus className="absolute top-4 right-4" showLabel />
+```
+
+### Client Token Input Form Component
+
+**Purpose**: Manage WebSocket authentication token with persistent storage
+**Location**: `client/src/components/TokenForm.tsx`
+**Responsibility**: Token input, validation, persistence, and lifecycle management
+
+**Phase 7 New - Token Form Component**:
+
+Provides UI for managing authentication tokens with localStorage integration:
+
+**Functionality**:
+- Save token to localStorage (key: `vibetea_token`)
+- Clear token from localStorage
+- Display token save status (saved/not-saved)
+- Cross-tab awareness: updates when token changes in another tab
+- Optional callback on token change for reconnection
+
+**Props**:
+- `onTokenChange` (callback, optional) - Called after token save or clear
+- `className` (string, default '') - Additional CSS classes
+
+**Form Fields**:
+- Password input for token entry
+- Placeholder changes based on save status ("Enter new token" vs "Enter your token")
+- Autocomplete disabled to prevent browser leaking tokens
+- Auto-clear input after save
+
+**Status Indicator**:
+- Green dot + "Token saved" when localStorage has token
+- Gray dot + "No token saved" when localStorage empty
+- Updates immediately on save/clear
+- Listens to storage events for cross-tab changes
+
+**Buttons**:
+- "Save Token" - Enabled when input not empty, disabled when input empty
+- "Clear" - Enabled when token saved, disabled when empty
+- Both buttons have hover effects and focus rings
+
+**Styling**:
+- Dark theme with Tailwind classes
+- Form layout with spacing and labels
+- Button states: hover, active, disabled, focus
+- Password input with focus ring styling
+
+**Storage Integration**:
+- Reads/writes to `localStorage.getItem('vibetea_token')`
+- Listens for storage events (cross-tab sync)
+- Trims whitespace from input
+- Validates non-empty before save
+
+**Example Usage**:
+```tsx
+function Settings() {
+  const { connect } = useWebSocket();
+
+  return (
+    <TokenForm
+      onTokenChange={() => {
+        // Reconnect when token changes
+        connect();
+      }}
+    />
+  );
+}
+```
+
 ### Client Component
 
 **Purpose**: Subscribes to server events, displays sessions and activities
@@ -474,7 +719,10 @@ monitor/src/
 
 **Key Modules**:
 - `types/events.ts` - TypeScript definitions matching Rust types with type guards
-- `hooks/useEventStore.ts` - Zustand store for event state management
+- `hooks/useEventStore.ts` - Zustand store for event state management (Phase 7)
+- `hooks/useWebSocket.ts` - WebSocket connection hook with auto-reconnect (Phase 7)
+- `components/ConnectionStatus.tsx` - Connection status visual indicator (Phase 7)
+- `components/TokenForm.tsx` - Token input and persistence form (Phase 7)
 - `App.tsx` - Root component (Phase 3 placeholder)
 - `main.tsx` - React entry point
 
@@ -567,25 +815,37 @@ Authenticated Event
         ↓
    Client (TypeScript)
         ↓
-   Zustand Store Update
+   WebSocket Message Event
         ↓
-   Session Aggregation
+   useWebSocket Hook
         ↓
-   Component Re-render
+   parseEventMessage() validates JSON
+        ↓
+   addEvent() dispatches to Zustand store
+        ↓
+   useEventStore updates state
+        ↓
+   Session aggregation (create/update session)
+        ↓
+   Component re-render (selective subscription)
         ↓
    Display in UI
 ```
 
-**Flow Steps**:
-1. Route handler accepts and validates events
-2. EventBroadcaster sends event to all active WebSocket subscriptions
-3. WebSocket handler forwards event to client
-4. Client's event listener receives WebSocket message
-5. SubscriberFilter matches event against connection criteria
-6. Event is added to Zustand store
-7. Store performs session aggregation
-8. Components subscribed to store state re-render
-9. UI displays updated sessions and activities
+**Flow Steps (Phase 7 Client)**:
+1. Server's EventBroadcaster sends event to all WebSocket subscriptions
+2. Client WebSocket receives message with serialized event JSON
+3. useWebSocket hook's `onmessage` handler is triggered
+4. `parseEventMessage()` validates incoming message structure
+5. If valid, `addEvent()` is called, dispatching to Zustand store
+6. `useEventStore.addEvent()` processes event:
+   - Adds to event buffer (oldest evicted if >1000)
+   - Creates or updates session entry
+   - Updates session project, timestamps, status
+7. Zustand triggers selective notifications to subscribers
+8. Components subscribed to specific fields re-render (e.g., ConnectionStatus on status change)
+9. Event components re-render and display updated sessions/activities
+10. Unused subscriptions remain stable (no re-render)
 
 ## Layer Boundaries
 
@@ -601,7 +861,9 @@ Authenticated Event
 | **Monitor Privacy Pipeline** | Event payload sanitization | Types (EventPayload) | Filesystem, auth, server communication |
 | **Monitor Cryptographic** | Keypair management, message signing | types (public key format) | Sender (crypto is stateless) |
 | **Monitor Sender** | HTTP transmission, buffering, retry logic | Config (server URL), Crypto (signing), Types (events) | Filesystem, watcher, parser directly |
-| **Client Component** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
+| **Client WebSocket Hook** | Connection management, reconnection, message parsing | localStorage (token), Browser WebSocket API | Direct component state |
+| **Client Event Store** | State management, session aggregation, selective subscriptions | Event types | Direct API calls, localStorage (read-only) |
+| **Client Components** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
 
 ## Dependency Rules
 
@@ -617,6 +879,9 @@ Authenticated Event
 - **Crypto is stateless**: Crypto module has no mutable state, pure signing operations
 - **Sender owns buffering**: Only sender manages event queue, other modules queue through sender interface
 - **CLI bootstraps all**: main.rs coordinates config, crypto, sender, watcher, parser initialization
+- **Client WebSocket manages connection**: Only useWebSocket hook manages WebSocket instance and reconnection
+- **Store owns event state**: Only useEventStore manages events and sessions, not individual components
+- **Token managed separately**: Authentication token kept in localStorage, accessed by useWebSocket and TokenForm
 
 ## Key Interfaces & Contracts
 
@@ -798,6 +1063,70 @@ pub enum SenderError {
 - `101 Switching Protocols` - WebSocket upgrade successful
 - `401 Unauthorized` - Invalid or missing token
 
+**Message Format** (server → client, text frames):
+```json
+{
+  "id": "evt_...",
+  "source": "monitor-1",
+  "timestamp": "2026-02-02T14:30:00Z",
+  "type": "tool",
+  "payload": { ... }
+}
+```
+
+### Client WebSocket Hook Contract (Phase 7)
+
+**TypeScript Interface**:
+```typescript
+export interface UseWebSocketReturn {
+  readonly connect: () => void;      // Manually establish connection
+  readonly disconnect: () => void;   // Gracefully disconnect
+  readonly isConnected: boolean;     // Current connection status
+}
+
+export function useWebSocket(url?: string): UseWebSocketReturn
+```
+
+**Usage Pattern**:
+```tsx
+const { connect, disconnect, isConnected } = useWebSocket();
+
+// On mount
+useEffect(() => {
+  connect();
+  return () => disconnect();
+}, [connect, disconnect]);
+```
+
+### Client Event Store Contract (Phase 7)
+
+**TypeScript Interface**:
+```typescript
+export interface EventStore {
+  readonly status: ConnectionStatus;
+  readonly events: readonly VibeteaEvent[];
+  readonly sessions: Map<string, Session>;
+
+  readonly addEvent: (event: VibeteaEvent) => void;
+  readonly setStatus: (status: ConnectionStatus) => void;
+  readonly clearEvents: () => void;
+}
+
+export const useEventStore = create<EventStore>()((set) => ({ ... }));
+```
+
+**Selective Subscription Pattern**:
+```tsx
+// Only re-render when status changes
+const status = useEventStore((state) => state.status);
+
+// Only re-render when events change
+const events = useEventStore((state) => state.events);
+
+// Get actions (don't trigger re-renders)
+const addEvent = useEventStore((state) => state.addEvent);
+```
+
 ## State Management
 
 | State Type | Location | Pattern | Scope |
@@ -811,14 +1140,17 @@ pub enum SenderError {
 | **Event Send Buffer** | Sender (VecDeque) | FIFO queue, max 1000, oldest evicted | Monitor session lifetime |
 | **Retry State** | Sender (current_retry_delay) | Exponential backoff, reset on success | Sender instance lifetime |
 | **Keypair** | Crypto (SigningKey) | Immutable after creation | Monitor process lifetime |
-| **Client State** | Zustand store | Event buffer + session derivation | Client session lifetime |
+| **Client WebSocket Instance** | useWebSocket Hook (ref) | Single WS per hook instance | Hook lifetime |
+| **Client Events** | Zustand store | Event buffer + session derivation | Client session lifetime |
+| **Client Connection Status** | Zustand store | Discrete state enum | Until disconnect |
+| **Client Authentication Token** | Browser localStorage | Persisted between sessions | User clears or overwrites |
 
 ## Cross-Cutting Concerns
 
 | Concern | Implementation | Location |
 |---------|----------------|----------|
 | **Error Handling** | Result types with ErrorResponse JSON | `routes.rs` (error_to_response pattern) |
-| **Authentication** | Ed25519 for monitors, bearer tokens for clients | `auth.rs` |
+| **Authentication** | Ed25519 for monitors, bearer tokens for clients | `auth.rs` (monitors), client localStorage (clients) |
 | **Rate Limiting** | Token bucket per source | `rate_limit.rs` |
 | **Logging** | Structured JSON logging with tracing | `main.rs` (init_logging) + route handlers |
 | **Graceful Shutdown** | Signal handling (SIGTERM/SIGINT) with timeout | `main.rs` (shutdown_signal) |
@@ -830,6 +1162,9 @@ pub enum SenderError {
 | **Event Transmission** | HTTP POST with buffering and retry logic | `sender.rs` (Phase 6) |
 | **Key Generation** | Ed25519 keypair generation and storage | `crypto.rs` (Phase 6) |
 | **CLI Interface** | Command parsing and daemon bootstrapping | `main.rs` (Phase 6) |
+| **Client Connection Management** | WebSocket reconnection with exponential backoff | `useWebSocket.ts` (Phase 7) |
+| **Client State Persistence** | Token storage in localStorage | `TokenForm.tsx` (Phase 7) |
+| **Client UI Rendering** | Selective Zustand subscriptions | `ConnectionStatus.tsx`, `TokenForm.tsx` (Phase 7) |
 
 ## Testing Strategy
 
@@ -864,6 +1199,12 @@ pub enum SenderError {
 - Configuration tests
 - Buffer state tests
 
+**Client Tests**: Located in `client/src/__tests__/`
+- Event type guard tests (events.test.ts)
+- WebSocket hook tests (useWebSocket integration, reconnection logic)
+- Event store tests (useEventStore session aggregation)
+- Component tests (ConnectionStatus, TokenForm)
+
 **Integration Tests**: Located in `server/tests/unsafe_mode_test.rs`
 - End-to-end scenarios in unsafe mode (auth disabled)
 
@@ -874,6 +1215,7 @@ cargo test --package vibetea-server routes  # Route tests only
 cargo test --package vibetea-monitor  # All monitor tests
 cargo test --package vibetea-monitor crypto  # Crypto tests only
 cargo test --package vibetea-monitor privacy  # Privacy tests only
+npm test --prefix client  # Client tests
 cargo test --workspace --test-threads=1  # All tests with single thread (important for env vars)
 ```
 

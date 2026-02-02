@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 6 Implementation - CLI, cryptographic signing, and HTTP sender modules
+**Status**: Phase 7 Implementation - Client WebSocket connection, authentication UI, automatic reconnection
 **Last Updated**: 2026-02-02
 
 ## Languages & Runtimes
@@ -138,7 +138,10 @@
 
 ### Client (`client/src`)
 - `components/` - React components
+  - `ConnectionStatus.tsx` - **Phase 7**: Visual WebSocket connection status indicator
+  - `TokenForm.tsx` - **Phase 7**: Token management and persistence UI
 - `hooks/useEventStore.ts` - Zustand store for WebSocket event state with selective subscriptions
+- `hooks/useWebSocket.ts` - **Phase 7**: WebSocket connection management with auto-reconnect
 - `types/events.ts` - Event type definitions with discriminated union types matching Rust schema
 - `utils/` - Utility functions
 - `App.tsx` - Root component
@@ -298,6 +301,53 @@
 - Structured error handling throughout
 - Constant-time signature operations via ed25519-dalek
 
+## Phase 7 Additions
+
+**Client WebSocket Hook** (`client/src/hooks/useWebSocket.ts` - 321 lines):
+- **useWebSocket()**: Custom React hook for WebSocket management
+- **Auto-reconnection**: Exponential backoff (1s initial, 60s max, ±25% jitter)
+- **Connection state**: Tracks connecting, connected, reconnecting, disconnected states
+- **Token management**: Reads authentication token from localStorage
+- **Event dispatch**: Integrates with Zustand event store via `addEvent()`
+- **Manual control**: Provides `connect()` and `disconnect()` methods
+- **Message parsing**: Validates incoming messages as VibeteaEvent type
+- **Error handling**: Logs connection errors, gracefully handles message failures
+- **Cleanup**: Proper teardown on unmount with timeout clearing
+- **Connection status**: Returns `isConnected` boolean for UI binding
+
+**Connection Status Component** (`client/src/components/ConnectionStatus.tsx` - 106 lines):
+- **Visual indicator**: Colored dot showing connection state
+- **Status colors**: Green (connected), Yellow (connecting/reconnecting), Red (disconnected)
+- **Optional label**: Shows status text ("Connected", "Connecting", "Reconnecting", "Disconnected")
+- **Selective subscription**: Uses Zustand selector to prevent unnecessary re-renders
+- **Accessibility**: ARIA roles and labels for screen readers
+- **Configurable**: `showLabel` and `className` props for flexibility
+- **Responsive**: Tailwind CSS utility classes for styling
+
+**Token Form Component** (`client/src/components/TokenForm.tsx` - 201 lines):
+- **Token input**: Password-protected input field for authentication token
+- **Local storage**: Persists token to localStorage with `TOKEN_STORAGE_KEY`
+- **Save/Clear buttons**: User can save new token or clear existing one
+- **Status indicator**: Visual indicator showing "Token saved" or "No token saved"
+- **Form validation**: Validates input before saving (non-empty trim)
+- **Cross-window sync**: Detects token changes from other tabs via storage event
+- **Callback hook**: Optional `onTokenChange` callback to trigger reconnection
+- **Accessibility**: Labels, status roles, aria-live announcements
+- **Styling**: Tailwind CSS with dark mode support, button states (disabled/hover)
+- **Token masking**: Uses password input type to mask visible token value
+
+**Client Type Enhancements** (`client/src/types/events.ts`):
+- Complete type definitions already established in Phase 4-6
+- Includes discriminated unions, type guards, and payload mapping
+- Used by all client components for type-safe event handling
+
+**Integration Points** (Phase 7):
+- `useWebSocket()` hook reads token from TokenForm via localStorage
+- ConnectionStatus displays real-time connection state from useEventStore
+- TokenForm allows users to manage authentication before connecting
+- All components use selective Zustand subscriptions for performance
+- Proper TypeScript strict mode compliance throughout
+
 ## Not Yet Implemented
 
 - Main event loop integration (watcher, parser, privacy, crypto, sender pipeline)
@@ -306,8 +356,9 @@
 - Session persistence beyond memory
 - Request/response logging to external services
 - Enhanced error tracking
-- Automatic reconnection on WebSocket disconnection
-- Per-user authentication tokens
+- Per-user authentication tokens (beyond static bearer token)
 - Token rotation and expiration
 - Chunked event sending for high-volume sessions
 - Background task spawning for async file watching and sending
+- Session filtering/search in client UI
+- Advanced event replay and history features

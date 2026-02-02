@@ -1,6 +1,6 @@
 # Project Structure
 
-**Status**: Phase 6 incremental update - Monitor crypto, sender, and CLI modules
+**Status**: Phase 7 incremental update - Client WebSocket, authentication, and status components
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -47,10 +47,14 @@ VibeTea/
 │   │   ├── types/
 │   │   │   └── events.ts      # TypeScript event types (248 lines)
 │   │   ├── hooks/
-│   │   │   └── useEventStore.ts # Zustand event store (171 lines)
-│   │   ├── components/        # Feature-specific components (empty)
+│   │   │   ├── useEventStore.ts      # Zustand event store (171 lines)
+│   │   │   └── useWebSocket.ts       # WebSocket connection hook (321 lines - Phase 7 NEW)
+│   │   ├── components/
+│   │   │   ├── ConnectionStatus.tsx  # Connection status indicator (106 lines - Phase 7 NEW)
+│   │   │   └── TokenForm.tsx         # Token input form (201 lines - Phase 7 NEW)
+│   │   ├── __tests__/
+│   │   │   └── events.test.ts        # Event type guard tests
 │   │   └── utils/             # Shared utilities (empty)
-│   ├── tests/                 # Vitest unit tests (empty)
 │   ├── vite.config.ts         # Vite build configuration
 │   ├── tsconfig.json          # TypeScript configuration
 │   ├── package.json           # Dependencies and scripts
@@ -461,6 +465,9 @@ let sanitized = pipeline.process(event);
 | `App.tsx` | Root component (placeholder) | 7 |
 | `types/events.ts` | TypeScript event type definitions with type guards | 248 |
 | `hooks/useEventStore.ts` | Zustand store for event state and session management | 171 |
+| `hooks/useWebSocket.ts` | WebSocket connection hook with auto-reconnect (Phase 7) | 321 |
+| `components/ConnectionStatus.tsx` | Connection status visual indicator (Phase 7) | 106 |
+| `components/TokenForm.tsx` | Token input and persistence form (Phase 7) | 201 |
 | `index.css` | Global styles | ~50 |
 
 **Dependencies**:
@@ -602,13 +609,51 @@ types.rs
 - `sender` ← HTTP transmission, buffering, retry logic (Phase 6 NEW)
 - `main` ← CLI parsing, daemon bootstrap, signal handling (Phase 6 NEW)
 
-### Client Module Structure
+### Client Module Structure (Phase 7)
 
 **Module Organization**:
 - `types/events.ts` - All event type definitions and type guards
 - `hooks/useEventStore.ts` - Zustand store for event state and session management
-- `components/` - Feature-specific React components (Phase 3+)
-- `utils/` - Shared utility functions (Phase 3+)
+- `hooks/useWebSocket.ts` - WebSocket connection hook with auto-reconnect (Phase 7 NEW)
+- `components/ConnectionStatus.tsx` - Connection status visual indicator (Phase 7 NEW)
+- `components/TokenForm.tsx` - Token input and persistence form (Phase 7 NEW)
+- `App.tsx` - Root component (Phase 3+)
+- `main.tsx` - React entry point
+
+**Module Dependencies (Phase 7)**:
+```
+App.tsx
+  ├── uses: useWebSocket, useEventStore, ConnectionStatus, TokenForm
+  └── provides: Root component
+
+useWebSocket.ts (Phase 7 NEW)
+  ├── uses: types (VibeteaEvent), hooks (useEventStore)
+  └── provides: WebSocket connection management, auto-reconnect
+
+ConnectionStatus.tsx (Phase 7 NEW)
+  ├── uses: hooks (useEventStore for status subscription)
+  └── provides: Visual status indicator component
+
+TokenForm.tsx (Phase 7 NEW)
+  ├── uses: browser localStorage, React hooks
+  └── provides: Token input and persistence UI
+
+useEventStore.ts
+  ├── uses: types (VibeteaEvent)
+  └── provides: Zustand store for event state and session aggregation
+
+types/events.ts
+  ├── uses: (no dependencies)
+  └── provides: VibeteaEvent, EventType, EventPayload, Session types
+```
+
+**Responsibility Separation**:
+- `types/events.ts` ← Type definitions matching Rust event schema
+- `hooks/useEventStore.ts` ← Centralized state management with session aggregation
+- `hooks/useWebSocket.ts` (Phase 7) ← WebSocket lifecycle and auto-reconnect logic
+- `components/ConnectionStatus.tsx` (Phase 7) ← Visual connection status display
+- `components/TokenForm.tsx` (Phase 7) ← Token input and localStorage management
+- `App.tsx` ← Root component orchestration (Phase 3+)
 
 ## Where to Add New Code
 
@@ -626,11 +671,15 @@ types.rs
 | CLI commands | `monitor/src/main.rs` | New Command enum variant and handler (Phase 6) |
 | Monitor main logic | `monitor/src/main.rs` | Watch directory, parse files, sanitize, send events (Phase 6+) |
 | New React component | `client/src/components/{feature}/` | `client/src/components/sessions/SessionList.tsx` |
-| New client hook | `client/src/hooks/` | `client/src/hooks/useWebSocket.ts` |
+| New client hook | `client/src/hooks/` | `client/src/hooks/useWebSocket.ts` (Phase 7), `client/src/hooks/useSession.ts` |
+| Client connection logic | `client/src/hooks/useWebSocket.ts` | Extend reconnection or message parsing (Phase 7) |
+| Client UI indicator | `client/src/components/` | Status display, error handling components (Phase 7) |
+| Client authentication | `client/src/components/` | Token form, credential management (Phase 7) |
 | New utility function | `client/src/utils/` | `client/src/utils/formatDate.ts` |
 | New type definition | `client/src/types/` | `client/src/types/api.ts` |
 | Server integration tests | `server/tests/` | `server/tests/unsafe_mode_test.rs` |
 | Monitor tests | `monitor/tests/` | `monitor/tests/privacy_test.rs` (Phase 5) |
+| Client unit tests | `client/src/__tests__/` | `client/src/__tests__/events.test.ts` |
 
 ## Import Paths
 
@@ -680,6 +729,9 @@ Example usage:
 ```typescript
 import type { VibeteaEvent } from '@types/events';
 import { useEventStore } from '@hooks/useEventStore';
+import { useWebSocket } from '@hooks/useWebSocket';
+import { ConnectionStatus } from '@components/ConnectionStatus';
+import { TokenForm } from '@components/TokenForm';
 import { formatDate } from '@utils/formatDate';
 ```
 
@@ -706,75 +758,53 @@ Files that are auto-generated or compile-time artifacts:
 | `client/dist/` | `npm run build` (Vite) | Bundled client JavaScript and CSS |
 | `Cargo.lock` | `cargo` | Dependency lock file (committed) |
 
-## Phase 6 Implementation Summary
+## Phase 7 Implementation Summary
 
-The following modules were added/updated in Phase 6 for the monitor:
+The following modules were added/updated in Phase 7 for the client:
 
-**Monitor New Modules**:
+**Client New Modules (Phase 7)**:
 
-- `src/crypto.rs` - Ed25519 keypair management and event signing (NEW - Phase 6)
-  - Crypto struct for keypair operations
-  - Key generation, storage, and loading
-  - Event signing (base64 and raw formats)
-  - Public key export for server registration
-  - Correct file permissions (0600/0644)
-  - Test cases covering all operations
+- `src/hooks/useWebSocket.ts` - WebSocket connection hook with auto-reconnect (NEW - Phase 7)
+  - Connection management (connect, disconnect)
+  - Automatic reconnection with exponential backoff (1s → 60s, ±25% jitter)
+  - Bearer token authentication from localStorage
+  - Event message parsing and validation
+  - Integration with useEventStore for event dispatch
+  - 321 lines implementing full hook
 
-- `src/sender.rs` - HTTP event transmission with resilience (NEW - Phase 6)
-  - Sender struct for event transmission
-  - VecDeque-based event buffering (FIFO eviction)
-  - Exponential backoff retry (1s → 60s with ±25% jitter)
-  - Rate limit handling (429 with Retry-After)
-  - Connection pooling via reqwest
-  - Graceful shutdown with event flush
-  - Test cases covering buffering, retry, and configuration
+- `src/components/ConnectionStatus.tsx` - Visual connection status indicator (NEW - Phase 7)
+  - Color-coded status display (green/yellow/red)
+  - Optional status text label
+  - Selective Zustand subscription for performance
+  - Accessibility features (ARIA labels, role attributes)
+  - 106 lines implementing full component
 
-- `src/main.rs` - CLI with init and run subcommands (NEW - Phase 6)
-  - Command enum for init, run, help, version
-  - parse_args() for command-line parsing
-  - run_init() for keypair generation with interactive prompt
-  - run_monitor() for daemon execution
-  - Signal handling (SIGINT/SIGTERM)
-  - Logging setup with tracing
-  - Graceful shutdown with event buffer flush
-  - 301 lines implementing full CLI
+- `src/components/TokenForm.tsx` - Token input and management form (NEW - Phase 7)
+  - Password input for token entry
+  - Save and clear buttons
+  - localStorage integration with persistence
+  - Cross-tab awareness via storage events
+  - Status indicator (saved/not-saved)
+  - Dark theme with Tailwind styling
+  - 201 lines implementing full component
 
-**Monitor Updated Modules** (Phase 6):
-- `src/lib.rs` - Updated public API
-  - Now exports crypto module
-  - Now exports sender module
-  - Exports Crypto, CryptoError, Sender, SenderConfig, SenderError types
+**Client Phase 7 Architecture**:
 
-**Monitor Phase 5 Modules** (Still in use):
-- `src/privacy.rs` - Privacy pipeline for event sanitization
-  - PrivacyConfig and PrivacyPipeline structs
-  - Multi-stage sanitization pipeline
-  - Sensitive tool detection
-  - Extension allowlist filtering
-  - Path-to-basename conversion
+The new Phase 7 client components implement a complete WebSocket-based event streaming system with:
 
-- `tests/privacy_test.rs` - Privacy compliance test suite
-  - Configuration parsing tests
-  - Extension allowlist filtering tests
-  - Path-to-basename conversion tests
-  - Sensitive tool context stripping tests
-  - All event type transformations
+1. **Connection Management**: useWebSocket hook handles WebSocket lifecycle, auto-reconnect with exponential backoff, and bearer token authentication
+2. **State Management**: useEventStore continues to manage event buffer and session state
+3. **Visual Feedback**: ConnectionStatus component shows connection state changes
+4. **Authentication UI**: TokenForm component allows users to manage their auth token
+5. **Type Safety**: All client-side events validated against Rust types
+6. **Performance**: Selective Zustand subscriptions prevent unnecessary re-renders
 
-**Monitor Phase 4 Modules** (Still in use):
-- `src/watcher.rs` - File system watching with position tracking
-  - FileWatcher using notify crate
-  - Position tracking with RwLock HashMap
-  - Recursive `.jsonl` file monitoring
+**Integration Points**:
 
-- `src/parser.rs` - JSONL parsing and normalization
-  - SessionParser for stateful parsing
-  - ParsedEventKind enum (5 event types)
-  - Claude Code event format mapping
-
-**Monitor Phase 3 Modules** (Still in use):
-- `src/config.rs` - Configuration loading
-- `src/error.rs` - Error types
-- `src/types.rs` - Event definitions
+- useWebSocket → useEventStore: Dispatches received events to store
+- TokenForm → localStorage: Persists authentication token for useWebSocket
+- ConnectionStatus → useEventStore: Displays current connection state
+- App.tsx (Phase 3+): Orchestrates all components
 
 ---
 

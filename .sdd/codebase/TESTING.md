@@ -12,6 +12,7 @@
 |------|-----------|---------------|--------|
 | Unit | Vitest | Inline in `vite.config.ts` | Ready |
 | Integration | Vitest | Inline in `vite.config.ts` | Ready |
+| Component | Vitest + React Testing Library (planned) | TBD | Not started |
 | E2E | Not selected | TBD | Not started |
 
 ### Rust/Server
@@ -66,8 +67,11 @@ client/
 │   ├── types/
 │   │   └── events.ts           # Type definitions
 │   ├── hooks/
-│   │   └── useEventStore.ts    # Zustand store
-│   ├── components/             # Placeholder (empty with .gitkeep)
+│   │   ├── useEventStore.ts    # Zustand store
+│   │   └── useWebSocket.ts     # WebSocket connection hook (Phase 7)
+│   ├── components/
+│   │   ├── ConnectionStatus.tsx # Connection indicator (Phase 7)
+│   │   └── TokenForm.tsx        # Token input form (Phase 7)
 │   ├── utils/                  # Placeholder (empty with .gitkeep)
 │   ├── App.tsx
 │   └── main.tsx
@@ -119,6 +123,9 @@ monitor/
 |-------------|-----------|
 | `src/types/events.ts` | `src/__tests__/events.test.ts` |
 | `src/hooks/useEventStore.ts` | `src/__tests__/useEventStore.test.ts` (planned) |
+| `src/hooks/useWebSocket.ts` | `src/__tests__/useWebSocket.test.ts` (planned) |
+| `src/components/ConnectionStatus.tsx` | `src/__tests__/ConnectionStatus.test.tsx` (planned) |
+| `src/components/TokenForm.tsx` | `src/__tests__/TokenForm.test.tsx` (planned) |
 | `src/App.tsx` | `src/__tests__/App.test.tsx` (planned) |
 
 **Rust**: Inline tests in same module (`#[cfg(test)] mod tests`)
@@ -201,6 +208,370 @@ Key patterns:
 2. **Type safety**: Tests use actual TypeScript types for validation
 3. **Descriptive names**: Test names describe the behavior
 4. **Arrange-Act-Assert**: Clear three-part structure (though Act and Assert often combined in simple tests)
+
+### Component Tests (TypeScript - Phase 7)
+
+Component tests validate rendering, props, and interactions using Vitest:
+
+#### Planned Test Patterns for `ConnectionStatus.tsx`
+
+```typescript
+import { describe, it, expect, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { ConnectionStatus } from '../ConnectionStatus';
+import { useEventStore } from '../../hooks/useEventStore';
+
+describe('ConnectionStatus Component', () => {
+  it('should render with connected status', () => {
+    // Mock Zustand store to return connected status
+    vi.mocked(useEventStore).mockImplementation((selector) =>
+      selector({ status: 'connected' } as any)
+    );
+
+    render(<ConnectionStatus />);
+
+    const indicator = screen.getByRole('status');
+    expect(indicator).toBeInTheDocument();
+  });
+
+  it('should show label when showLabel prop is true', () => {
+    vi.mocked(useEventStore).mockImplementation((selector) =>
+      selector({ status: 'connected' } as any)
+    );
+
+    render(<ConnectionStatus showLabel />);
+
+    expect(screen.getByText('Connected')).toBeInTheDocument();
+  });
+
+  it('should apply custom className', () => {
+    vi.mocked(useEventStore).mockImplementation((selector) =>
+      selector({ status: 'disconnected' } as any)
+    );
+
+    render(<ConnectionStatus className="custom-class" />);
+
+    const container = screen.getByRole('status');
+    expect(container).toHaveClass('custom-class');
+  });
+
+  it('should display correct color for each status', () => {
+    const statuses = ['connected', 'connecting', 'reconnecting', 'disconnected'];
+    const expectedColors = ['bg-green-500', 'bg-yellow-500', 'bg-yellow-500', 'bg-red-500'];
+
+    statuses.forEach((status, index) => {
+      vi.mocked(useEventStore).mockImplementation((selector) =>
+        selector({ status } as any)
+      );
+
+      const { unmount } = render(<ConnectionStatus />);
+
+      const dot = screen.getByRole('status').querySelector('span[aria-hidden]');
+      expect(dot).toHaveClass(expectedColors[index]);
+
+      unmount();
+    });
+  });
+});
+```
+
+Key patterns for component testing:
+1. **Mock store**: Use `vi.mock()` to mock Zustand store behavior
+2. **Render and query**: Use React Testing Library utilities
+3. **Accessibility testing**: Check ARIA roles and labels
+4. **Props validation**: Test different prop combinations
+5. **Style verification**: Verify Tailwind classes are applied
+
+#### Planned Test Patterns for `TokenForm.tsx`
+
+```typescript
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { TokenForm } from '../TokenForm';
+
+describe('TokenForm Component', () => {
+  beforeEach(() => {
+    // Clear localStorage before each test
+    localStorage.clear();
+  });
+
+  it('should render with empty input initially', () => {
+    render(<TokenForm />);
+
+    const input = screen.getByLabelText('Authentication Token');
+    expect(input).toHaveValue('');
+  });
+
+  it('should show "No token saved" when no token exists', () => {
+    render(<TokenForm />);
+
+    expect(screen.getByText('No token saved')).toBeInTheDocument();
+  });
+
+  it('should save token to localStorage on form submission', async () => {
+    const user = userEvent.setup();
+    render(<TokenForm />);
+
+    const input = screen.getByLabelText('Authentication Token');
+    const submitButton = screen.getByText('Save Token');
+
+    await user.type(input, 'test-token-123');
+    await user.click(submitButton);
+
+    expect(localStorage.getItem('vibetea_token')).toBe('test-token-123');
+    expect(screen.getByText('Token saved')).toBeInTheDocument();
+  });
+
+  it('should clear token on clear button click', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem('vibetea_token', 'existing-token');
+
+    render(<TokenForm />);
+
+    const clearButton = screen.getByText('Clear');
+    await user.click(clearButton);
+
+    expect(localStorage.getItem('vibetea_token')).toBeNull();
+    expect(screen.getByText('No token saved')).toBeInTheDocument();
+  });
+
+  it('should call onTokenChange callback when token is saved', async () => {
+    const user = userEvent.setup();
+    const onTokenChange = vi.fn();
+
+    render(<TokenForm onTokenChange={onTokenChange} />);
+
+    const input = screen.getByLabelText('Authentication Token');
+    const submitButton = screen.getByText('Save Token');
+
+    await user.type(input, 'new-token');
+    await user.click(submitButton);
+
+    expect(onTokenChange).toHaveBeenCalled();
+  });
+
+  it('should disable save button when input is empty', () => {
+    render(<TokenForm />);
+
+    const submitButton = screen.getByText('Save Token');
+    expect(submitButton).toBeDisabled();
+  });
+
+  it('should trim whitespace from token input', async () => {
+    const user = userEvent.setup();
+    render(<TokenForm />);
+
+    const input = screen.getByLabelText('Authentication Token');
+    const submitButton = screen.getByText('Save Token');
+
+    await user.type(input, '  token-with-spaces  ');
+    await user.click(submitButton);
+
+    expect(localStorage.getItem('vibetea_token')).toBe('token-with-spaces');
+  });
+
+  it('should sync state across storage events from other tabs', () => {
+    render(<TokenForm />);
+
+    expect(screen.getByText('No token saved')).toBeInTheDocument();
+
+    // Simulate storage event from another tab
+    const storageEvent = new StorageEvent('storage', {
+      key: 'vibetea_token',
+      newValue: 'token-from-other-tab',
+      oldValue: null,
+    });
+    window.dispatchEvent(storageEvent);
+
+    expect(screen.getByText('Token saved')).toBeInTheDocument();
+  });
+});
+```
+
+Key patterns for form testing:
+1. **Setup and teardown**: Clear localStorage before each test
+2. **User interactions**: Use `userEvent` for realistic interactions
+3. **Assertions on side effects**: Verify localStorage updates
+4. **Callback verification**: Use `vi.fn()` to mock callbacks
+5. **Input validation**: Test edge cases like whitespace, empty values
+6. **Multi-tab sync**: Test storage event handling
+
+#### Planned Test Patterns for `useWebSocket.ts`
+
+```typescript
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { renderHook, act } from '@testing-library/react';
+import { useWebSocket } from '../useWebSocket';
+import { useEventStore } from '../useEventStore';
+
+describe('useWebSocket Hook', () => {
+  let mockWebSocket: Partial<WebSocket>;
+
+  beforeEach(() => {
+    // Mock WebSocket
+    mockWebSocket = {
+      readyState: WebSocket.CLOSED,
+      onopen: null,
+      onmessage: null,
+      onerror: null,
+      onclose: null,
+      close: vi.fn(),
+    };
+
+    global.WebSocket = vi.fn(() => mockWebSocket) as any;
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should initialize with isConnected false', () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    const { result } = renderHook(() => useWebSocket());
+
+    expect(result.current.isConnected).toBe(false);
+  });
+
+  it('should warn if no token is present', () => {
+    const warnSpy = vi.spyOn(console, 'warn');
+    const { result } = renderHook(() => useWebSocket());
+
+    act(() => {
+      result.current.connect();
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('No authentication token')
+    );
+  });
+
+  it('should attempt to connect with valid token', () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    const { result } = renderHook(() => useWebSocket());
+
+    act(() => {
+      result.current.connect();
+    });
+
+    expect(global.WebSocket).toHaveBeenCalledWith(
+      expect.stringContaining('test-token')
+    );
+  });
+
+  it('should handle WebSocket messages by dispatching to store', () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    const { result } = renderHook(() => useWebSocket());
+
+    act(() => {
+      result.current.connect();
+    });
+
+    const event = {
+      id: 'evt_123',
+      source: 'test',
+      timestamp: new Date().toISOString(),
+      type: 'session',
+      payload: { sessionId: 'sid_123', action: 'started', project: 'test' },
+    };
+
+    act(() => {
+      if (mockWebSocket.onmessage) {
+        mockWebSocket.onmessage({
+          data: JSON.stringify(event),
+        } as MessageEvent);
+      }
+    });
+
+    const events = useEventStore.getState().events;
+    expect(events).toContainEqual(event);
+  });
+
+  it('should schedule reconnection on close', async () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    const { result } = renderHook(() => useWebSocket());
+
+    act(() => {
+      result.current.connect();
+      if (mockWebSocket.onclose) {
+        mockWebSocket.onclose();
+      }
+    });
+
+    // Wait for reconnection to be scheduled
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Status should be reconnecting
+    const status = useEventStore.getState().status;
+    expect(status).toBe('reconnecting');
+  });
+
+  it('should apply exponential backoff jitter', async () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    vi.useFakeTimers();
+
+    const { result } = renderHook(() => useWebSocket());
+
+    act(() => {
+      result.current.connect();
+      if (mockWebSocket.onclose) {
+        mockWebSocket.onclose();
+      }
+    });
+
+    // Advance by partial time, should not reconnect yet
+    act(() => {
+      vi.advanceTimersByTime(500); // Less than min backoff
+    });
+    expect(global.WebSocket).toHaveBeenCalledTimes(1);
+
+    // Advance past min backoff, should attempt reconnect
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(global.WebSocket).toHaveBeenCalledTimes(2);
+
+    vi.useRealTimers();
+  });
+
+  it('should disconnect and stop reconnecting', () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    const { result } = renderHook(() => useWebSocket());
+
+    act(() => {
+      result.current.connect();
+    });
+    expect(result.current.isConnected).toBe(false); // Initial state
+
+    act(() => {
+      result.current.disconnect();
+    });
+
+    expect(mockWebSocket.close).toHaveBeenCalled();
+  });
+
+  it('should clean up on unmount', () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    const { result, unmount } = renderHook(() => useWebSocket());
+
+    act(() => {
+      result.current.connect();
+    });
+
+    unmount();
+
+    expect(mockWebSocket.close).toHaveBeenCalled();
+  });
+});
+```
+
+Key patterns for hook testing:
+1. **Mock external APIs**: Mock WebSocket, localStorage, etc.
+2. **renderHook**: Use React Testing Library's hook rendering utilities
+3. **act()**: Wrap state updates to avoid warnings
+4. **Fake timers**: Use `vi.useFakeTimers()` for timing tests
+5. **Callback verification**: Test side effects like dispatch and reconnection
 
 ### Unit Tests (Rust)
 
@@ -1110,6 +1481,35 @@ Tests that must pass before any deploy:
 - Tool event creation and validation
 - Event type enumeration validation
 
+**useEventStore.test.ts** (planned)
+- Store initialization
+- Event addition and FIFO eviction
+- Session tracking
+- Store selectors
+
+**useWebSocket.test.ts** (planned - Phase 7)
+- Connection establishment with token
+- WebSocket message parsing and validation
+- Exponential backoff retry logic
+- Reconnection scheduling
+- Event dispatch to store
+- Cleanup on disconnect/unmount
+
+**ConnectionStatus.test.tsx** (planned - Phase 7)
+- Rendering with different connection statuses
+- Label display based on props
+- Custom className application
+- ARIA accessibility attributes
+- Color classes for each status
+
+**TokenForm.test.tsx** (planned - Phase 7)
+- Token input and save
+- localStorage persistence
+- Token clearing
+- Cross-tab synchronization via storage events
+- Button enable/disable states
+- Callback invocation on token changes
+
 #### Rust/Server
 
 **config.rs** (12 tests)
@@ -1244,6 +1644,7 @@ test:
 - **__tests__/events.test.ts**: 3 test cases for event type validation and creation
 - Framework (Vitest) installed and ready
 - Test organization structure established
+- Planned tests for hooks and components (Phase 7)
 
 ### Rust Modules - Server
 
@@ -1306,16 +1707,19 @@ cargo test -p vibetea-monitor sender::tests
 
 ## Next Steps for Testing
 
-1. **TypeScript**: Create additional unit tests for Zustand store and selector functions
-2. **TypeScript**: Add component tests for UI elements as they're built
-3. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
-4. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
-5. **Rust/Monitor**: Add integration tests for crypto module (key persistence scenarios)
-6. **Rust/Monitor**: Add integration tests for sender module (retry scenarios, rate limiting)
-7. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
-8. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
-9. **Snapshot testing**: Consider for event serialization if JSON formats become complex
-10. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
+1. **TypeScript**: Create unit tests for `useWebSocket` hook (Phase 7)
+2. **TypeScript**: Create component tests for `ConnectionStatus` (Phase 7)
+3. **TypeScript**: Create component tests for `TokenForm` (Phase 7)
+4. **TypeScript**: Create unit tests for `useEventStore` store
+5. **TypeScript**: Add component tests for UI elements as they're built
+6. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
+7. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
+8. **Rust/Monitor**: Add integration tests for crypto module (key persistence scenarios)
+9. **Rust/Monitor**: Add integration tests for sender module (retry scenarios, rate limiting)
+10. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
+11. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
+12. **Snapshot testing**: Consider for event serialization if JSON formats become complex
+13. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
 
 ---
 

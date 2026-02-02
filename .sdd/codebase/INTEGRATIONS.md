@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 6 Implementation - CLI, cryptographic signing, and HTTP sender
+**Status**: Phase 7 Implementation - Client WebSocket connection, token management, connection status UI
 **Last Updated**: 2026-02-02
 
 ## Summary
@@ -8,7 +8,7 @@
 VibeTea is designed as a distributed event system with three components:
 - **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
-- **Client**: Subscribes to server events via WebSocket for visualization
+- **Client**: Subscribes to server events via WebSocket for visualization with token-based authentication
 
 All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication and privacy-by-design data handling.
 
@@ -456,6 +456,224 @@ pub struct SenderConfig {
 4. User adds to server configuration
 5. User runs: `vibetea-monitor run`
 
+## Client-Side Integrations (Phase 7)
+
+### Browser WebSocket Connection
+
+**Module Location**: `client/src/hooks/useWebSocket.ts` (321 lines)
+
+**WebSocket Hook Features**:
+
+1. **Connection Management**
+   - Establishes WebSocket connection to server
+   - Validates token from localStorage before connecting
+   - Tracks connection state: connecting, connected, reconnecting, disconnected
+   - Provides manual `connect()` and `disconnect()` methods
+
+2. **Auto-Reconnection**
+   - Exponential backoff: 1s initial, 60s maximum
+   - Jitter: ±25% randomization per attempt
+   - Resets attempt counter on successful connection
+   - Respects user's disconnect intent (no auto-reconnect after manual disconnect)
+
+3. **Token Management**
+   - Reads token from `localStorage` key: `vibetea_token`
+   - Token set via TokenForm component
+   - Returns error if token missing, prevents connection
+   - Token passed as query parameter in WebSocket URL
+
+4. **Event Processing**
+   - Receives JSON-encoded VibeteaEvent messages
+   - Validates message structure (id, source, timestamp, type, payload)
+   - Dispatches valid events to Zustand store via `addEvent()`
+   - Silently discards invalid/unparseable messages
+
+5. **Integration with Event Store**
+   - `useEventStore` for state management
+   - `addEvent(event)` - Add event to store
+   - `setStatus(status)` - Update connection status
+   - Status field synced with component state
+
+6. **Error Handling**
+   - Logs connection errors to console
+   - Logs message parsing failures
+   - Graceful handling of malformed messages
+   - No crashes on connection errors
+
+7. **Cleanup & Lifecycle**
+   - Proper cleanup on component unmount
+   - Clears pending reconnection timeouts
+   - Closes WebSocket connection
+   - Prevents memory leaks
+
+**Hook Return Type**:
+```typescript
+export interface UseWebSocketReturn {
+  readonly connect: () => void;          // Manually initiate connection
+  readonly disconnect: () => void;        // Manually disconnect
+  readonly isConnected: boolean;          // Connection state
+}
+```
+
+**Constants**:
+- `TOKEN_STORAGE_KEY`: `"vibetea_token"` (matches TokenForm)
+- `INITIAL_BACKOFF_MS`: 1000ms
+- `MAX_BACKOFF_MS`: 60000ms
+- `JITTER_FACTOR`: 0.25 (25%)
+
+**Default WebSocket URL**:
+- Protocol: `ws://` (HTTP) or `wss://` (HTTPS) based on location protocol
+- Host: Current browser location host
+- Path: `/ws`
+- Query param: `token=<token_from_localStorage>`
+
+### Connection Status Component
+
+**Module Location**: `client/src/components/ConnectionStatus.tsx` (106 lines)
+
+**Features**:
+
+1. **Visual Indicator**
+   - Colored dot (2.5x2.5 rem) showing connection state
+   - Green (#22c55e) for connected
+   - Yellow (#eab308) for connecting/reconnecting
+   - Red (#ef4444) for disconnected
+   - Uses Tailwind CSS classes
+
+2. **Optional Status Label**
+   - Shows text status if `showLabel` prop is true
+   - Labels: "Connected", "Connecting", "Reconnecting", "Disconnected"
+   - Styled as small gray text
+   - Dark mode support
+
+3. **Performance Optimization**
+   - Selective Zustand subscription: only re-renders when status changes
+   - Uses selector to extract only status field
+   - Prevents re-renders on other store updates
+
+4. **Accessibility**
+   - `role="status"` for semantic meaning
+   - `aria-label` with full status description
+   - Visual indicator marked as `aria-hidden="true"`
+   - Screen reader friendly
+
+5. **Component Props**:
+```typescript
+interface ConnectionStatusProps {
+  readonly showLabel?: boolean;    // Show status text (default: false)
+  readonly className?: string;     // Additional CSS classes
+}
+```
+
+6. **Styling**
+   - Flexbox layout with gap-2
+   - Responsive and composable
+   - Integrates seamlessly with other UI elements
+   - Dark mode aware styling
+
+### Token Form Component
+
+**Module Location**: `client/src/components/TokenForm.tsx` (201 lines)
+
+**Features**:
+
+1. **Token Input & Storage**
+   - Password input field for secure token entry
+   - Persists token to `localStorage` via `TOKEN_STORAGE_KEY`
+   - Matches key used by `useWebSocket` hook
+   - Non-empty validation before saving
+
+2. **Button Controls**
+   - **Save Token** button
+     - Disabled when input is empty
+     - Saves trimmed token to localStorage
+     - Resets input field after save
+     - Invokes optional callback
+   - **Clear Token** button
+     - Disabled when no token saved
+     - Removes token from localStorage
+     - Resets input and status
+     - Invokes optional callback
+
+3. **Status Indicator**
+   - Green dot when token saved
+   - Gray dot when no token saved
+   - Text shows "Token saved" or "No token saved"
+   - Updates in real-time as user changes
+
+4. **Cross-Window Synchronization**
+   - Listens to `storage` events
+   - Detects token changes from other tabs/windows
+   - Updates status accordingly
+   - Handles multi-tab scenarios
+
+5. **Component Props**:
+```typescript
+interface TokenFormProps {
+  readonly onTokenChange?: () => void;  // Called when token saved/cleared
+  readonly className?: string;          // Additional CSS classes
+}
+```
+
+6. **Callback Support**
+   - `onTokenChange()` invoked on save or clear
+   - Allows parent to reconnect WebSocket
+   - Enables form submission handlers
+
+7. **Accessibility**
+   - Label element linked to input
+   - `aria-describedby` for status association
+   - Status region with `aria-live="polite"`
+   - Semantic form structure
+   - Proper button states for disabled
+
+8. **Styling**
+   - Tailwind CSS dark mode (bg-gray-800, text-white)
+   - Responsive layout
+   - Visual feedback on focus (blue ring)
+   - Disabled state styling (gray background, cursor not-allowed)
+   - Button hover effects
+
+9. **Behavior**
+   - Stores token under key `vibetea_token` (matches useWebSocket)
+   - Input placeholder changes based on save state
+   - Form submission on button click or Enter key
+   - Input cleared after successful save
+   - Token masked as password field
+
+### Integration Flow (Phase 7)
+
+**Typical Usage Pattern**:
+```typescript
+function App() {
+  const { connect, disconnect, isConnected } = useWebSocket();
+
+  return (
+    <div>
+      <TokenForm
+        onTokenChange={() => {
+          // Reconnect when token changes
+          connect();
+        }}
+      />
+      <ConnectionStatus showLabel />
+      {/* Rest of app */}
+    </div>
+  );
+}
+```
+
+**Connection Flow**:
+1. User enters token in TokenForm
+2. Token saved to `localStorage.vibetea_token`
+3. User clicks connect (or app calls `connect()`)
+4. `useWebSocket` reads token from localStorage
+5. WebSocket connects to server with token in URL
+6. Server validates token and upgrades connection
+7. ConnectionStatus shows "Connected" with green dot
+8. Events flow from server to client via WebSocket
+9. Events added to Zustand store via `addEvent()`
+
 ## Event Validation & Types
 
 ### Shared Event Schema
@@ -505,6 +723,12 @@ Event {
 - Signature in X-Signature header (base64-encoded)
 - Server verifies using registered public key
 - Constant-time comparison prevents timing attacks
+
+**Phase 7 Client Reception** (new):
+- `useWebSocket` receives and validates events
+- TypeScript type guards ensure type safety
+- Zustand store aggregates events by session
+- Components render session data from store
 
 ### Client Event Store Integration
 
@@ -608,16 +832,18 @@ export interface EventStore {
 - Returns 101 Switching Protocols on success
 - Returns 401 Unauthorized on token validation failure
 
-**Client-Side Handling**:
+**Client-Side Handling** (Phase 7):
 - WebSocket proxy configured in `client/vite.config.ts` (target: ws://localhost:8080)
 - State management via `useEventStore` hook (Zustand)
 - Event type guards for safe type access in `client/src/types/events.ts`
 - ConnectionStatus transitions: disconnected → connecting → connected → reconnecting
+- Token management via `TokenForm` component
+- Connection control via `useWebSocket` hook
 
 **Connection Details**:
 - Address/port: Configured via `PORT` environment variable (default: 8080)
 - Persistent connection model
-- No automatic reconnection (Phase 5 - future enhancement)
+- Automatic reconnection with exponential backoff (Phase 7)
 - No message queuing (direct streaming)
 - Events processed with selective subscriptions to prevent unnecessary re-renders
 
@@ -837,6 +1063,13 @@ server: {
 - Code splitting: react-vendor, state, virtual chunks
 - Target: ES2020
 
+**Phase 7 Client Features**:
+- Token management via TokenForm component
+- Connection status visualization via ConnectionStatus component
+- WebSocket connection management via useWebSocket hook
+- Event display and session tracking via Zustand store
+- localStorage persistence for authentication token
+
 ## Error Handling & Validation
 
 ### Server-Side Error Handling
@@ -909,6 +1142,13 @@ server: {
 - MaxRetriesExceeded - All retry attempts exhausted
 - Json - Event serialization failure
 
+**Client-Side Error Handling** (Phase 7):
+- WebSocket connection errors logged to console
+- Message parsing failures handled gracefully
+- Invalid events silently discarded
+- No crashes on connection drops (auto-reconnect)
+- Token missing handled with warning log
+
 **Resilience**:
 - Continues watching even if individual file operations fail
 - Retries HTTP requests with exponential backoff (Phase 6)
@@ -917,6 +1157,7 @@ server: {
 - Graceful degradation on malformed JSONL lines
 - Privacy processing failures logged without exposing sensitive data
 - Sender buffers events if network unavailable, retries with backoff
+- Client maintains event store even if connection drops
 
 ## File System Monitoring
 
@@ -1001,6 +1242,7 @@ server: {
 - Token should be treated like a password
 - Compromise affects all connected clients
 - Future: Implement token rotation, per-user tokens
+- localStorage exposure could compromise token
 
 ### Rate Limiting Security
 
@@ -1031,6 +1273,21 @@ server: {
 - Event contents never logged or stored unencrypted
 - All transformations logged without revealing sensitive data
 
+### Client-Side Security
+
+**localStorage Token Storage** (Phase 7):
+- Token persisted to browser localStorage
+- Accessible to any script running in same origin
+- XSS vulnerability could expose token
+- Cross-site scripting protection recommended
+- Consider HTTPOnly cookies as future enhancement
+
+**WebSocket Token Transmission** (Phase 7):
+- Token passed as query parameter in URL
+- Visible in browser network tab
+- Should use WSS (WebSocket Secure) in production
+- Token in header would be preferable (future enhancement)
+
 ### Sender Security
 
 **HTTP Client Security** (Phase 6):
@@ -1052,6 +1309,9 @@ server: {
 - **Message Queues**: Redis, RabbitMQ for event buffering (Phase 5+)
 - **Webhooks**: External service notifications (Phase 6+)
 - **Background Task Spawning**: Async watcher and sender pipeline (Phase 6+)
+- **Session Persistence**: Store events in database for replay (Phase 7+)
+- **Advanced Authentication**: Per-user tokens, OAuth2 flows (Phase 7+)
+- **Event Search/Filtering**: Full-text search and advanced filtering UI (Phase 7+)
 
 ## Configuration Quick Reference
 
@@ -1082,6 +1342,11 @@ server: {
 ### Client Environment Variables
 
 None required for production (future configuration planned).
+
+**Client localStorage Keys** (Phase 7):
+| Key | Purpose | Format |
+|-----|---------|--------|
+| `vibetea_token` | WebSocket authentication token | String |
 
 ## Phase Changes Summary
 
@@ -1168,3 +1433,48 @@ None required for production (future configuration planned).
 - Documentation updated
 
 **Integration Status**: Crypto, sender, and CLI modules complete. Main event loop integration next (Phase 7).
+
+### Phase 7 Changes
+
+**Client WebSocket Hook** (`client/src/hooks/useWebSocket.ts` - 321 lines):
+- Custom React hook for WebSocket connection management
+- Auto-reconnection with exponential backoff (1s → 60s, ±25% jitter)
+- Token management from localStorage
+- Integration with Zustand event store
+- Manual `connect()` and `disconnect()` control
+- Message validation and event dispatch
+- Proper cleanup and lifecycle management
+
+**Connection Status Component** (`client/src/components/ConnectionStatus.tsx` - 106 lines):
+- Visual status indicator (colored dot)
+- Optional status label text
+- Selective Zustand subscription for performance
+- Accessibility support (ARIA roles, labels)
+- Dark mode support with Tailwind CSS
+- Responsive and composable design
+
+**Token Form Component** (`client/src/components/TokenForm.tsx` - 201 lines):
+- Password-protected token input field
+- localStorage persistence for token
+- Save/Clear button controls
+- Status indicator (saved/not-saved)
+- Cross-window synchronization via storage events
+- Optional `onTokenChange` callback
+- Full accessibility support
+- Dark mode Tailwind styling
+
+**Integration Points**:
+- useWebSocket reads token from localStorage (set by TokenForm)
+- ConnectionStatus displays real-time status from useEventStore
+- TokenForm provides UI for user authentication
+- All components use selective subscriptions for performance
+- TypeScript strict mode compliance throughout
+
+**Client Type System**:
+- Complete VibeteaEvent type definitions
+- Discriminated union types for payload safety
+- Type guards for runtime validation
+- Session interface for UI state
+- EventPayloadMap for type-safe access
+
+**Integration Status**: Phase 7 client-side features complete. Ready for main event loop integration and session visualization UI.
