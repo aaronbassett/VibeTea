@@ -109,55 +109,55 @@ VibeTea uses a multi-project structure:
 
 ### Start Phase 3
 
-- [ ] T037 [GIT] Verify working tree is clean before starting Phase 3
-- [ ] T038 [GIT] Pull and rebase on origin/main if needed
-- [ ] T039 [US1] Create retro/P3.md for this phase
+- [X] T037 [GIT] Verify working tree is clean before starting Phase 3
+- [X] T038 [GIT] Pull and rebase on origin/main if needed - Already on latest
+- [X] T039 [US1] Create retro/P3.md for this phase
 
 ### Authentication Layer
 
-- [ ] T040 [P] [US1] Implement Ed25519 signature verification in server/src/auth.rs (use devs:rust-dev agent)
-- [ ] T041 [GIT] Commit: add Ed25519 signature verification
-- [ ] T042 [US1] Implement token validation for WebSocket clients in server/src/auth.rs (use devs:rust-dev agent)
-- [ ] T043 [GIT] Commit: add token validation
+- [X] T040 [P] [US1] Implement Ed25519 signature verification in server/src/auth.rs (use devs:rust-dev agent)
+- [X] T041 [GIT] Commit: add Ed25519 signature verification
+- [X] T042 [US1] Implement token validation for WebSocket clients in server/src/auth.rs (use devs:rust-dev agent)
+- [X] T043 [GIT] Commit: add token validation
 
 ### Unsafe Mode Testing
 
-- [ ] T043a [US1] Test VIBETEA_UNSAFE_NO_AUTH=true mode: verify POST /events accepts unsigned requests and GET /ws accepts connections without token in server/tests/unsafe_mode_test.rs (use devs:rust-dev agent)
-- [ ] T043b [GIT] Commit: add unsafe mode tests
+- [X] T043a [US1] Test VIBETEA_UNSAFE_NO_AUTH=true mode: verify POST /events accepts unsigned requests and GET /ws accepts connections without token in server/tests/unsafe_mode_test.rs (use devs:rust-dev agent)
+- [X] T043b [GIT] Commit: add unsafe mode tests
 
 ### WebSocket Broadcast
 
-- [ ] T044 [US1] Implement broadcast channel in server/src/broadcast.rs using tokio::sync::broadcast (use devs:rust-dev agent)
-- [ ] T045 [GIT] Commit: add broadcast channel
-- [ ] T046 [US1] Implement WebSocket connection handler with filtering support (source, type, project) in server/src/broadcast.rs (use devs:rust-dev agent)
-- [ ] T047 [GIT] Commit: add WebSocket filtering
+- [X] T044 [US1] Implement broadcast channel in server/src/broadcast.rs using tokio::sync::broadcast (use devs:rust-dev agent)
+- [X] T045 [GIT] Commit: add broadcast channel
+- [X] T046 [US1] Implement WebSocket connection handler with filtering support (source, type, project) in server/src/broadcast.rs (use devs:rust-dev agent) - Implemented in routes.rs
+- [X] T047 [GIT] Commit: add WebSocket filtering - Part of routes commit
 
 ### Rate Limiting
 
-- [ ] T048 [US1] Implement per-source rate limiting (100 events/sec) in server/src/rate_limit.rs (use devs:rust-dev agent)
-- [ ] T049 [GIT] Commit: add rate limiting
+- [X] T048 [US1] Implement per-source rate limiting (100 events/sec) in server/src/rate_limit.rs (use devs:rust-dev agent)
+- [X] T049 [GIT] Commit: add rate limiting
 
 ### HTTP Routes
 
-- [ ] T050 [US1] Implement POST /events endpoint in server/src/routes.rs (use devs:rust-dev agent)
-- [ ] T051 [GIT] Commit: add POST /events endpoint
-- [ ] T052 [US1] Implement GET /ws endpoint in server/src/routes.rs (use devs:rust-dev agent)
-- [ ] T053 [GIT] Commit: add GET /ws endpoint
-- [ ] T054 [US1] Implement GET /health endpoint in server/src/routes.rs (use devs:rust-dev agent)
-- [ ] T055 [GIT] Commit: add GET /health endpoint
+- [X] T050 [US1] Implement POST /events endpoint in server/src/routes.rs (use devs:rust-dev agent)
+- [X] T051 [GIT] Commit: add POST /events endpoint
+- [X] T052 [US1] Implement GET /ws endpoint in server/src/routes.rs (use devs:rust-dev agent)
+- [X] T053 [GIT] Commit: add GET /ws endpoint
+- [X] T054 [US1] Implement GET /health endpoint in server/src/routes.rs (use devs:rust-dev agent)
+- [X] T055 [GIT] Commit: add GET /health endpoint - Combined with routes commit
 
 ### Server Main Entry Point
 
-- [ ] T056 [US1] Implement server main.rs with axum router, graceful shutdown, logging (use devs:rust-dev agent)
-- [ ] T057 [GIT] Commit: implement server main entry point
-- [ ] T058 [US1] Implement server lib.rs with public API exports (use devs:rust-dev agent)
-- [ ] T059 [GIT] Commit: add server lib.rs
+- [X] T056 [US1] Implement server main.rs with axum router, graceful shutdown, logging (use devs:rust-dev agent)
+- [X] T057 [GIT] Commit: implement server main entry point
+- [X] T058 [US1] Implement server lib.rs with public API exports (use devs:rust-dev agent) - Already done during module creation
+- [X] T059 [GIT] Commit: add server lib.rs - Part of previous commits
 
 ### Phase 3 Completion
 
-- [ ] T060 [US1] Run /sdd:map incremental for Phase 3 changes
-- [ ] T061 [GIT] Commit: update codebase documents for phase 3
-- [ ] T062 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
+- [X] T060 [US1] Run /sdd:map incremental for Phase 3 changes
+- [X] T061 [GIT] Commit: update codebase documents for phase 3
+- [X] T062 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T063 [GIT] Commit: finalize phase 3 retro
 - [ ] T064 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [ ] T065 [GIT] Create/update PR to main with phase summary
