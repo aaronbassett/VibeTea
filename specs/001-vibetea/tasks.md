@@ -374,24 +374,24 @@ VibeTea uses a multi-project structure:
 
 ### Start Phase 8
 
-- [ ] T162 [GIT] Verify working tree is clean before starting Phase 8
-- [ ] T163 [GIT] Pull and rebase on origin/main if needed
-- [ ] T164 [US6] Create retro/P8.md for this phase
+- [X] T162 [GIT] Verify working tree is clean before starting Phase 8
+- [X] T163 [GIT] Pull and rebase on origin/main if needed - Already on latest
+- [X] T164 [US6] Create retro/P8.md for this phase
 
 ### Event Stream Component
 
-- [ ] T165 [US6] Implement EventStream component in client/src/components/EventStream.tsx using @tanstack/react-virtual (use devs:react-dev agent)
+- [X] T165 [US6] Implement EventStream component in client/src/components/EventStream.tsx using @tanstack/react-virtual (use devs:react-dev agent)
 - [ ] T166 [GIT] Commit: add EventStream component
-- [ ] T167 [US6] Implement auto-scroll logic (pause when scrolled >50px from bottom) in client/src/components/EventStream.tsx (use devs:react-dev agent)
+- [X] T167 [US6] Implement auto-scroll logic (pause when scrolled >50px from bottom) in client/src/components/EventStream.tsx (use devs:react-dev agent) - Part of T165
 - [ ] T168 [GIT] Commit: add auto-scroll logic
-- [ ] T169 [US6] Implement "Jump to latest" button in client/src/components/EventStream.tsx (use devs:react-dev agent)
+- [X] T169 [US6] Implement "Jump to latest" button in client/src/components/EventStream.tsx (use devs:react-dev agent) - Part of T165
 - [ ] T170 [GIT] Commit: add jump to latest button
-- [ ] T171 [US6] Implement event type icons (tool 🔧, activity 💬, session 🚀, summary 📋, error ⚠️) in client/src/components/EventStream.tsx (use devs:react-dev agent)
+- [X] T171 [US6] Implement event type icons (tool 🔧, activity 💬, session 🚀, summary 📋, error ⚠️) in client/src/components/EventStream.tsx (use devs:react-dev agent) - Part of T165
 - [ ] T172 [GIT] Commit: add event type icons
 
 ### Utility Functions
 
-- [ ] T173 [US6] Implement timestamp and duration formatting in client/src/utils/formatting.ts (use devs:typescript-dev agent)
+- [X] T173 [US6] Implement timestamp and duration formatting in client/src/utils/formatting.ts (use devs:typescript-dev agent)
 - [ ] T174 [GIT] Commit: add formatting utilities
 
 ### Phase 8 Completion
