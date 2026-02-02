@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 7 Implementation - Client WebSocket connection, authentication UI, automatic reconnection
+**Status**: Phase 8 Implementation - Virtual scrolling EventStream component, formatting utilities
 **Last Updated**: 2026-02-02
 
 ## Languages & Runtimes
@@ -50,7 +50,7 @@
 | Vite                       | ^7.3.1   | Build tool and dev server |
 | Tailwind CSS               | ^4.1.18  | Utility-first CSS framework |
 | Zustand                    | ^5.0.11  | Lightweight state management |
-| @tanstack/react-virtual    | ^3.13.18 | Virtual scrolling for large lists |
+| @tanstack/react-virtual    | ^3.13.18 | Virtual scrolling for large lists (Phase 8) |
 | @vitejs/plugin-react       | ^5.1.3   | React Fast Refresh for Vite |
 | @tailwindcss/vite          | ^4.1.18  | Tailwind CSS Vite plugin |
 | vite-plugin-compression2   | ^2.4.0   | Brotli compression for builds |
@@ -140,10 +140,14 @@
 - `components/` - React components
   - `ConnectionStatus.tsx` - **Phase 7**: Visual WebSocket connection status indicator
   - `TokenForm.tsx` - **Phase 7**: Token management and persistence UI
+  - `EventStream.tsx` - **Phase 8**: Virtual scrolling event stream with 1000+ event support
 - `hooks/useEventStore.ts` - Zustand store for WebSocket event state with selective subscriptions
 - `hooks/useWebSocket.ts` - **Phase 7**: WebSocket connection management with auto-reconnect
 - `types/events.ts` - Event type definitions with discriminated union types matching Rust schema
 - `utils/` - Utility functions
+  - `formatting.ts` - **Phase 8**: Timestamp and duration formatting utilities (5 functions, 331 lines)
+- `__tests__/` - Test files
+  - `formatting.test.ts` - **Phase 8**: Comprehensive formatting utility tests (33 test cases)
 - `App.tsx` - Root component
 - `main.tsx` - Entry point
 - `index.css` - Global styles
@@ -347,6 +351,81 @@
 - TokenForm allows users to manage authentication before connecting
 - All components use selective Zustand subscriptions for performance
 - Proper TypeScript strict mode compliance throughout
+
+## Phase 8 Additions
+
+**Client Event Stream Component** (`client/src/components/EventStream.tsx` - 425 lines):
+- **Virtual scrolling**: Uses `@tanstack/react-virtual` for efficient rendering of 1000+ events
+- **Estimated row height**: 64 pixels per event row
+- **Auto-scroll behavior**: Automatically scrolls to latest events unless user manually scrolls up
+- **Auto-scroll threshold**: 50 pixels distance from bottom to disable auto-scroll
+- **Jump to latest button**: Displays when auto-scroll is paused, shows count of new events
+- **Event type icons**: Emoji mapping for session, activity, tool, agent, summary, error types
+- **Color-coded badges**: Visual badges for each event type with Tailwind CSS colors
+- **Event description extraction**: Concise event summaries showing key information
+- **Timestamp formatting**: Displays RFC 3339 timestamps as HH:MM:SS format
+- **Empty state**: Friendly message when no events are available
+- **Sub-components**: EventRow (single event), JumpToLatestButton, EmptyState
+- **Accessibility**: ARIA labels, roles, and live region for screen readers
+- **Performance**: Selective subscriptions to prevent unnecessary re-renders
+- **Responsive design**: Full-height scrollable container with flexible width
+
+**Formatting Utilities Module** (`client/src/utils/formatting.ts` - 331 lines):
+- **formatTimestamp()**: Formats RFC 3339 timestamps to HH:MM:SS (local timezone)
+- **formatTimestampFull()**: Formats RFC 3339 timestamps to YYYY-MM-DD HH:MM:SS
+- **formatRelativeTime()**: Formats timestamps as relative time ("5m ago", "yesterday", etc.)
+- **formatDuration()**: Converts milliseconds to human-readable duration ("1h 30m", "5m 30s")
+- **formatDurationShort()**: Converts milliseconds to compact format ("1:30:00", "5:30")
+- **Helper functions**: parseTimestamp(), padZero(), isSameDay(), isYesterday()
+- **Graceful error handling**: Returns fallback strings for invalid input
+- **Pure functions**: No side effects, entirely deterministic
+- **Time unit constants**: MS_PER_SECOND, MS_PER_MINUTE, MS_PER_HOUR, MS_PER_DAY, MS_PER_WEEK
+- **Fallback strings**: Custom fallback values for each function type
+- **Comprehensive documentation**: JSDoc comments with examples for each function
+
+**Formatting Tests** (`client/src/__tests__/formatting.test.ts` - 229 lines):
+- **33 comprehensive test cases**: Full coverage of all formatting functions
+- **Test framework**: Vitest with descriptive test groups
+- **formatTimestamp tests** (6 tests):
+  - Valid RFC 3339 timestamps
+  - Timezone offset handling
+  - Empty string fallback
+  - Invalid timestamp handling
+  - Whitespace-only input
+- **formatTimestampFull tests** (4 tests):
+  - Valid full datetime formatting
+  - Timezone offset handling
+  - Empty string and invalid input fallbacks
+- **formatRelativeTime tests** (8 tests):
+  - "just now" for recent events (<1 minute, future timestamps)
+  - Minutes ago ("1m", "5m", "59m")
+  - Hours ago ("1h", "2h", "23h")
+  - "yesterday" detection with timezone-aware testing
+  - Days ago ("3d", "6d")
+  - Weeks ago ("1w", "2w", "9w")
+  - Invalid input handling
+- **formatDuration tests** (10 tests):
+  - Hours and minutes ("1h 30m", "2h 1m")
+  - Minutes and seconds ("5m 30s", "1m 30s")
+  - Seconds only ("30s", "59s")
+  - Omits seconds when hours present
+  - Zero and negative values
+  - NaN handling
+  - Large durations (48h, 100h)
+- **formatDurationShort tests** (5 tests):
+  - H:MM:SS format for durations >= 1 hour
+  - M:SS format for durations < 1 hour
+  - Leading zeros for seconds
+  - Zero and negative value handling
+  - NaN and large durations
+- **Test coverage**: 100% of exported functions and key code paths
+
+**Integration Points** (Phase 8):
+- EventStream component displays events from Zustand store
+- Formatting utilities used throughout client for consistent time display
+- EventStream uses formatTimestamp() for event timestamps
+- EventRow component uses event type for visual styling and icons
+- Tests validate formatting across various time zones and edge cases
 
 ## Not Yet Implemented
 

@@ -71,13 +71,16 @@ client/
 │   │   └── useWebSocket.ts     # WebSocket connection hook (Phase 7)
 │   ├── components/
 │   │   ├── ConnectionStatus.tsx # Connection indicator (Phase 7)
-│   │   └── TokenForm.tsx        # Token input form (Phase 7)
-│   ├── utils/                  # Placeholder (empty with .gitkeep)
+│   │   ├── TokenForm.tsx        # Token input form (Phase 7)
+│   │   └── EventStream.tsx      # Virtual scrolling list (Phase 8)
+│   ├── utils/
+│   │   └── formatting.ts        # Timestamp/duration formatting (Phase 8)
 │   ├── App.tsx
 │   └── main.tsx
 └── src/
     └── __tests__/              # Co-located test directory
-        └── events.test.ts      # Event type tests
+        ├── events.test.ts      # Event type tests
+        └── formatting.test.ts  # Formatting utility tests (Phase 8, 33 tests)
 ```
 
 ### Rust/Server Directory Structure
@@ -126,6 +129,8 @@ monitor/
 | `src/hooks/useWebSocket.ts` | `src/__tests__/useWebSocket.test.ts` (planned) |
 | `src/components/ConnectionStatus.tsx` | `src/__tests__/ConnectionStatus.test.tsx` (planned) |
 | `src/components/TokenForm.tsx` | `src/__tests__/TokenForm.test.tsx` (planned) |
+| `src/components/EventStream.tsx` | `src/__tests__/EventStream.test.tsx` (planned) |
+| `src/utils/formatting.ts` | `src/__tests__/formatting.test.ts` |
 | `src/App.tsx` | `src/__tests__/App.test.tsx` (planned) |
 
 **Rust**: Inline tests in same module (`#[cfg(test)] mod tests`)
@@ -208,6 +213,172 @@ Key patterns:
 2. **Type safety**: Tests use actual TypeScript types for validation
 3. **Descriptive names**: Test names describe the behavior
 4. **Arrange-Act-Assert**: Clear three-part structure (though Act and Assert often combined in simple tests)
+
+### Formatting Utilities Tests (TypeScript - Phase 8)
+
+Formatting utilities are tested comprehensively with edge cases and various input scenarios:
+
+#### Example from `src/__tests__/formatting.test.ts` (33 tests)
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import {
+  formatTimestamp,
+  formatTimestampFull,
+  formatRelativeTime,
+  formatDuration,
+  formatDurationShort,
+} from '../utils/formatting';
+
+describe('formatTimestamp', () => {
+  it('formats a valid RFC 3339 timestamp to HH:MM:SS', () => {
+    const timestamp = '2026-02-02T14:30:45Z';
+    const date = new Date(timestamp);
+    const expected = [
+      String(date.getHours()).padStart(2, '0'),
+      String(date.getMinutes()).padStart(2, '0'),
+      String(date.getSeconds()).padStart(2, '0'),
+    ].join(':');
+
+    expect(formatTimestamp(timestamp)).toBe(expected);
+  });
+
+  it('handles timestamps with timezone offsets', () => {
+    const timestamp = '2026-02-02T14:30:45+05:30';
+    const result = formatTimestamp(timestamp);
+    expect(result).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+  });
+
+  it('returns fallback for empty string', () => {
+    expect(formatTimestamp('')).toBe('--:--:--');
+  });
+
+  it('returns fallback for invalid timestamp', () => {
+    expect(formatTimestamp('not-a-date')).toBe('--:--:--');
+  });
+});
+
+describe('formatRelativeTime', () => {
+  const now = new Date('2026-02-02T14:30:00Z');
+
+  it('returns "just now" for timestamps less than a minute ago', () => {
+    expect(formatRelativeTime('2026-02-02T14:29:30Z', now)).toBe('just now');
+    expect(formatRelativeTime('2026-02-02T14:29:59Z', now)).toBe('just now');
+  });
+
+  it('returns minutes ago for timestamps less than an hour', () => {
+    expect(formatRelativeTime('2026-02-02T14:29:00Z', now)).toBe('1m ago');
+    expect(formatRelativeTime('2026-02-02T14:25:00Z', now)).toBe('5m ago');
+    expect(formatRelativeTime('2026-02-02T13:31:00Z', now)).toBe('59m ago');
+  });
+
+  it('returns hours ago for timestamps less than a day', () => {
+    expect(formatRelativeTime('2026-02-02T13:30:00Z', now)).toBe('1h ago');
+    expect(formatRelativeTime('2026-02-02T12:30:00Z', now)).toBe('2h ago');
+  });
+
+  it('returns days ago for timestamps less than a week', () => {
+    expect(formatRelativeTime('2026-01-30T14:30:00Z', now)).toBe('3d ago');
+    expect(formatRelativeTime('2026-01-27T14:30:00Z', now)).toBe('6d ago');
+  });
+
+  it('returns weeks ago for timestamps more than a week old', () => {
+    expect(formatRelativeTime('2026-01-26T14:30:00Z', now)).toBe('1w ago');
+    expect(formatRelativeTime('2026-01-19T14:30:00Z', now)).toBe('2w ago');
+  });
+
+  it('returns fallback for invalid timestamp', () => {
+    expect(formatRelativeTime('invalid')).toBe('unknown');
+  });
+});
+
+describe('formatDuration', () => {
+  it('formats hours and minutes', () => {
+    expect(formatDuration(5400000)).toBe('1h 30m'); // 1.5 hours
+    expect(formatDuration(3600000)).toBe('1h'); // 1 hour exactly
+    expect(formatDuration(7260000)).toBe('2h 1m'); // 2 hours 1 minute
+  });
+
+  it('formats minutes and seconds', () => {
+    expect(formatDuration(330000)).toBe('5m 30s'); // 5.5 minutes
+    expect(formatDuration(60000)).toBe('1m'); // 1 minute exactly
+    expect(formatDuration(90000)).toBe('1m 30s'); // 1.5 minutes
+  });
+
+  it('formats seconds only', () => {
+    expect(formatDuration(30000)).toBe('30s');
+    expect(formatDuration(1000)).toBe('1s');
+  });
+
+  it('omits seconds when hours are present', () => {
+    expect(formatDuration(3630000)).toBe('1h'); // 1 hour, 0 minutes, 30 seconds
+  });
+
+  it('returns fallback for zero', () => {
+    expect(formatDuration(0)).toBe('0s');
+  });
+
+  it('returns fallback for negative values', () => {
+    expect(formatDuration(-1000)).toBe('0s');
+    expect(formatDuration(-5400000)).toBe('0s');
+  });
+
+  it('returns fallback for NaN', () => {
+    expect(formatDuration(NaN)).toBe('0s');
+  });
+
+  it('handles large durations', () => {
+    expect(formatDuration(172800000)).toBe('48h'); // 48 hours
+    expect(formatDuration(360000000)).toBe('100h'); // 100 hours
+  });
+});
+
+describe('formatDurationShort', () => {
+  it('formats hours:minutes:seconds for durations >= 1 hour', () => {
+    expect(formatDurationShort(5400000)).toBe('1:30:00'); // 1.5 hours
+    expect(formatDurationShort(3600000)).toBe('1:00:00'); // 1 hour
+    expect(formatDurationShort(3661000)).toBe('1:01:01'); // 1h 1m 1s
+  });
+
+  it('formats minutes:seconds for durations < 1 hour', () => {
+    expect(formatDurationShort(330000)).toBe('5:30'); // 5.5 minutes
+    expect(formatDurationShort(60000)).toBe('1:00'); // 1 minute
+    expect(formatDurationShort(90000)).toBe('1:30'); // 1.5 minutes
+  });
+
+  it('formats seconds with leading zero for durations < 1 minute', () => {
+    expect(formatDurationShort(30000)).toBe('0:30'); // 30 seconds
+    expect(formatDurationShort(1000)).toBe('0:01'); // 1 second
+  });
+
+  it('returns fallback for zero', () => {
+    expect(formatDurationShort(0)).toBe('0:00');
+  });
+
+  it('returns fallback for negative values', () => {
+    expect(formatDurationShort(-1000)).toBe('0:00');
+  });
+
+  it('returns fallback for NaN', () => {
+    expect(formatDurationShort(NaN)).toBe('0:00');
+  });
+
+  it('handles large durations', () => {
+    expect(formatDurationShort(172800000)).toBe('48:00:00'); // 48 hours
+    expect(formatDurationShort(361845000)).toBe('100:30:45'); // 100 hours, 30 minutes, 45 seconds
+  });
+});
+```
+
+Key patterns for formatting utilities testing (Phase 8, 33 tests):
+1. **Pure function testing**: Test deterministic output for given inputs
+2. **Graceful fallbacks**: Verify sensible defaults for invalid input
+3. **Type coercion**: Test behavior with invalid types (NaN, wrong types)
+4. **Edge cases**: Zero, negative, and extreme values
+5. **Format validation**: Regex patterns to verify output format
+6. **Timezone handling**: Test with UTC, offsets, and local times
+7. **Reference parameters**: Use fixed `now` parameter for predictable relative time tests
+8. **Comprehensive coverage**: Tests cover all time units and fallback scenarios
 
 ### Component Tests (TypeScript - Phase 7)
 
@@ -780,9 +951,9 @@ mod tests {
 ```
 
 Privacy unit tests are organized into sections:
-1. **PrivacyConfig Tests** (10 tests): Configuration parsing, environment variable handling, extension allowlist
-2. **extract_basename Tests** (8 tests): Path parsing edge cases, Unix/relative paths, hidden files
-3. **PrivacyPipeline Tests** (15 tests): Event processing, sensitive tool context stripping, allowlist filtering
+1. **PrivacyConfig Tests** (10 tests): Configuration creation, environment variable parsing, allowlist filtering
+2. **extract_basename Tests** (8 tests): Path parsing for various formats
+3. **PrivacyPipeline Tests** (15 tests): Event processing and context stripping
 4. **Edge Case Tests** (5 tests): Complex paths, Unicode filenames, case sensitivity
 
 ### Unit Tests (Rust) - Crypto Module (Phase 6)
@@ -1468,6 +1639,7 @@ Tests that must pass before any deploy:
 | Error tests | Error type safety | `server/src/error.rs` tests |
 | Serialization tests | JSON round-trips | `server/src/types.rs` tests |
 | Event type tests | Type-safe event creation | `client/src/__tests__/events.test.ts` |
+| Formatting tests | Timestamp/duration formatting | `client/src/__tests__/formatting.test.ts` (Phase 8, 33 tests) |
 | Privacy tests | Constitution I compliance | `monitor/src/privacy.rs` (unit) + `monitor/tests/privacy_test.rs` (integration) |
 | Crypto tests | Ed25519 keypair and signing | `monitor/src/crypto.rs` unit tests (Phase 6) |
 | Sender tests | Event buffering and retry | `monitor/src/sender.rs` unit tests (Phase 6) |
@@ -1480,6 +1652,13 @@ Tests that must pass before any deploy:
 - Session event creation and validation
 - Tool event creation and validation
 - Event type enumeration validation
+
+**formatting.test.ts** (33 tests - Phase 8)
+- **formatTimestamp** (5 tests): Valid RFC 3339 parsing, timezone offsets, empty strings, invalid inputs, whitespace
+- **formatTimestampFull** (4 tests): Full date-time formatting, timezone handling, error cases
+- **formatRelativeTime** (7 tests): Minutes/hours/days/weeks ago, "just now", future timestamps, invalid input, edge cases
+- **formatDuration** (8 tests): Human-readable duration formatting, hours/minutes/seconds combinations, zero/negative values, NaN handling, large durations
+- **formatDurationShort** (9 tests): Digital clock format (H:MM:SS, M:SS, 0:SS), zero/negative/NaN handling, large values
 
 **useEventStore.test.ts** (planned)
 - Store initialization
@@ -1509,6 +1688,14 @@ Tests that must pass before any deploy:
 - Cross-tab synchronization via storage events
 - Button enable/disable states
 - Callback invocation on token changes
+
+**EventStream.test.tsx** (planned - Phase 8)
+- Virtual scrolling rendering
+- Auto-scroll behavior
+- Jump to latest button
+- Event type badges and icons
+- Empty state display
+- Accessibility attributes
 
 #### Rust/Server
 
@@ -1642,6 +1829,7 @@ test:
 ### TypeScript/Client
 
 - **__tests__/events.test.ts**: 3 test cases for event type validation and creation
+- **__tests__/formatting.test.ts**: 33 test cases for timestamp and duration formatting (Phase 8)
 - Framework (Vitest) installed and ready
 - Test organization structure established
 - Planned tests for hooks and components (Phase 7)
@@ -1710,16 +1898,17 @@ cargo test -p vibetea-monitor sender::tests
 1. **TypeScript**: Create unit tests for `useWebSocket` hook (Phase 7)
 2. **TypeScript**: Create component tests for `ConnectionStatus` (Phase 7)
 3. **TypeScript**: Create component tests for `TokenForm` (Phase 7)
-4. **TypeScript**: Create unit tests for `useEventStore` store
-5. **TypeScript**: Add component tests for UI elements as they're built
-6. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
-7. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
-8. **Rust/Monitor**: Add integration tests for crypto module (key persistence scenarios)
-9. **Rust/Monitor**: Add integration tests for sender module (retry scenarios, rate limiting)
-10. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
-11. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
-12. **Snapshot testing**: Consider for event serialization if JSON formats become complex
-13. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
+4. **TypeScript**: Create component tests for `EventStream` (Phase 8)
+5. **TypeScript**: Create unit tests for `useEventStore` store
+6. **TypeScript**: Add component tests for UI elements as they're built
+7. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
+8. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
+9. **Rust/Monitor**: Add integration tests for crypto module (key persistence scenarios)
+10. **Rust/Monitor**: Add integration tests for sender module (retry scenarios, rate limiting)
+11. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
+12. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
+13. **Snapshot testing**: Consider for event serialization if JSON formats become complex
+14. **Property-based testing**: Consider `proptest` for privacy module edge cases and path handling
 
 ---
 

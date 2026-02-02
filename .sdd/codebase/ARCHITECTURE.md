@@ -1,6 +1,6 @@
 # Architecture
 
-**Status**: Phase 7 incremental update - Client WebSocket, authentication, and status components
+**Status**: Phase 8 incremental update - Virtual scrolling event stream and formatting utilities
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -29,6 +29,7 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 | **Event Buffering** | Monitor buffers events in memory (1000 max, FIFO) before batch transmission with exponential backoff retry (Phase 6) |
 | **Client Connection Management** | WebSocket hook with auto-reconnect, exponential backoff, and bearer token authentication (Phase 7) |
 | **Client State Management** | Zustand store for event buffer and session aggregation with selective subscriptions (Phase 7) |
+| **Virtual Scrolling** | Efficient rendering of 1000+ events using @tanstack/react-virtual with auto-scroll behavior (Phase 8) |
 
 ## Core Components
 
@@ -711,18 +712,179 @@ function Settings() {
 }
 ```
 
+### Client Virtual Scrolling Event Stream Component
+
+**Purpose**: Efficiently render large event streams with auto-scroll and jump-to-latest functionality
+**Location**: `client/src/components/EventStream.tsx`
+**Responsibility**: Virtual scrolling, event display, auto-scroll behavior, user interaction
+
+**Phase 8 New - Virtual Scrolling Component**:
+
+Provides efficient rendering of 1000+ events with intuitive scrolling behavior:
+
+**Virtual Scrolling Engine**:
+- Uses `@tanstack/react-virtual` for efficient rendering
+- Estimated row height: 64px for layout calculation
+- Overscan: 5 items for smooth scrolling
+- Only renders visible rows plus overscan buffer
+- Prevents performance degradation with large event lists
+
+**Auto-Scroll Behavior**:
+- Automatically scrolls to bottom when new events arrive
+- Disables auto-scroll when user scrolls up 50px+ from bottom
+- "Jump to Latest" button appears when auto-scroll is disabled
+- Shows count of pending new events on jump button
+- Re-enables auto-scroll when user clicks jump button
+
+**Event Display**:
+- Event type icons (🔧 tool, 💬 activity, 🚀 session, 📋 summary, ⚠️ error, 🤖 agent)
+- Color-coded type badges (blue/green/purple/cyan/red/amber)
+- Formatted timestamp (HH:MM:SS)
+- Source and session ID (first 8 chars)
+- Event description with payload-specific details
+
+**Event Description Formatting**:
+- Session events: "Session started/ended: {project}"
+- Activity events: "Activity in {project}" or "Activity heartbeat"
+- Tool events: "{tool_name} started/completed: {context}"
+- Agent events: "Agent state: {state}"
+- Summary events: First 80 chars of summary text
+- Error events: "Error: {category}"
+
+**Sub-components**:
+- `EventRow` - Single event row with icon, badge, description, timestamp
+- `JumpToLatestButton` - Button to jump to latest events with pending count
+- `EmptyState` - Placeholder when no events available
+
+**Props**:
+- `className` (string, optional) - Additional CSS classes for container
+
+**Accessibility**:
+- `role="log"` on main container with `aria-live="polite"`
+- `role="list"` on scrollable container
+- `role="listitem"` on each event row
+- `aria-label` with event type, time, and description
+- Proper semantic HTML with `<time>` elements for timestamps
+- Decorative SVGs marked with `aria-hidden="true"`
+
+**Styling**:
+- Dark theme with Tailwind classes (bg-gray-900)
+- Hover effects on event rows (bg-gray-800/50)
+- Color-coded badges with borders
+- Smooth transitions
+- Focus ring styling on jump button
+
+**Performance**:
+- Virtual scrolling prevents rendering all 1000+ events
+- Selective Zustand subscription to events only
+- Memoized helper functions (formatTimestamp, getEventDescription)
+- Event row reverse for newest-first display matching user expectations
+
+**Key Constants**:
+- `ESTIMATED_ROW_HEIGHT` - 64px per event
+- `AUTO_SCROLL_THRESHOLD` - 50px from bottom to disable auto-scroll
+- `EVENT_TYPE_ICONS` - Map of event type to Unicode emoji
+- `EVENT_TYPE_COLORS` - Map of event type to Tailwind color classes
+
+**Key Functions**:
+- `formatTimestamp(timestamp)` - Format RFC 3339 to HH:MM:SS
+- `getEventDescription(event)` - Create human-readable event summary
+- `handleScroll()` - Detect user scroll position for auto-scroll control
+- `handleJumpToLatest()` - Jump to bottom and reset auto-scroll
+
+**Example Usage**:
+```tsx
+// Basic usage with full height
+<EventStream className="h-full" />
+
+// Custom sizing
+<EventStream className="h-96 border border-gray-700 rounded-lg" />
+```
+
+### Client Formatting Utilities
+
+**Purpose**: Consistent timestamp and duration formatting across the client application
+**Location**: `client/src/utils/formatting.ts`
+**Responsibility**: Format conversion for display with graceful error handling
+
+**Phase 8 New - Formatting Utilities**:
+
+Provides pure, testable formatting functions for timestamps and durations:
+
+**Timestamp Formatting Functions**:
+- `formatTimestamp(timestamp: string)` - Format to HH:MM:SS (time only)
+  - Example: "2026-02-02T14:30:00Z" → "14:30:00"
+  - Returns "--:--:--" for invalid input
+  - Uses local timezone
+
+- `formatTimestampFull(timestamp: string)` - Format to YYYY-MM-DD HH:MM:SS
+  - Example: "2026-02-02T14:30:00Z" → "2026-02-02 14:30:00"
+  - Returns "----/--/-- --:--:--" for invalid input
+  - Uses local timezone
+
+- `formatRelativeTime(timestamp: string, now?: Date)` - Human-readable relative time
+  - Examples: "just now", "5m ago", "2h ago", "yesterday", "3d ago", "2w ago"
+  - Handles future timestamps (shows as "just now")
+  - Returns "unknown" for invalid input
+  - Useful for displaying "last activity" in session lists
+
+**Duration Formatting Functions**:
+- `formatDuration(milliseconds: number)` - Human format with two significant units
+  - Examples: "1h 30m", "5m 30s", "30s"
+  - Returns "0s" for zero, negative, or invalid input
+  - Shows up to two units (hours+minutes, or minutes+seconds, or seconds only)
+
+- `formatDurationShort(milliseconds: number)` - Digital clock format (H:MM:SS or M:SS)
+  - Examples: "1:30:00", "5:30", "0:30"
+  - Returns "0:00" for zero, negative, or invalid input
+  - Compact format for timer or duration displays
+
+**Helper Functions**:
+- `parseTimestamp(timestamp: string)` - Parse RFC 3339 to Date (returns null if invalid)
+- `padZero(value: number, width: number)` - Pad number with leading zeros
+- `isSameDay(date1: Date, date2: Date)` - Check if dates are on same calendar day
+- `isYesterday(date1: Date, date2: Date)` - Check if date1 is yesterday relative to date2
+
+**Constants**:
+- `INVALID_TIMESTAMP_FALLBACK` - "--:--:--"
+- `INVALID_TIMESTAMP_FULL_FALLBACK` - "----/--/-- --:--:--"
+- `INVALID_RELATIVE_TIME_FALLBACK` - "unknown"
+- `INVALID_DURATION_FALLBACK` - "0s"
+- `INVALID_DURATION_SHORT_FALLBACK` - "0:00"
+- Time unit constants: MS_PER_SECOND, MS_PER_MINUTE, MS_PER_HOUR, MS_PER_DAY, MS_PER_WEEK
+
+**Error Handling**:
+- All functions handle invalid input gracefully with appropriate fallbacks
+- No exceptions thrown; returns fallback values for invalid timestamps or durations
+- Type checking for NaN and non-string/non-number inputs
+
+**Usage Examples**:
+```typescript
+// In EventStream component
+const formattedTime = formatTimestamp(event.timestamp);
+
+// In session list for "last activity"
+const relativeTime = formatRelativeTime(session.lastEventAt);
+
+// In session duration display
+const duration = formatDuration(endTime - startTime);
+const shortDuration = formatDurationShort(totalMs);
+```
+
 ### Client Component
 
 **Purpose**: Subscribes to server events, displays sessions and activities
 **Location**: `client/src/`
-**Technologies**: TypeScript, React, Zustand, Vite
+**Technologies**: TypeScript, React, Zustand, Vite, @tanstack/react-virtual
 
 **Key Modules**:
 - `types/events.ts` - TypeScript definitions matching Rust types with type guards
 - `hooks/useEventStore.ts` - Zustand store for event state management (Phase 7)
 - `hooks/useWebSocket.ts` - WebSocket connection hook with auto-reconnect (Phase 7)
+- `components/EventStream.tsx` - Virtual scrolling event list with auto-scroll (Phase 8 NEW)
 - `components/ConnectionStatus.tsx` - Connection status visual indicator (Phase 7)
 - `components/TokenForm.tsx` - Token input and persistence form (Phase 7)
+- `utils/formatting.ts` - Timestamp and duration formatting utilities (Phase 8 NEW)
 - `App.tsx` - Root component (Phase 3 placeholder)
 - `main.tsx` - React entry point
 
@@ -800,7 +962,7 @@ Claude Code Session Activity
 18. On 429: parse Retry-After header, exponential backoff with jitter
 19. On failure: retry up to 10 times, max 60s delay between attempts
 
-### Server → Client Flow
+### Server → Client Flow (Phase 8)
 
 ```
 Authenticated Event
@@ -829,10 +991,12 @@ Authenticated Event
         ↓
    Component re-render (selective subscription)
         ↓
-   Display in UI
+   EventStream virtual rendering
+        ↓
+   Display in UI with auto-scroll
 ```
 
-**Flow Steps (Phase 7 Client)**:
+**Flow Steps (Phase 8 Client)**:
 1. Server's EventBroadcaster sends event to all WebSocket subscriptions
 2. Client WebSocket receives message with serialized event JSON
 3. useWebSocket hook's `onmessage` handler is triggered
@@ -843,9 +1007,14 @@ Authenticated Event
    - Creates or updates session entry
    - Updates session project, timestamps, status
 7. Zustand triggers selective notifications to subscribers
-8. Components subscribed to specific fields re-render (e.g., ConnectionStatus on status change)
-9. Event components re-render and display updated sessions/activities
-10. Unused subscriptions remain stable (no re-render)
+8. EventStream component receives updated events array
+9. Virtual scrolling recalculates item positions
+10. Auto-scroll checks if enabled; if yes, jumps to latest
+11. EventRow components render only visible items + overscan
+12. User sees new event at bottom with smooth scroll
+13. If user scrolls up, auto-scroll disables and jump button appears
+14. Jump button shows count of pending new events
+15. User clicks button to jump to latest and re-enable auto-scroll
 
 ## Layer Boundaries
 
@@ -863,6 +1032,8 @@ Authenticated Event
 | **Monitor Sender** | HTTP transmission, buffering, retry logic | Config (server URL), Crypto (signing), Types (events) | Filesystem, watcher, parser directly |
 | **Client WebSocket Hook** | Connection management, reconnection, message parsing | localStorage (token), Browser WebSocket API | Direct component state |
 | **Client Event Store** | State management, session aggregation, selective subscriptions | Event types | Direct API calls, localStorage (read-only) |
+| **Client Virtual Scrolling** | Efficient rendering, auto-scroll, jump-to-latest | useEventStore (events), @tanstack/react-virtual | Direct API calls |
+| **Client Formatting Utilities** | Timestamp/duration display formatting | Nothing (pure functions) | Component state, stores |
 | **Client Components** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
 
 ## Dependency Rules
@@ -882,6 +1053,8 @@ Authenticated Event
 - **Client WebSocket manages connection**: Only useWebSocket hook manages WebSocket instance and reconnection
 - **Store owns event state**: Only useEventStore manages events and sessions, not individual components
 - **Token managed separately**: Authentication token kept in localStorage, accessed by useWebSocket and TokenForm
+- **Virtual scrolling is view layer**: EventStream owns rendering; formatting utilities are pure dependencies
+- **Formatting utilities are pure**: No side effects, no state, pure input → output transformations
 
 ## Key Interfaces & Contracts
 
@@ -1127,6 +1300,41 @@ const events = useEventStore((state) => state.events);
 const addEvent = useEventStore((state) => state.addEvent);
 ```
 
+### Client EventStream Component Contract (Phase 8)
+
+**TypeScript Interface**:
+```typescript
+interface EventStreamProps {
+  readonly className?: string;  // Optional custom CSS classes
+}
+
+export function EventStream({ className = '' }: EventStreamProps): JSX.Element
+```
+
+**Helper Function Contracts** (Phase 8):
+```typescript
+function formatTimestamp(timestamp: string): string  // RFC3339 → HH:MM:SS
+function getEventDescription(event: VibeteaEvent): string  // Event → human text
+function handleScroll(): void  // Detect user scroll position
+function handleJumpToLatest(): void  // Jump to bottom and reset state
+```
+
+### Client Formatting Utilities Contract (Phase 8)
+
+**TypeScript Interfaces**:
+```typescript
+export function formatTimestamp(timestamp: string): string  // → "HH:MM:SS"
+export function formatTimestampFull(timestamp: string): string  // → "YYYY-MM-DD HH:MM:SS"
+export function formatRelativeTime(timestamp: string, now?: Date): string  // → "5m ago"
+export function formatDuration(milliseconds: number): string  // → "1h 30m"
+export function formatDurationShort(milliseconds: number): string  // → "1:30:00"
+```
+
+**Error Handling**:
+- All functions return appropriate fallback strings for invalid input
+- No exceptions thrown
+- Pure functions with no side effects
+
 ## State Management
 
 | State Type | Location | Pattern | Scope |
@@ -1144,6 +1352,8 @@ const addEvent = useEventStore((state) => state.addEvent);
 | **Client Events** | Zustand store | Event buffer + session derivation | Client session lifetime |
 | **Client Connection Status** | Zustand store | Discrete state enum | Until disconnect |
 | **Client Authentication Token** | Browser localStorage | Persisted between sessions | User clears or overwrites |
+| **Client Virtual Scrolling** | EventStream (local state) | isAutoScrollEnabled, newEventCount | Component lifetime |
+| **Client Event Display Order** | EventStream (computed) | Reversed from store (newest-first internally) | Component render |
 
 ## Cross-Cutting Concerns
 
@@ -1165,6 +1375,9 @@ const addEvent = useEventStore((state) => state.addEvent);
 | **Client Connection Management** | WebSocket reconnection with exponential backoff | `useWebSocket.ts` (Phase 7) |
 | **Client State Persistence** | Token storage in localStorage | `TokenForm.tsx` (Phase 7) |
 | **Client UI Rendering** | Selective Zustand subscriptions | `ConnectionStatus.tsx`, `TokenForm.tsx` (Phase 7) |
+| **Virtual Scrolling Rendering** | @tanstack/react-virtual for 1000+ item lists | `EventStream.tsx` (Phase 8) |
+| **Auto-Scroll Management** | Scroll position tracking and auto-scroll toggle | `EventStream.tsx` (Phase 8) |
+| **Timestamp Formatting** | RFC3339 → display formats with fallbacks | `formatting.ts` (Phase 8) |
 
 ## Testing Strategy
 
@@ -1204,6 +1417,8 @@ const addEvent = useEventStore((state) => state.addEvent);
 - WebSocket hook tests (useWebSocket integration, reconnection logic)
 - Event store tests (useEventStore session aggregation)
 - Component tests (ConnectionStatus, TokenForm)
+- Virtual scrolling tests (EventStream rendering and auto-scroll)
+- Formatting utility tests (timestamp and duration formatting)
 
 **Integration Tests**: Located in `server/tests/unsafe_mode_test.rs`
 - End-to-end scenarios in unsafe mode (auth disabled)

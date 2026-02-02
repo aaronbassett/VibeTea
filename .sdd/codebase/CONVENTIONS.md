@@ -46,27 +46,28 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Components | PascalCase | `ConnectionStatus.tsx`, `TokenForm.tsx` |
+| Components | PascalCase | `ConnectionStatus.tsx`, `TokenForm.tsx`, `EventStream.tsx` |
 | Hooks | camelCase with `use` prefix | `useEventStore.ts`, `useWebSocket.ts` |
 | Types | PascalCase in `types/` folder | `types/events.ts` contains `VibeteaEvent` |
-| Utilities | camelCase | `utils/` exists (placeholder) |
+| Utilities | camelCase | `utils/formatting.ts` |
 | Constants | SCREAMING_SNAKE_CASE in const files | `MAX_EVENTS = 1000`, `TOKEN_STORAGE_KEY` |
-| Test files | Same as source + `.test.ts` | `__tests__/events.test.ts` |
+| Test files | Same as source + `.test.ts` | `__tests__/events.test.ts`, `__tests__/formatting.test.ts` |
 | Test directories | `__tests__/` at feature level | Co-located with related source |
 
 #### Code Elements
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Variables | camelCase | `sessionId`, `eventCount`, `wsRef`, `connectRef` |
-| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `DEFAULT_BUFFER_SIZE`, `TOKEN_STORAGE_KEY` |
-| Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()`, `parseEventMessage()`, `calculateBackoff()` |
+| Variables | camelCase | `sessionId`, `eventCount`, `wsRef`, `connectRef`, `displayEvents`, `isAutoScrollEnabled` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `DEFAULT_BUFFER_SIZE`, `TOKEN_STORAGE_KEY`, `ESTIMATED_ROW_HEIGHT` |
+| Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()`, `parseEventMessage()`, `calculateBackoff()`, `formatTimestamp()`, `getEventDescription()` |
 | Classes | PascalCase (rare in modern React) | N/A |
-| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent`, `UseWebSocketReturn`, `ConnectionStatusProps` |
-| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus`, `TokenStatus` |
+| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent`, `UseWebSocketReturn`, `ConnectionStatusProps`, `EventStreamProps` |
+| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus`, `TokenStatus`, `EventType` |
 | Type guards | `is` prefix | `isSessionEvent()`, `isValidEventType()` |
 | Enums | PascalCase | N/A (use union types instead) |
-| Refs | camelCase with `Ref` suffix | `wsRef`, `reconnectTimeoutRef`, `connectRef` |
+| Refs | camelCase with `Ref` suffix | `wsRef`, `reconnectTimeoutRef`, `connectRef`, `parentRef`, `previousEventCountRef` |
+| Records/Maps | PascalCase for type, camelCase for variable | `EVENT_TYPE_ICONS`, `EVENT_TYPE_COLORS` (const) |
 
 ### Rust/Server/Monitor
 
@@ -494,6 +495,328 @@ Key patterns:
 5. **localStorage handling**: Abstract into helper functions (e.g., `hasStoredToken()`)
 6. **Cross-tab sync**: Listen to `storage` events for multi-tab consistency
 
+### Virtual Scrolling Pattern (TypeScript - Phase 8)
+
+Efficient rendering of large lists using `@tanstack/react-virtual`:
+
+**From `EventStream.tsx`** (Phase 8):
+
+```typescript
+/**
+ * Virtual scrolling event stream for displaying VibeTea events.
+ *
+ * Features:
+ * - Efficient rendering of 1000+ events using virtual scrolling
+ * - Auto-scroll to show new events (pauses when user scrolls up 50px+)
+ * - Jump to latest button when auto-scroll is paused
+ * - Event type icons and color-coded badges
+ * - Accessible with proper ARIA attributes
+ */
+export function EventStream({ className = '' }: EventStreamProps) {
+  // Selective subscription: only re-render when events change
+  const events = useEventStore((state) => state.events);
+
+  // Refs for persistent values across renders
+  const parentRef = useRef<HTMLDivElement>(null);
+  const previousEventCountRef = useRef<number>(events.length);
+
+  // State for auto-scroll control
+  const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState<boolean>(true);
+  const [newEventCount, setNewEventCount] = useState<number>(0);
+
+  // Reverse events for display (newest at bottom)
+  const displayEvents = [...events].reverse();
+
+  // Virtual scrolling setup
+  const virtualizer = useVirtualizer({
+    count: displayEvents.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: 5,
+  });
+
+  // Handle scroll detection to pause/resume auto-scroll
+  const handleScroll = useCallback(() => {
+    const scrollElement = parentRef.current;
+    if (scrollElement === null) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = scrollElement;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+    if (distanceFromBottom > AUTO_SCROLL_THRESHOLD) {
+      setIsAutoScrollEnabled(false);
+    } else {
+      if (!isAutoScrollEnabled) {
+        setIsAutoScrollEnabled(true);
+        setNewEventCount(0);
+      }
+    }
+  }, [isAutoScrollEnabled]);
+
+  // Auto-scroll to bottom when new events arrive (if enabled)
+  useEffect(() => {
+    const currentCount = events.length;
+    const previousCount = previousEventCountRef.current;
+
+    if (currentCount > previousCount) {
+      const addedCount = currentCount - previousCount;
+
+      if (isAutoScrollEnabled) {
+        virtualizer.scrollToIndex(displayEvents.length - 1, { align: 'end' });
+      } else {
+        setNewEventCount((prev) => prev + addedCount);
+      }
+    }
+
+    previousEventCountRef.current = currentCount;
+  }, [events.length, isAutoScrollEnabled, displayEvents.length, virtualizer]);
+
+  // Attach scroll listener with passive flag for performance
+  useEffect(() => {
+    const scrollElement = parentRef.current;
+    if (scrollElement === null) return;
+
+    scrollElement.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scrollElement.removeEventListener('scroll', handleScroll);
+  }, [handleScroll]);
+
+  // Render virtual items
+  return (
+    <div
+      ref={parentRef}
+      className="h-full overflow-auto"
+      role="list"
+      aria-label={`${displayEvents.length} events`}
+    >
+      <div style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}>
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const event = displayEvents[virtualItem.index];
+          if (event === undefined) return null;
+
+          return (
+            <div
+              key={event.id}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: `${virtualItem.size}px`,
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <EventRow event={event} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+```
+
+Key patterns:
+1. **Virtual scrolling**: Use `@tanstack/react-virtual` for efficient rendering of 1000+ items
+2. **Auto-scroll logic**: Track scroll position to detect user scrolling away from bottom
+3. **Jump to latest**: Provide button to quickly return to new content
+4. **Refs for state**: Use refs for previous state comparisons that don't trigger re-renders
+5. **Passive scroll listeners**: Improve performance with `{ passive: true }` flag
+6. **Absolute positioning**: Position virtual items with `transform: translateY()` for best performance
+7. **Array reversal**: Reverse data only for display, keep storage in original order
+
+### Formatting Utilities Pattern (TypeScript - Phase 8)
+
+Pure functions for consistent formatting throughout the application:
+
+**From `utils/formatting.ts`** (Phase 8):
+
+```typescript
+/**
+ * Formats an RFC 3339 timestamp for display as time only (HH:MM:SS).
+ * Uses the local timezone for display.
+ *
+ * @param timestamp - RFC 3339 formatted timestamp string
+ * @returns Formatted time string or fallback for invalid input
+ */
+export function formatTimestamp(timestamp: string): string {
+  const date = parseTimestamp(timestamp);
+  if (date === null) return INVALID_TIMESTAMP_FALLBACK;
+
+  const hours = padZero(date.getHours());
+  const minutes = padZero(date.getMinutes());
+  const seconds = padZero(date.getSeconds());
+
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+/**
+ * Formats a duration in milliseconds as relative time.
+ * Returns "just now", "5m ago", "2h ago", "yesterday", "3d ago", "2w ago".
+ *
+ * @param timestamp - RFC 3339 formatted timestamp string
+ * @param now - Optional reference time (defaults to current time)
+ * @returns Relative time string or fallback for invalid input
+ */
+export function formatRelativeTime(timestamp: string, now: Date = new Date()): string {
+  const date = parseTimestamp(timestamp);
+  if (date === null) return INVALID_RELATIVE_TIME_FALLBACK;
+
+  const diffMs = now.getTime() - date.getTime();
+
+  if (diffMs < MS_PER_MINUTE) return 'just now';
+  if (diffMs < MS_PER_HOUR) {
+    const minutes = Math.floor(diffMs / MS_PER_MINUTE);
+    return `${minutes}m ago`;
+  }
+  // ... more time units
+
+  return `${weeks}w ago`;
+}
+
+/**
+ * Formats a duration in milliseconds to human-readable form.
+ * Returns "1h 30m", "5m 30s", "30s" (only two most significant units).
+ *
+ * @param milliseconds - Duration in milliseconds
+ * @returns Formatted duration string or fallback for invalid input
+ */
+export function formatDuration(milliseconds: number): string {
+  if (typeof milliseconds !== 'number' || Number.isNaN(milliseconds)) {
+    return INVALID_DURATION_FALLBACK;
+  }
+
+  if (milliseconds <= 0) return INVALID_DURATION_FALLBACK;
+
+  const totalSeconds = Math.floor(milliseconds / MS_PER_SECOND);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts: string[] = [];
+  if (hours > 0) {
+    parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+  } else if (minutes > 0) {
+    parts.push(`${minutes}m`);
+    if (seconds > 0) parts.push(`${seconds}s`);
+  } else {
+    parts.push(`${seconds}s`);
+  }
+
+  return parts.join(' ');
+}
+
+/**
+ * Formats a duration in milliseconds to compact digital clock format.
+ * Returns "1:30:00" (hours), "5:30" (minutes), "0:30" (seconds).
+ *
+ * @param milliseconds - Duration in milliseconds
+ * @returns Compact duration string or fallback for invalid input
+ */
+export function formatDurationShort(milliseconds: number): string {
+  if (typeof milliseconds !== 'number' || Number.isNaN(milliseconds)) {
+    return INVALID_DURATION_SHORT_FALLBACK;
+  }
+
+  if (milliseconds <= 0) return INVALID_DURATION_SHORT_FALLBACK;
+
+  const totalSeconds = Math.floor(milliseconds / MS_PER_SECOND);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${padZero(minutes)}:${padZero(seconds)}`;
+  }
+
+  return `${minutes}:${padZero(seconds)}`;
+}
+```
+
+Key conventions for formatting utilities:
+1. **Pure functions**: No side effects, deterministic output for same inputs
+2. **Graceful fallbacks**: Return sensible defaults for invalid input instead of throwing
+3. **Type validation**: Check input types before processing (e.g., `typeof milliseconds !== 'number'`)
+4. **Helper functions**: Extract common logic like `parseTimestamp()`, `padZero()`, `isSameDay()`
+5. **Constants for magic numbers**: Define `MS_PER_SECOND`, `MS_PER_MINUTE`, etc.
+6. **JSDoc with examples**: Document behavior, parameters, and return values with real examples
+7. **Optional parameters**: Support reference times for testing (e.g., `now: Date = new Date()`)
+8. **Consistent formatting**: Similar patterns across all formatting functions
+
+### Unicode Emoji Icon Pattern (Phase 8)
+
+Use Unicode escape sequences for emoji icons with clear fallbacks:
+
+**From `EventStream.tsx`** (Phase 8):
+
+```typescript
+/** Icon mapping for each event type using Unicode escape sequences */
+const EVENT_TYPE_ICONS: Record<EventType, string> = {
+  tool: '\u{1F527}',      // 🔧 wrench
+  activity: '\u{1F4AC}',  // 💬 speech bubble
+  session: '\u{1F680}',   // 🚀 rocket
+  summary: '\u{1F4CB}',   // 📋 clipboard
+  error: '\u{26A0}\u{FE0F}', // ⚠️ warning
+  agent: '\u{1F916}',     // 🤖 robot
+};
+
+// Usage in component
+<span className="text-base" aria-hidden="true">
+  {icon}
+</span>
+```
+
+Key conventions:
+1. **Unicode escape sequences**: Use `\u{...}` notation for better readability in source code
+2. **Variation selectors**: Use `\u{FE0F}` for emoji style on multi-codepoint icons (⚠️)
+3. **ARIA hidden**: Mark emoji as `aria-hidden="true"` since description is in text
+4. **Consistent mapping**: Create lookup objects for all icon/variant combinations
+5. **Clear comments**: Document actual emoji for quick reference during code review
+
+### Event Type Description Pattern (Phase 8)
+
+Type-safe extraction of event details using type assertions:
+
+**From `EventStream.tsx`** (Phase 8):
+
+```typescript
+/**
+ * Get a brief description of the event payload.
+ * Uses type assertions to safely access payload properties based on event type.
+ */
+function getEventDescription(event: VibeteaEvent): string {
+  const { type, payload } = event;
+
+  switch (type) {
+    case 'session': {
+      // Type assertion: payload is guaranteed to be VibeteaEvent<'session'>['payload']
+      const sessionPayload = payload as VibeteaEvent<'session'>['payload'];
+      return `Session ${sessionPayload.action}: ${sessionPayload.project}`;
+    }
+    case 'tool': {
+      const toolPayload = payload as VibeteaEvent<'tool'>['payload'];
+      return `${toolPayload.tool} ${toolPayload.status}${
+        toolPayload.context !== undefined ? `: ${toolPayload.context}` : ''
+      }`;
+    }
+    case 'summary': {
+      const summaryPayload = payload as VibeteaEvent<'summary'>['payload'];
+      const summary = summaryPayload.summary;
+      return summary.length > 80 ? `${summary.slice(0, 80)}...` : summary;
+    }
+    default:
+      return 'Unknown event';
+  }
+}
+```
+
+Key patterns:
+1. **Type narrowing with switch**: Use discriminated union type narrowing in switch statements
+2. **Type assertions for payload**: Cast `payload as VibeteaEvent<T>['payload']` after type check
+3. **Safe optional access**: Check `!== undefined` before using optional fields
+4. **Truncation for display**: Limit string length for UI display (e.g., 80 chars for summaries)
+5. **Default fallback**: Always have a default case to handle unexpected types gracefully
+
 ### Exponential Backoff Pattern (TypeScript - Phase 7)
 
 Implement reconnection delays with jitter:
@@ -849,8 +1172,8 @@ Key conventions in CLI:
 
 Standard import order (enforced conceptually, no linter config):
 
-1. React and external packages (`react`, `react-dom`, `zustand`)
-2. Internal modules (`./types/`, `./hooks/`)
+1. React and external packages (`react`, `react-dom`, `zustand`, `@tanstack/react-virtual`)
+2. Internal modules (`./types/`, `./hooks/`, `./utils/`)
 3. Relative imports (`./App`, `../sibling`)
 4. Type imports (`import type { ... }`)
 
@@ -863,20 +1186,21 @@ import type { VibeteaEvent } from '../types/events';
 import { useEventStore } from './useEventStore';
 ```
 
-Example from `ConnectionStatus.tsx` (Phase 7):
+Example from `EventStream.tsx` (Phase 8):
 
 ```typescript
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+
 import { useEventStore } from '../hooks/useEventStore';
 
-import type { ConnectionStatus as ConnectionStatusType } from '../hooks/useEventStore';
+import type { EventType, VibeteaEvent } from '../types/events';
 ```
 
-Example from `useEventStore.ts`:
+Example from `utils/formatting.ts` (Phase 8):
 
 ```typescript
-import { create } from 'zustand';
-
-import type { Session, VibeteaEvent } from '../types/events';
+// No imports - pure utility functions with no external dependencies
 ```
 
 ### Rust
@@ -966,6 +1290,67 @@ function calculateBackoff(attempt: number): number {
   const jitter = 1 + (Math.random() * 2 - 1) * JITTER_FACTOR;
 
   return Math.round(exponentialDelay * jitter);
+}
+```
+
+Example from `EventStream.tsx` (Phase 8):
+
+```typescript
+/**
+ * Virtual scrolling event stream component.
+ *
+ * Displays VibeTea events with efficient rendering using @tanstack/react-virtual,
+ * supporting 1000+ events with auto-scroll behavior and jump-to-latest functionality.
+ */
+
+/**
+ * Format RFC 3339 timestamp for display.
+ *
+ * @param timestamp - RFC 3339 formatted timestamp string
+ * @returns Formatted time string (HH:MM:SS)
+ */
+function formatTimestamp(timestamp: string): string {
+  // Implementation
+}
+
+/**
+ * Get a brief description of the event payload.
+ *
+ * @param event - The VibeTea event
+ * @returns A human-readable description
+ */
+function getEventDescription(event: VibeteaEvent): string {
+  // Implementation
+}
+
+// -------
+// Section comment for grouped constants
+// -------
+
+const EVENT_TYPE_ICONS: Record<EventType, string> = {
+  tool: '\u{1F527}', // 🔧
+  activity: '\u{1F4AC}', // 💬
+  // ...
+};
+```
+
+Example from `utils/formatting.ts` (Phase 8):
+
+```typescript
+/**
+ * Formats an RFC 3339 timestamp for display as time only (HH:MM:SS).
+ *
+ * Uses the local timezone for display.
+ *
+ * @param timestamp - RFC 3339 formatted timestamp string (e.g., "2026-02-02T14:30:00Z")
+ * @returns Formatted time string (e.g., "14:30:00") or fallback for invalid input
+ *
+ * @example
+ * formatTimestamp("2026-02-02T14:30:00Z") // "14:30:00" (in UTC timezone)
+ * formatTimestamp("invalid") // "--:--:--"
+ */
+export function formatTimestamp(timestamp: string): string {
+  // Implementation
 }
 ```
 
@@ -1201,6 +1586,11 @@ Format: `type(scope): description`
 | refactor | Code restructure | `refactor(config): simplify validation` |
 | test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
+
+Examples with Phase 8:
+- `feat(client): add virtual scrolling event stream with auto-scroll`
+- `feat(client): add formatting utilities for timestamps and durations`
+- `test(client): add 33 tests for formatting utility functions`
 
 Examples with Phase 7:
 - `feat(client): add WebSocket connection hook with auto-reconnect`

@@ -381,18 +381,18 @@ VibeTea uses a multi-project structure:
 ### Event Stream Component
 
 - [X] T165 [US6] Implement EventStream component in client/src/components/EventStream.tsx using @tanstack/react-virtual (use devs:react-dev agent)
-- [ ] T166 [GIT] Commit: add EventStream component
+- [X] T166 [GIT] Commit: add EventStream component - Combined with T168, T170, T172, T174
 - [X] T167 [US6] Implement auto-scroll logic (pause when scrolled >50px from bottom) in client/src/components/EventStream.tsx (use devs:react-dev agent) - Part of T165
-- [ ] T168 [GIT] Commit: add auto-scroll logic
+- [X] T168 [GIT] Commit: add auto-scroll logic - Part of T166
 - [X] T169 [US6] Implement "Jump to latest" button in client/src/components/EventStream.tsx (use devs:react-dev agent) - Part of T165
-- [ ] T170 [GIT] Commit: add jump to latest button
+- [X] T170 [GIT] Commit: add jump to latest button - Part of T166
 - [X] T171 [US6] Implement event type icons (tool 🔧, activity 💬, session 🚀, summary 📋, error ⚠️) in client/src/components/EventStream.tsx (use devs:react-dev agent) - Part of T165
-- [ ] T172 [GIT] Commit: add event type icons
+- [X] T172 [GIT] Commit: add event type icons - Part of T166
 
 ### Utility Functions
 
 - [X] T173 [US6] Implement timestamp and duration formatting in client/src/utils/formatting.ts (use devs:typescript-dev agent)
-- [ ] T174 [GIT] Commit: add formatting utilities
+- [X] T174 [GIT] Commit: add formatting utilities - Part of T166
 
 ### Phase 8 Completion
 

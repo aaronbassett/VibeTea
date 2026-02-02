@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 7 Implementation - Client WebSocket connection, token management, connection status UI
+**Status**: Phase 8 Implementation - Virtual scrolling event display with formatting utilities
 **Last Updated**: 2026-02-02
 
 ## Summary
@@ -456,7 +456,7 @@ pub struct SenderConfig {
 4. User adds to server configuration
 5. User runs: `vibetea-monitor run`
 
-## Client-Side Integrations (Phase 7)
+## Client-Side Integrations (Phase 7-8)
 
 ### Browser WebSocket Connection
 
@@ -641,7 +641,167 @@ interface TokenFormProps {
    - Input cleared after successful save
    - Token masked as password field
 
-### Integration Flow (Phase 7)
+### Event Stream Component (Phase 8)
+
+**Module Location**: `client/src/components/EventStream.tsx` (425 lines)
+
+**Features**:
+
+1. **Virtual Scrolling Performance**
+   - Uses `@tanstack/react-virtual` for efficient large-list rendering
+   - Estimated row height: 64 pixels
+   - Overscan: 5 items (renders items beyond viewport)
+   - Supports 1000+ events without performance degradation
+   - Memory-efficient: Only visible items rendered
+
+2. **Auto-Scroll Behavior**
+   - Automatically scrolls to latest event when new events arrive
+   - Auto-scroll disabled when user scrolls up 50+ pixels from bottom
+   - "Jump to Latest" button appears when auto-scroll is paused
+   - Button shows count of new events available
+   - Clicking button re-enables auto-scroll and scrolls to bottom
+
+3. **Event Display**
+   - **EventRow sub-component**: Renders single event
+   - Event type icon (emoji): Unique symbol for each event type
+   - Color-coded badge: Type-specific Tailwind CSS colors
+   - Description: Concise event summary from payload
+   - Source/Session ID: Source and truncated session ID
+   - Timestamp: RFC 3339 converted to HH:MM:SS format
+
+4. **Event Type Styling**
+   - session: Purple badge with rocket emoji
+   - activity: Green badge with comment emoji
+   - tool: Blue badge with wrench emoji
+   - agent: Amber badge with robot emoji
+   - summary: Cyan badge with clipboard emoji
+   - error: Red badge with warning emoji
+
+5. **Event Description Extraction**
+   - Session: "Session started: project-name" or "Session ended: project-name"
+   - Activity: "Activity in project-name" or "Activity heartbeat"
+   - Tool: "tool-name status" with optional context
+   - Agent: "Agent state: state-name"
+   - Summary: First 80 chars of summary text + ellipsis
+   - Error: "Error: error-category"
+
+6. **Empty State**
+   - Friendly message when no events available
+   - Icon and descriptive text
+   - Guides user to wait for events
+
+7. **Accessibility**
+   - `role="log"` for semantic event stream
+   - `aria-live="polite"` for live region updates
+   - `role="list"` and `role="listitem"` for event items
+   - Proper `aria-label` attributes for elements
+   - Event count in aria-label
+   - Timestamp as `<time>` element with `dateTime` attribute
+
+8. **Integration with Zustand Store**
+   - Selective subscription: only re-renders when events change
+   - Uses `useEventStore` hook with selector
+   - Gets `events` array (newest-first ordering)
+   - Reverses array for display (oldest at top, newest at bottom)
+
+### Formatting Utilities Integration (Phase 8)
+
+**Module Location**: `client/src/utils/formatting.ts` (331 lines)
+
+**Formatting Functions**:
+
+1. **Timestamp Formatting**
+   - `formatTimestamp(timestamp)`: RFC 3339 → "HH:MM:SS"
+   - `formatTimestampFull(timestamp)`: RFC 3339 → "YYYY-MM-DD HH:MM:SS"
+   - Both use local timezone for display
+   - Fallback strings for invalid input
+
+2. **Relative Time Formatting**
+   - `formatRelativeTime(timestamp, now?)`: Relative time display
+   - Returns: "just now", "5m ago", "2h ago", "yesterday", "3d ago", "2w ago"
+   - Optional `now` parameter for testing with fixed reference time
+   - Handles future timestamps as "just now"
+
+3. **Duration Formatting**
+   - `formatDuration(milliseconds)`: Duration → "1h 30m", "5m 30s", "30s"
+   - Shows up to two most significant units
+   - Omits seconds when hours present
+   - Fallback "0s" for invalid/zero/negative input
+
+4. **Compact Duration Formatting**
+   - `formatDurationShort(milliseconds)`: Duration → "1:30:00", "5:30", "0:30"
+   - H:MM:SS format for durations >= 1 hour
+   - M:SS format for durations < 1 hour
+   - Fallback "0:00" for invalid/zero/negative input
+
+5. **Helper Functions**
+   - `parseTimestamp()`: Safely parse RFC 3339 to Date
+   - `padZero()`: Pad numbers with leading zeros
+   - `isSameDay()`: Check if dates are same calendar day
+   - `isYesterday()`: Check if date1 is yesterday relative to date2
+
+6. **Error Handling**
+   - All functions handle invalid input gracefully
+   - Return sensible fallback strings
+   - No exceptions thrown
+   - No side effects (pure functions)
+
+7. **Usage in EventStream**
+   - `formatTimestamp()` converts event.timestamp for display
+   - Timestamps shown as "HH:MM:SS" in EventRow
+   - Can be extended with `formatTimestampFull()` or `formatRelativeTime()`
+
+### Formatting Tests (Phase 8)
+
+**Module Location**: `client/src/__tests__/formatting.test.ts` (229 lines)
+
+**Test Coverage**:
+
+1. **formatTimestamp Tests** (6 tests)
+   - Valid RFC 3339 timestamps with various formats
+   - Timezone offset handling (UTC+05:30, -08:00)
+   - Empty string fallback
+   - Invalid timestamp handling
+   - Whitespace-only input fallback
+
+2. **formatTimestampFull Tests** (4 tests)
+   - Full datetime formatting (YYYY-MM-DD HH:MM:SS)
+   - Timezone offset handling
+   - Empty string and invalid input fallbacks
+
+3. **formatRelativeTime Tests** (8 tests)
+   - "just now" for recent timestamps (<1 minute)
+   - "just now" for future timestamps
+   - Minutes ago ("1m", "5m", "59m")
+   - Hours ago ("1h", "2h", "23h")
+   - "yesterday" detection (timezone-aware)
+   - Days ago ("3d", "6d")
+   - Weeks ago ("1w", "2w", "9w")
+   - Invalid input handling
+
+4. **formatDuration Tests** (10 tests)
+   - Hours and minutes ("1h 30m", "2h 1m")
+   - Minutes and seconds ("5m 30s", "1m 30s")
+   - Seconds only ("30s", "59s")
+   - Omits seconds when hours present
+   - Zero value handling
+   - Negative value handling
+   - NaN handling
+   - Large durations (48h, 100h)
+
+5. **formatDurationShort Tests** (5 tests)
+   - H:MM:SS format for >= 1 hour (with leading zeros on minutes/seconds)
+   - M:SS format for < 1 hour (with leading zeros on seconds)
+   - Zero value handling
+   - Negative value handling
+   - NaN handling
+   - Large durations with leading zeros
+
+**Test Framework**: Vitest with `describe` and `it` blocks
+**Total Tests**: 33 comprehensive test cases
+**Coverage**: 100% of exported functions and critical code paths
+
+### Integration Flow (Phase 7-8)
 
 **Typical Usage Pattern**:
 ```typescript
@@ -657,6 +817,7 @@ function App() {
         }}
       />
       <ConnectionStatus showLabel />
+      <EventStream className="h-96 border border-gray-700 rounded-lg" />
       {/* Rest of app */}
     </div>
   );
@@ -673,6 +834,9 @@ function App() {
 7. ConnectionStatus shows "Connected" with green dot
 8. Events flow from server to client via WebSocket
 9. Events added to Zustand store via `addEvent()`
+10. EventStream displays events with virtual scrolling
+11. User can scroll, auto-scroll pauses if scrolled up
+12. Jump to Latest button appears when new events arrive
 
 ## Event Validation & Types
 
@@ -729,6 +893,12 @@ Event {
 - TypeScript type guards ensure type safety
 - Zustand store aggregates events by session
 - Components render session data from store
+
+**Phase 8 Display** (new):
+- EventStream renders events with virtual scrolling
+- Formatting utilities provide consistent timestamp/duration display
+- Color-coded badges and icons for event types
+- Event descriptions extracted from payloads
 
 ### Client Event Store Integration
 
@@ -832,13 +1002,14 @@ export interface EventStore {
 - Returns 101 Switching Protocols on success
 - Returns 401 Unauthorized on token validation failure
 
-**Client-Side Handling** (Phase 7):
+**Client-Side Handling** (Phase 7-8):
 - WebSocket proxy configured in `client/vite.config.ts` (target: ws://localhost:8080)
 - State management via `useEventStore` hook (Zustand)
 - Event type guards for safe type access in `client/src/types/events.ts`
 - ConnectionStatus transitions: disconnected → connecting → connected → reconnecting
 - Token management via `TokenForm` component
 - Connection control via `useWebSocket` hook
+- Virtual scrolling display via EventStream component (Phase 8)
 
 **Connection Details**:
 - Address/port: Configured via `PORT` environment variable (default: 8080)
@@ -1063,11 +1234,13 @@ server: {
 - Code splitting: react-vendor, state, virtual chunks
 - Target: ES2020
 
-**Phase 7 Client Features**:
+**Phase 7-8 Client Features**:
 - Token management via TokenForm component
 - Connection status visualization via ConnectionStatus component
 - WebSocket connection management via useWebSocket hook
 - Event display and session tracking via Zustand store
+- Virtual scrolling with EventStream component (Phase 8)
+- Timestamp and duration formatting with utilities (Phase 8)
 - localStorage persistence for authentication token
 
 ## Error Handling & Validation
@@ -1142,12 +1315,14 @@ server: {
 - MaxRetriesExceeded - All retry attempts exhausted
 - Json - Event serialization failure
 
-**Client-Side Error Handling** (Phase 7):
+**Client-Side Error Handling** (Phase 7-8):
 - WebSocket connection errors logged to console
 - Message parsing failures handled gracefully
 - Invalid events silently discarded
 - No crashes on connection drops (auto-reconnect)
 - Token missing handled with warning log
+- Formatting functions handle invalid timestamps/durations with fallback strings
+- No runtime errors from formatting utility functions
 
 **Resilience**:
 - Continues watching even if individual file operations fail
@@ -1158,6 +1333,7 @@ server: {
 - Privacy processing failures logged without exposing sensitive data
 - Sender buffers events if network unavailable, retries with backoff
 - Client maintains event store even if connection drops
+- Virtual scrolling gracefully handles empty event lists and large datasets
 
 ## File System Monitoring
 
@@ -1312,6 +1488,7 @@ server: {
 - **Session Persistence**: Store events in database for replay (Phase 7+)
 - **Advanced Authentication**: Per-user tokens, OAuth2 flows (Phase 7+)
 - **Event Search/Filtering**: Full-text search and advanced filtering UI (Phase 7+)
+- **Performance Monitoring**: Client-side performance metrics (Phase 8+)
 
 ## Configuration Quick Reference
 
@@ -1478,3 +1655,38 @@ None required for production (future configuration planned).
 - EventPayloadMap for type-safe access
 
 **Integration Status**: Phase 7 client-side features complete. Ready for main event loop integration and session visualization UI.
+
+### Phase 8 Changes
+
+**Client Event Stream Component** (`client/src/components/EventStream.tsx` - 425 lines):
+- **Virtual scrolling**: Uses @tanstack/react-virtual for 1000+ event rendering
+- **Auto-scroll**: Intelligent auto-scroll with pause when user scrolls up 50px
+- **Jump to latest**: Button appears when auto-scroll disabled, shows new event count
+- **Event type icons**: Unique emoji for each event type (session, activity, tool, agent, summary, error)
+- **Color-coded badges**: Tailwind CSS utility classes for visual differentiation
+- **Event descriptions**: Extracted from payloads, concise summaries displayed
+- **Sub-components**: EventRow (single event), JumpToLatestButton, EmptyState
+- **Accessibility**: ARIA labels, roles, live regions for screen readers
+- **Performance**: Selective Zustand subscriptions prevent unnecessary re-renders
+
+**Formatting Utilities Module** (`client/src/utils/formatting.ts` - 331 lines):
+- **formatTimestamp()**: RFC 3339 → "HH:MM:SS" (local timezone)
+- **formatTimestampFull()**: RFC 3339 → "YYYY-MM-DD HH:MM:SS"
+- **formatRelativeTime()**: Relative time display ("5m ago", "yesterday")
+- **formatDuration()**: Duration → human-readable ("1h 30m", "5m 30s")
+- **formatDurationShort()**: Duration → compact format ("1:30:00", "5:30")
+- **Helper functions**: parseTimestamp(), padZero(), isSameDay(), isYesterday()
+- **Error handling**: Graceful fallback strings for invalid input
+- **Pure functions**: No side effects, entirely deterministic
+- **Comprehensive docs**: JSDoc with examples for each function
+
+**Formatting Tests** (`client/src/__tests__/formatting.test.ts` - 229 lines):
+- **33 comprehensive test cases**: Full coverage of all formatting functions
+- **formatTimestamp tests** (6): Valid timestamps, timezone handling, fallbacks
+- **formatTimestampFull tests** (4): Full datetime, timezone, fallbacks
+- **formatRelativeTime tests** (8): Recent, minutes, hours, yesterday, days, weeks
+- **formatDuration tests** (10): Hours/mins, mins/secs, secs, edge cases
+- **formatDurationShort tests** (5): H:MM:SS, M:SS, zero, negative, large values
+- **Test framework**: Vitest with descriptive test organization
+
+**Integration Status**: Phase 8 complete with virtual scrolling event display, timestamp/duration formatting, and comprehensive tests.

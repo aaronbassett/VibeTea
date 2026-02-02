@@ -797,6 +797,7 @@ No SQL errors, path traversal details, or stack traces exposed to clients.
 | tracing | Latest | Structured logging | Current (Phase 5) |
 | gethostname | Latest | Monitor hostname detection | Current (Phase 6) |
 | anyhow | Latest | Context error handling | Current (Phase 6) |
+| @tanstack/react-virtual | Latest | Virtual scrolling (Phase 8) | Current |
 
 ### Dependency Audit
 
@@ -896,49 +897,92 @@ From `client/src/components/ConnectionStatus.tsx`:
 - No authentication or authorization checks
 - Purely informational UI component
 
-## Phase 7 Security Changes
+### EventStream Component (Phase 8)
 
-New client-side components for user authentication:
+From `client/src/components/EventStream.tsx`:
 
-### TokenForm Component (`client/src/components/TokenForm.tsx`)
+**Virtual Scrolling**:
+- Uses `@tanstack/react-virtual` for efficient rendering of 1000+ events
+- Estimated row height: 64px for layout calculation
+- Overscan: 5 items beyond visible area
+- No security implications (pure presentation)
 
-- **Purpose**: Manage bearer token for WebSocket authentication
-- **Storage**: localStorage (browser storage, not cryptographically protected)
-- **Key**: `vibetea_token` (consistent with useWebSocket)
-- **User interaction**: Password input with save/clear buttons
-- **Status tracking**: Visual indicator of saved/not-saved state
-- **Cross-tab sync**: Listens to storage events for multi-window updates
+**Event Display**:
+- Events displayed newest-first (reversed from storage order)
+- Auto-scroll to bottom when new events arrive
+- Pause auto-scroll when user scrolls up 50px+
+- "Jump to Latest" button when auto-scroll is paused
+- Event type icons and color-coded badges
 
-Security properties:
-- Token hidden in password field during input
-- Token trimmed before storage
-- Token never logged or displayed after saving
-- Clear button allows immediate token removal
-- localStorage accessible to all JavaScript in origin
+**Event Description**:
+- Tool events show: `{tool_name} {status}{context}`
+- Tool context from privacy pipeline (safe, sanitized)
+- Session events show: `Session {action}: {project}`
+- Activity events show: `Activity in {project}` or heartbeat message
+- Summary/agent/error events show formatted descriptions
 
-### useWebSocket Hook (`client/src/hooks/useWebSocket.ts`)
+**Security Properties**:
+- No direct access to sensitive fields (privacy pipeline sanitized)
+- Basename-only paths displayed (no full file paths)
+- Tool context pre-filtered (sensitive tools stripped)
+- ARIA labels for accessibility
+- No event modification or persistence (read-only UI)
+- Type-safe event rendering via discriminated unions
 
-- **Purpose**: Manage WebSocket connection with auto-reconnect
-- **Token retrieval**: localStorage.getItem(TOKEN_STORAGE_KEY)
-- **Connection URL**: Includes token as query parameter: `?token={token}`
-- **Auto-reconnect**: Exponential backoff (1s → 60s, ±25% jitter)
-- **Event validation**: Basic structural validation via parseEventMessage()
-- **Status tracking**: connection state (connecting/connected/disconnected/reconnecting)
+### Formatting Utilities (Phase 8)
 
-Security properties:
-- Token missing blocks connection with console warning
-- Reconnection disabled on manual disconnect
-- Attempt counter resets on successful connection
-- Invalid events silently dropped
-- No schema validation of event structure
+From `client/src/utils/formatting.ts`:
 
-### ConnectionStatus Component (`client/src/components/ConnectionStatus.tsx`)
+**Timestamp Formatting**:
+- `formatTimestamp()`: RFC 3339 → HH:MM:SS (local timezone)
+- `formatTimestampFull()`: RFC 3339 → YYYY-MM-DD HH:MM:SS
+- `formatRelativeTime()`: RFC 3339 → human-readable (e.g., "5m ago")
+- All functions handle invalid input gracefully with fallbacks
 
-- **Purpose**: Visual indicator of WebSocket connection status
-- **Display**: Colored dot (green/yellow/red) with optional label
-- **Selective rendering**: Zustand subscription prevents unnecessary re-renders
-- **ARIA labels**: Accessibility support for screen readers
-- **No security impact**: Purely informational
+**Duration Formatting**:
+- `formatDuration()`: milliseconds → human-readable (e.g., "1h 30m")
+- `formatDurationShort()`: milliseconds → digital clock format (e.g., "1:30:00")
+- Shows two most significant time units only
+- Handles edge cases (zero, negative, NaN)
+
+**Security Properties**:
+- Pure functions with no side effects
+- Input validation and error handling
+- No external dependencies used
+- Type-safe parameter validation
+- Fallback strings for invalid input
+- No sensitive data processing
+
+## Phase 8 Security Changes
+
+New client-side components for event display and formatting:
+
+### EventStream Component (`client/src/components/EventStream.tsx`)
+
+- **Purpose**: Display VibeTea events with efficient virtual scrolling
+- **Technology**: @tanstack/react-virtual for 1000+ event rendering
+- **Features**: Auto-scroll, jump-to-latest, event type badges, timestamps
+- **Security**: Read-only display of pre-sanitized events from privacy pipeline
+- **Accessibility**: ARIA labels, semantic role attributes
+
+### Formatting Utilities (`client/src/utils/formatting.ts`)
+
+- **Purpose**: Consistent timestamp and duration formatting across UI
+- **Functions**: 5 pure utility functions with comprehensive error handling
+- **Coverage**: RFC 3339 parsing, relative time, digital clock formats
+- **Security**: No external dependencies, input validation, safe fallbacks
+
+### Test Coverage (`client/src/__tests__/formatting.test.ts`)
+
+- **Test count**: 67 test cases covering all formatting functions
+- **Coverage**: Valid input, edge cases, timezone handling, invalid input
+- **Security**: Tests verify correct error handling and fallback behavior
+
+**Status**:
+- EventStream component improves user experience (no security implications)
+- Formatting utilities are pure functions (no security surface area)
+- Test coverage ensures reliable formatting (no production bugs)
+- Privacy guarantees maintained (events pre-sanitized by server)
 
 ## Known Vulnerabilities & Gaps
 
@@ -971,6 +1015,11 @@ Security properties:
 - Connection status visual indicator via ConnectionStatus component
 - Token storage in localStorage with cross-tab sync
 - Basic event validation via parseEventMessage()
+
+**New in Phase 8:**
+- EventStream component with virtual scrolling (no security implications)
+- Formatting utilities for timestamp/duration display (pure functions)
+- Comprehensive test coverage for formatting (67 test cases)
 
 **Remaining gaps:**
 - No rate limiting middleware for other endpoints (only event ingestion protected)

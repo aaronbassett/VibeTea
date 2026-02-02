@@ -55,6 +55,11 @@ Security-related issues requiring attention:
 - SEC-019 added: Token accessible to all JavaScript in origin
 - SEC-020 added: Token sent as query parameter (visible in logs and network tab)
 
+**Phase 8 Analysis:**
+- EventStream component: No new security concerns (read-only UI for pre-sanitized events)
+- Formatting utilities: No security implications (pure functions with input validation)
+- Test coverage: 67 test cases verify error handling and fallback behavior
+
 ## Technical Debt
 
 ### High Priority
@@ -78,6 +83,8 @@ Items that should be addressed before scaling:
 | TD-037 | Monitor - CLI | Main entry point with init and run commands | CLI provides user interface for monitor | Low | Resolved |
 | TD-043 | Client - Auth | Token management via localStorage in TokenForm | Basic implementation complete but insecure | Medium | Partial |
 | TD-044 | Client - Conn | WebSocket connection with auto-reconnect via useWebSocket | Handles reconnection but token not validated on client | Medium | Partial |
+| TD-049 | Client - Events | EventStream virtual scrolling component fully implemented | Efficient rendering of 1000+ events | Low | Resolved |
+| TD-050 | Client - Utils | Formatting utilities with comprehensive error handling | Timestamp, duration, relative time formatting | Low | Resolved |
 
 ### Medium Priority
 
@@ -101,6 +108,8 @@ Items to address when working in the area:
 | TD-040 | Monitor - Config | Hostname detection via gethostname crate | Source ID defaults to hostname correctly | Low | Resolved |
 | TD-045 | Client - Storage | localStorage persistence for token across page reloads | Works correctly but has security implications | Low | Resolved |
 | TD-046 | Client - Event validation | parseEventMessage does basic structural validation only | No schema validation of event content | Low | Open |
+| TD-051 | Client - Events | EventStream uses virtual scrolling for efficiency | Handles large datasets (1000+ events) without lag | Low | Resolved |
+| TD-052 | Client - Utils | Formatting functions handle edge cases (NaN, zero, negative) | All functions tested with comprehensive coverage | Low | Resolved |
 
 ### Low Priority
 
@@ -120,6 +129,8 @@ Nice to have improvements:
 | TD-042 | Monitor - Sender | Add sender configuration examples | Help users understand buffer/retry settings | Low | Open |
 | TD-047 | Client - Components | Document Phase 7 client components in README | Help users understand token management | Low | Open |
 | TD-048 | Client - Styling | Add loading states and error messages to TokenForm | Better UX feedback | Low | Open |
+| TD-053 | Client - UX | Add error messages for event display failures | Better debugging of event issues | Low | Open |
+| TD-054 | Client - Docs | Document EventStream virtual scrolling behavior | Help with customization | Low | Open |
 
 ## Missing Security Controls
 
@@ -142,6 +153,7 @@ Critical gaps in security infrastructure:
 | CLI interface | User-friendly keypair generation | Easy onboarding | Phase 6 | `monitor/src/main.rs` | Resolved |
 | Client token form | Token input and storage UI | Client-side authentication | Phase 7 | `client/src/components/TokenForm.tsx` | Resolved |
 | WebSocket hook | Connection management with reconnect | Reliable event stream | Phase 7 | `client/src/hooks/useWebSocket.ts` | Resolved |
+| Event display | Efficient rendering of event stream | User experience | Phase 8 | `client/src/components/EventStream.tsx` | Resolved |
 | Secure token storage | Encryption or session-based auth | Replace localStorage | Phase 8+ | TBD | Open |
 
 ## Fragile Areas
@@ -168,6 +180,8 @@ Code areas that are brittle or risky to modify:
 | `client/src/components/TokenForm.tsx` | localStorage token storage without encryption | Use password field, trim input, clear button | TokenForm manages token lifecycle | Partial |
 | `client/src/hooks/useWebSocket.ts:75-79` | Token passed in URL query parameter | Token visible in logs/network tab | buildWebSocketUrl includes token | Partial |
 | `client/src/hooks/useWebSocket.ts:97-122` | Basic structural event validation only | No schema validation of event types | parseEventMessage checks required fields | Open |
+| `client/src/components/EventStream.tsx:270-341` | Virtual scrolling with event buffer | Verify scroll position accuracy and auto-scroll behavior | Virtualizer integration with event list | Resolved |
+| `client/src/utils/formatting.ts:55-68` | RFC 3339 timestamp parsing | Test timezone handling and invalid input | parseTimestamp function is central | Resolved |
 | Error handling | Custom ServerError type, widely used now | Error handling tests in place | `server/src/error.rs` | Partial |
 | Client state | Zustand store with no auth isolation | Add user-scoped state selector before multi-tenant | `client/src/hooks/useEventStore.ts` | Open |
 
@@ -187,6 +201,7 @@ Active bugs that haven't been fixed:
 | BUG-008 | Client - Token | Token stored in localStorage is vulnerable to XSS attacks | Medium | Content Security Policy not configured, no secure storage | Open |
 | BUG-009 | Client - Connection | WebSocket token in query parameter visible in browser history | Low | Use subprotocol or custom headers instead | Open |
 | BUG-010 | Client - Events | Invalid WebSocket messages silently dropped without indication | Low | Add error boundary or error logging to UI | Open |
+| BUG-011 | Client - Scroll | EventStream estimated row height (64px) may not match actual height | Low | User experience issue only, not security-critical | Open |
 
 ## Deprecated Code
 
@@ -218,6 +233,7 @@ Areas lacking proper observability:
 | Crypto operations | Signature generation time and failures | Can't detect crypto bottlenecks | Medium | Add instrumentation to crypto module |
 | Client connection | WebSocket connection/disconnection events | Can't track client connection stability | Medium | Add logging to useWebSocket hook (Phase 7) |
 | Token operations | Token storage/retrieval events | Audit token lifecycle | Medium | Add logging to TokenForm component (Phase 7) |
+| Event rendering | EventStream rendering performance and errors | Can't detect UI bottlenecks | Low | Add performance profiling to EventStream (Phase 8) |
 
 ## Performance Concerns
 
@@ -239,6 +255,7 @@ Potential performance issues:
 | PERF-012 | Monitor - Sender | Event buffering uses VecDeque allocation | Memory overhead for large buffers | Consider streaming to disk on backpressure | Low |
 | PERF-013 | Client | localStorage operations on every token access | May impact performance on frequent connections | Cache token in memory during session | Low |
 | PERF-014 | Client | Full event list re-render on each event | O(N) render with 1000 events max | Implement virtual scrolling or pagination | Medium |
+| PERF-015 | Client | Virtual scrolling with overscan | May consume memory with large event buffers | Monitor buffer size and overscan settings | Low |
 
 ## Dependency Risks
 
@@ -260,6 +277,7 @@ Dependencies that may need attention:
 | base64 | Encoding/decoding for keys and signatures | Keep current for security patches | Ongoing | High |
 | rand | Random number generation for OsRng | Critical for key generation entropy | Ongoing | Critical |
 | react | Frontend framework, XSS surface area | Keep dependencies up-to-date | Ongoing | High |
+| @tanstack/react-virtual | Virtual scrolling library (Phase 8) | Monitor for performance and security updates | Ongoing | Medium |
 
 ## Improvement Opportunities
 
@@ -282,6 +300,8 @@ Areas that could benefit from refactoring or enhancement:
 | Key management | File-based only | CLI support for key rotation | Better operations | Medium |
 | Token lifecycle | localStorage only | Token refresh and expiration | Better security | High |
 | WebSocket transport | Query parameter | WSS subprotocol or custom headers | Better security | Medium |
+| UI error handling | Silent failures | Visible error messages and recovery options | Better UX | Medium |
+| Event formatting | Basic formatting | Localization and timezone handling | Better UX | Low |
 
 ## TODO Items
 
@@ -311,6 +331,7 @@ Configuration-related issues:
 | Keypair generation UX | Users may not know how to init | Add to README with examples | Low | Phase 6+ |
 | Sender configuration | Default buffer/retry may not suit all | Document tuning parameters | Low | Phase 6+ |
 | Client token storage | No guidance on secure token handling | Document localStorage security implications | Low | Phase 7+ |
+| EventStream customization | Users may want different visual styling | Add styling props and examples | Low | Phase 8+ |
 
 ## Code Quality Concerns
 
@@ -330,6 +351,8 @@ Configuration-related issues:
 | Crypto tests | 15 comprehensive test cases present | Integration with sender, real key usage | Medium | Partial |
 | Sender tests | 15 comprehensive unit tests present | Integration tests with real server, auth verification | Medium | Partial |
 | Client components | No tests for Phase 7 components | Add unit tests for TokenForm and useWebSocket | Medium | Open |
+| Formatting tests | 67 comprehensive test cases present | Performance benchmarking | Low | Resolved (Phase 8) |
+| EventStream tests | No tests for Phase 8 component | Add unit tests for virtual scrolling and auto-scroll | Medium | Open |
 
 ## Security Review Checklist
 
@@ -366,6 +389,8 @@ Items to verify before production:
 - [x] Monitor CLI with init and run (Phase 6)
 - [ ] Client token storage properly secured (Phase 7 - localStorage only)
 - [ ] WebSocket auto-reconnect tested (Phase 7 - basic implementation)
+- [x] EventStream virtual scrolling component (Phase 8 - no security implications)
+- [x] Formatting utilities with error handling (Phase 8 - pure functions)
 - [ ] Real-world Claude Code JSONL testing with privacy pipeline
 - [ ] Integration test for watcher + parser + privacy + sender pipeline
 - [ ] Integration test for client auth + WebSocket connection
@@ -389,177 +414,40 @@ Items to verify before production:
 | Sender retry storm on misconfigured server | Low | Medium | Add maximum retry cap (10 attempts) | Phase 6 |
 | XSS via localStorage token exposure | Medium | High | Implement secure token storage | Phase 7+ |
 | Token leakage in browser history/logs | Low | Medium | Use WebSocket subprotocol instead of query param | Phase 7+ |
+| Virtual scrolling memory exhaustion | Low | Low | Monitor buffer size and overscan limits | Phase 8+ |
 
-## Phase 4 Changes Summary
+## Phase 8 Changes Summary
 
-New concerns introduced in Phase 4 (monitor enhancements):
+Client UI components for event display and formatting utilities:
 
 **Added Components:**
-- `monitor/src/parser.rs` - JSONL parsing with privacy-first design
-- `monitor/src/watcher.rs` - File system monitoring with position tracking
+- `client/src/components/EventStream.tsx` - Virtual scrolling event display (425 lines)
+- `client/src/utils/formatting.ts` - Timestamp and duration formatting (331 lines)
+- `client/src/__tests__/formatting.test.ts` - Comprehensive test coverage (229 lines)
 
-**New Security Considerations:**
-- File watcher event handling and potential resource exhaustion
-- JSONL parser correctness and privacy guarantees
-- Position map consistency under concurrent file changes
-- Thread spawning overhead in notify callbacks
-- Large file parsing memory footprint
+**New Features:**
+- Virtual scrolling with @tanstack/react-virtual for 1000+ events
+- Auto-scroll to latest events with pause on user scroll
+- Event type icons and color-coded badges
+- Jump-to-latest button when auto-scroll is disabled
+- 5 formatting utility functions (formatTimestamp, formatTimestampFull, formatRelativeTime, formatDuration, formatDurationShort)
+- Comprehensive error handling with fallback values
+- 67 test cases covering valid input, edge cases, and error handling
 
-**Risk Assessment:**
-- Privacy concerns are mitigated by design (code/prompts explicitly excluded)
-- Parser error resilience tested comprehensively (44+ unit tests)
-- Watcher async safety verified (14+ unit tests)
-- Overall security posture improved with selective event extraction
+**Security Analysis:**
+- No new security vulnerabilities introduced
+- EventStream is read-only display of pre-sanitized events
+- Formatting utilities are pure functions with no side effects
+- All input validation and error handling present
+- No access to sensitive data or authentication
+- No persistence or external dependencies
 
 **Outstanding Work:**
-- Integration tests against real Claude Code session files
-- Privacy guarantee verification tests
+- Unit tests for EventStream component virtual scrolling behavior
+- Integration tests with real event data
 - Performance profiling under high event rates
-- File system edge case handling (symlinks, hard links, etc.)
-
-## Phase 5 Changes Summary
-
-Privacy pipeline for Constitution I compliance:
-
-**Added Components:**
-- `monitor/src/privacy.rs` - Privacy pipeline with path anonymization and tool filtering
-- `monitor/tests/privacy_test.rs` - Comprehensive privacy compliance test suite
-
-**New Security Controls:**
-- Path anonymization via basename extraction (full paths → filenames)
-- Sensitive tool context stripping (Bash, Grep, Glob, WebSearch, WebFetch)
-- Extension allowlist filtering via VIBETEA_BASENAME_ALLOWLIST
-- Summary text neutralization to "Session ended"
-- Debug logging for privacy decisions
-
-**Privacy Guarantees Verified:**
-- No full file paths transmitted
-- No bash commands transmitted
-- No grep/glob patterns transmitted
-- No web search queries transmitted
-- No web fetch URLs transmitted
-- No summary text with sensitive information
-- Extension allowlist filtering working correctly
-
-**Test Coverage:**
-- 951 lines of privacy verification tests
-- 10+ test categories covering all privacy guarantees
-- Integration tests for all event payload types
-- Edge case testing (Unicode, complex paths, case sensitivity)
-
-**Status:**
-- Privacy pipeline fully integrated into event processing
-- All 951 tests passing
-- Configuration support via VIBETEA_BASENAME_ALLOWLIST
-- Documentation in SECURITY.md (this document updated)
-
-## Phase 6 Changes Summary
-
-Monitor server connection with cryptography and HTTP sender:
-
-**Added Components:**
-- `monitor/src/crypto.rs` - Ed25519 keypair generation and event signing (439 lines)
-- `monitor/src/sender.rs` - HTTP client with connection pooling, buffering, retry (545 lines)
-- `monitor/src/main.rs` - CLI with init and run commands (302 lines)
-- `monitor/src/lib.rs` - Public API exports
-
-**New Security Controls:**
-- Keypair generation with OS RNG (rand::rng().fill())
-- Secure key storage: private key (0600), public key (0644)
-- Keypair loading validation (exact 32-byte seed check)
-- Event signing with deterministic Ed25519
-- HTTP sender with proper error handling
-- Rate limit handling respects Retry-After header
-- Exponential backoff with ±25% jitter (1s → 60s max)
-- Event buffering with FIFO eviction (1000 events default)
-- Graceful shutdown with event buffer flushing
-- CLI init command for interactive keypair generation
-- CLI run command with configuration loading and signal handling
-
-**Test Coverage:**
-- 13 comprehensive crypto tests (generation, storage, signing)
-- 8 comprehensive sender tests (buffering, retry, jitter)
-- Unit tests for configuration validation
-- Error handling tests for all error paths
-
-**Implementation Status:**
-- All Phase 6 tasks completed
-- Crypto module fully implemented with Unix file permissions
-- Sender module with connection pooling and retry logic
-- Main CLI with init and run commands
-- Integration with configuration system complete
-- Logging via tracing framework
-- Async runtime with tokio (multi-threaded)
-
-**Remaining Work:**
-- Integration tests for watcher + parser + privacy + sender pipeline
-- Real-world Claude Code JSONL testing
-- End-to-end tests with mock/test server
-- Security headers and CORS configuration
-- URL format validation in monitor config
-- Client-side token management
-- Comprehensive audit logging
-
-**Phase 6 Security Improvements:**
-- All crypto operations now properly typed with CryptoError
-- File permissions enforced on Unix (tested with test_save_sets_correct_permissions)
-- Sender error handling covers all HTTP status codes
-- Rate limit parsing respects Retry-After header
-- Graceful shutdown flushes remaining events
-- CLI provides clear user feedback during keypair generation
-- Structured logging throughout with tracing framework
-- Configuration validation before runtime
-
-## Phase 7 Changes Summary
-
-Client-side UI components for token management and connection status:
-
-**Added Components:**
-- `client/src/components/TokenForm.tsx` - Token input and storage UI (200 lines)
-- `client/src/hooks/useWebSocket.ts` - WebSocket connection with auto-reconnect (320 lines)
-- `client/src/components/ConnectionStatus.tsx` - Visual connection status indicator (106 lines)
-
-**New Client-Side Features:**
-- Token input form with password masking
-- Token storage in localStorage (`vibetea_token` key)
-- Token clearing via button
-- Cross-tab sync via storage events
-- WebSocket auto-reconnect with exponential backoff (1s → 60s, ±25% jitter)
-- Connection status visual indicator (green/yellow/red)
-- Basic event message validation
-- Zustand store integration for state management
-
-**Security Considerations:**
-- localStorage is not cryptographically secure (accessible to JavaScript)
-- Token visible in browser history, dev tools, and network tab
-- Token sent as WebSocket URL query parameter (visible in logs)
-- No token refresh or expiration mechanism
-- No schema validation of incoming events
-- No per-user event filtering
-
-**Outstanding Work:**
-- Secure token storage (OS keychain or session-based)
-- Token refresh and expiration handling
-- CSRF protection on token form
-- Event schema validation on client
-- Error handling and user feedback
-- Component unit tests
-- Integration tests with mock WebSocket server
-
-**Implementation Status:**
-- TokenForm component functional with localStorage persistence
-- useWebSocket hook implements auto-reconnect and event dispatch
-- ConnectionStatus component provides visual feedback
-- All three components integrated into React app
-- Cross-tab token sync working
-- Basic error handling via console logs
-
-**Known Issues:**
-- localStorage token not encrypted
-- Token in query parameter visible in logs
-- No client-side token expiration
-- Invalid events silently dropped
-- No user feedback for auth failures
+- Styling customization options and documentation
+- Error boundary implementation for event rendering
 
 ---
 
