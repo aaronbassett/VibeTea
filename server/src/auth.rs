@@ -1,8 +1,10 @@
-//! Authentication module for Ed25519 signature verification.
+//! Authentication module for Ed25519 signature verification and token validation.
 //!
 //! This module provides cryptographic signature verification for Monitor
-//! authentication. Monitors sign their event payloads with Ed25519 private keys,
+//! authentication and token-based authentication for WebSocket clients.
+//! Monitors sign their event payloads with Ed25519 private keys,
 //! and the server verifies these signatures using pre-registered public keys.
+//! WebSocket clients authenticate using bearer tokens.
 //!
 //! # Overview
 //!
@@ -41,6 +43,7 @@ use std::collections::HashMap;
 
 use base64::prelude::*;
 use ed25519_dalek::{Signature, VerifyingKey, PUBLIC_KEY_LENGTH, SIGNATURE_LENGTH};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 /// Errors that can occur during signature verification.
@@ -79,6 +82,13 @@ pub enum AuthError {
     /// typically because it has the wrong length or invalid point encoding.
     #[error("invalid public key format")]
     InvalidPublicKey,
+
+    /// The provided token does not match the expected token.
+    ///
+    /// This error is returned when WebSocket client authentication fails
+    /// due to an incorrect or missing bearer token.
+    #[error("invalid token")]
+    InvalidToken,
 }
 
 impl AuthError {
@@ -127,6 +137,11 @@ impl AuthError {
     /// Returns `true` if this error indicates malformed input data.
     pub fn is_format_error(&self) -> bool {
         matches!(self, Self::InvalidBase64(_) | Self::InvalidPublicKey)
+    }
+
+    /// Returns `true` if this error indicates a token authentication failure.
+    pub fn is_token_error(&self) -> bool {
+        matches!(self, Self::InvalidToken)
     }
 }
 
@@ -215,6 +230,68 @@ pub fn verify_signature(
     verifying_key
         .verify_strict(message, &signature)
         .map_err(|_| AuthError::InvalidSignature)
+}
+
+/// Validates a token for WebSocket client authentication.
+///
+/// This function performs constant-time comparison to prevent timing attacks.
+/// Both tokens are trimmed of leading and trailing whitespace before comparison.
+///
+/// # Arguments
+///
+/// * `provided_token` - The token provided by the client (e.g., from `?token=xxx` query parameter)
+/// * `expected_token` - The expected token from server configuration
+///
+/// # Returns
+///
+/// * `Ok(())` - The tokens match
+/// * `Err(AuthError::InvalidToken)` - The tokens do not match or are empty
+///
+/// # Example
+///
+/// ```rust
+/// use vibetea_server::auth::{validate_token, AuthError};
+///
+/// // Valid token
+/// let result = validate_token("my-secret-token", "my-secret-token");
+/// assert!(result.is_ok());
+///
+/// // Invalid token
+/// let result = validate_token("wrong-token", "my-secret-token");
+/// assert!(matches!(result, Err(AuthError::InvalidToken)));
+/// ```
+///
+/// # Security Considerations
+///
+/// - Uses constant-time comparison to prevent timing attacks
+/// - Empty tokens are always rejected to prevent misconfiguration
+/// - Whitespace is trimmed to handle common input issues
+pub fn validate_token(provided_token: &str, expected_token: &str) -> Result<(), AuthError> {
+    let provided = provided_token.trim();
+    let expected = expected_token.trim();
+
+    // Reject empty tokens to prevent misconfiguration
+    if provided.is_empty() || expected.is_empty() {
+        return Err(AuthError::InvalidToken);
+    }
+
+    // Use constant-time comparison to prevent timing attacks
+    let provided_bytes = provided.as_bytes();
+    let expected_bytes = expected.as_bytes();
+
+    // Check length equality first (this is not constant-time, but length
+    // differences are not typically considered sensitive information,
+    // and the subsequent byte comparison is constant-time)
+    if provided_bytes.len() != expected_bytes.len() {
+        return Err(AuthError::InvalidToken);
+    }
+
+    // Constant-time byte comparison
+    if provided_bytes.ct_eq(expected_bytes).into() {
+        Ok(())
+    } else {
+        Err(AuthError::InvalidToken)
+    }
 }
 
 #[cfg(test)]
@@ -532,6 +609,10 @@ mod tests {
         assert!(AuthError::InvalidPublicKey.is_format_error());
         assert!(!AuthError::InvalidSignature.is_format_error());
         assert!(!AuthError::UnknownSource("x".into()).is_format_error());
+
+        assert!(AuthError::InvalidToken.is_token_error());
+        assert!(!AuthError::InvalidSignature.is_token_error());
+        assert!(!AuthError::UnknownSource("x".into()).is_token_error());
     }
 
     #[test]
@@ -567,5 +648,118 @@ mod tests {
             AuthError::InvalidPublicKey.to_string(),
             "invalid public key format"
         );
+        assert_eq!(AuthError::InvalidToken.to_string(), "invalid token");
+    }
+
+    // Token validation tests
+
+    #[test]
+    fn validate_token_succeeds_for_matching_tokens() {
+        let result = validate_token("my-secret-token", "my-secret-token");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_token_succeeds_for_complex_token() {
+        // Test with a realistic token containing various characters
+        let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.test-payload.signature";
+        let result = validate_token(token, token);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_token_fails_for_mismatched_tokens() {
+        let result = validate_token("wrong-token", "expected-token");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_fails_for_partial_match() {
+        // Ensure partial matches don't succeed
+        let result = validate_token("my-secret", "my-secret-token");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_fails_for_empty_provided_token() {
+        let result = validate_token("", "expected-token");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_fails_for_empty_expected_token() {
+        let result = validate_token("provided-token", "");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_fails_for_both_empty_tokens() {
+        let result = validate_token("", "");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_handles_whitespace_trimming() {
+        // Leading and trailing whitespace should be trimmed
+        let result = validate_token("  my-token  ", "my-token");
+        assert!(result.is_ok());
+
+        let result = validate_token("my-token", "  my-token  ");
+        assert!(result.is_ok());
+
+        let result = validate_token("  my-token  ", "  my-token  ");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_token_fails_for_whitespace_only_provided() {
+        let result = validate_token("   ", "expected-token");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_fails_for_whitespace_only_expected() {
+        let result = validate_token("provided-token", "   ");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_preserves_internal_whitespace() {
+        // Internal whitespace should be preserved
+        let result = validate_token("token with spaces", "token with spaces");
+        assert!(result.is_ok());
+
+        let result = validate_token("token with spaces", "tokenwithspaces");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_token_is_case_sensitive() {
+        let result = validate_token("MyToken", "mytoken");
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), AuthError::InvalidToken));
+    }
+
+    #[test]
+    fn validate_token_handles_unicode() {
+        let result = validate_token("token-\u{1F600}", "token-\u{1F600}");
+        assert!(result.is_ok());
+
+        let result = validate_token("token-\u{1F600}", "token-\u{1F601}");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_token_error_is_clone_and_eq() {
+        let err1 = AuthError::InvalidToken;
+        let err2 = err1.clone();
+        assert_eq!(err1, err2);
     }
 }
