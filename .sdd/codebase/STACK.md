@@ -141,6 +141,7 @@
   - `ConnectionStatus.tsx` - **Phase 7**: Visual WebSocket connection status indicator
   - `TokenForm.tsx` - **Phase 7**: Token management and persistence UI
   - `EventStream.tsx` - **Phase 8**: Virtual scrolling event stream with 1000+ event support
+  - `Heatmap.tsx` - **Phase 9**: Activity heatmap with CSS Grid, color scale, 7/30-day views, accessibility
 - `hooks/useEventStore.ts` - Zustand store for WebSocket event state with selective subscriptions
 - `hooks/useWebSocket.ts` - **Phase 7**: WebSocket connection management with auto-reconnect
 - `types/events.ts` - Event type definitions with discriminated union types matching Rust schema
@@ -426,6 +427,47 @@
 - EventStream uses formatTimestamp() for event timestamps
 - EventRow component uses event type for visual styling and icons
 - Tests validate formatting across various time zones and edge cases
+
+## Phase 9 Additions
+
+**Client Activity Heatmap Component** (`client/src/components/Heatmap.tsx` - 590 lines):
+- **CSS Grid Layout**: `grid-template-columns: auto repeat(24, minmax(0, 1fr))` for hours
+- **Color Scale**: 5-level gradient from dark (#1a1a2e) to bright green (#5dad6f)
+  - 0 events: #1a1a2e
+  - 1-10 events: #2d4a3e
+  - 11-25 events: #3d6b4f
+  - 26-50 events: #4d8c5f
+  - 51+ events: #5dad6f
+- **View Toggle**: Switch between 7-day and 30-day views
+- **Timezone-Aware Hour Alignment**: Uses `Date.getHours()` (local time)
+- **Cell Click Filtering**: `onCellClick` callback with start/end Date objects
+- **Accessibility**:
+  - `role="grid"`, `role="row"`, `role="gridcell"` structure
+  - `aria-label` on each cell with event count and datetime
+  - Keyboard navigation (Enter/Space to click cells)
+  - Focus indicators with ring styling
+- **Tooltip on Hover**: Shows event count and formatted datetime
+- **Empty State**: Calendar icon with helpful message
+- **Legend**: Visual color scale indicator
+
+**Sub-components**:
+- `ViewToggle`: 7/30-day selector with `role="group"` and `aria-pressed`
+- `HourHeader`: Hour labels (0, 6, 12, 18) for X-axis
+- `CellTooltip`: Positioned tooltip showing cell details
+- `HeatmapCellComponent`: Individual cell with hover/click handlers
+- `EmptyState`: Calendar icon with guidance text
+
+**Helper Functions**:
+- `getHeatmapColor(count)`: Returns CSS color for event count
+- `getBucketKey(timestamp)`: Creates "YYYY-MM-DD-HH" key from RFC 3339 timestamp
+- `countEventsByHour(events)`: Aggregates events into hour buckets
+- `generateHeatmapCells(days, counts)`: Creates cell data for grid rendering
+- `formatCellDateTime(date, hour)`: Formats "Day, Mon DD at HH:00"
+
+**Integration Points** (Phase 9):
+- Heatmap subscribes to events from Zustand store
+- Uses memoization (useMemo) for event counting and cell generation
+- Provides onCellClick callback for parent to filter EventStream
 
 ## Not Yet Implemented
 

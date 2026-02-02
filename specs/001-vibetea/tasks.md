@@ -424,17 +424,17 @@ VibeTea uses a multi-project structure:
 ### Heatmap Component
 
 - [X] T186 [US7] Implement Heatmap component in client/src/components/Heatmap.tsx using CSS Grid (use devs:react-dev agent)
-- [ ] T187 [GIT] Commit: add Heatmap component
+- [X] T187 [GIT] Commit: add Heatmap component - Combined with T189, T191, T193, T195, T197
 - [X] T188 [US7] Implement heatmap color scale (0: #1a1a2e, 1-10: #2d4a3e, 11-25: #3d6b4f, 26-50: #4d8c5f, 51+: #5dad6f) in client/src/components/Heatmap.tsx (use devs:react-dev agent) - Implemented in T186
-- [ ] T189 [GIT] Commit: add heatmap color scale - Combined with T187
+- [X] T189 [GIT] Commit: add heatmap color scale - Combined with T187
 - [X] T190 [US7] Implement 7-day and 30-day view toggle in client/src/components/Heatmap.tsx (use devs:react-dev agent) - Implemented in T186
-- [ ] T191 [GIT] Commit: add view toggle - Combined with T187
+- [X] T191 [GIT] Commit: add view toggle - Combined with T187
 - [X] T192 [US7] Implement timezone-aware hour alignment in client/src/components/Heatmap.tsx (use devs:react-dev agent) - Implemented in T186
-- [ ] T193 [GIT] Commit: add timezone handling - Combined with T187
+- [X] T193 [GIT] Commit: add timezone handling - Combined with T187
 - [X] T194 [US7] Implement cell click filtering (filter event stream to that hour) in client/src/components/Heatmap.tsx (use devs:react-dev agent) - Implemented in T186
-- [ ] T195 [GIT] Commit: add cell click filtering - Combined with T187
+- [X] T195 [GIT] Commit: add cell click filtering - Combined with T187
 - [X] T196 [US7] Add heatmap cell aria-labels for accessibility in client/src/components/Heatmap.tsx (use devs:react-dev agent) - Implemented in T186
-- [ ] T197 [GIT] Commit: add heatmap accessibility - Combined with T187
+- [X] T197 [GIT] Commit: add heatmap accessibility - Combined with T187
 
 ### Phase 9 Completion
 

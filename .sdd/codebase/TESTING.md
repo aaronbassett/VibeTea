@@ -130,6 +130,7 @@ monitor/
 | `src/components/ConnectionStatus.tsx` | `src/__tests__/ConnectionStatus.test.tsx` (planned) |
 | `src/components/TokenForm.tsx` | `src/__tests__/TokenForm.test.tsx` (planned) |
 | `src/components/EventStream.tsx` | `src/__tests__/EventStream.test.tsx` (planned) |
+| `src/components/Heatmap.tsx` | `src/__tests__/Heatmap.test.tsx` (planned) |
 | `src/utils/formatting.ts` | `src/__tests__/formatting.test.ts` |
 | `src/App.tsx` | `src/__tests__/App.test.tsx` (planned) |
 
@@ -1696,6 +1697,19 @@ Tests that must pass before any deploy:
 - Event type badges and icons
 - Empty state display
 - Accessibility attributes
+
+**Heatmap.test.tsx** (planned - Phase 9)
+- Color scale function (getHeatmapColor) returns correct colors for count thresholds
+- Hour bucket key generation (getBucketKey) parses timestamps correctly
+- Event counting by hour (countEventsByHour) aggregates correctly
+- Cell generation (generateHeatmapCells) creates correct number of cells for 7/30-day views
+- View toggle switches between 7-day and 30-day views
+- Cell click calls onCellClick callback with correct start/end dates
+- Tooltip displays on hover with correct count and datetime
+- Empty state displays when no events
+- Accessibility: grid/row/gridcell roles present
+- Accessibility: aria-labels contain event count and datetime
+- Keyboard navigation: Enter/Space activates cells
 
 #### Rust/Server
 

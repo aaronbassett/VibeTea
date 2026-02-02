@@ -817,6 +817,114 @@ Key patterns:
 4. **Truncation for display**: Limit string length for UI display (e.g., 80 chars for summaries)
 5. **Default fallback**: Always have a default case to handle unexpected types gracefully
 
+### CSS Grid Heatmap Pattern (TypeScript - Phase 9)
+
+Creating activity heatmaps with CSS Grid for time-based data visualization:
+
+**From `Heatmap.tsx`** (Phase 9):
+
+```typescript
+/**
+ * Activity heatmap displaying event frequency over time.
+ *
+ * Uses CSS Grid with hours on X-axis, days on Y-axis.
+ * Color intensity indicates event count per hour.
+ */
+export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
+  const events = useEventStore((state) => state.events);
+  const [viewDays, setViewDays] = useState<ViewDays>(7);
+
+  // Memoize event counts by hour bucket
+  const eventCounts = useMemo(() => countEventsByHour(events), [events]);
+
+  // Generate cells with memoization
+  const cells = useMemo(
+    () => generateHeatmapCells(viewDays, eventCounts),
+    [viewDays, eventCounts]
+  );
+
+  return (
+    <div
+      role="grid"
+      aria-label={`Activity heatmap showing ${viewDays} days`}
+      className="grid gap-0.5"
+      style={{
+        gridTemplateColumns: `auto repeat(24, minmax(0, 1fr))`,
+      }}
+    >
+      {/* Grid cells */}
+    </div>
+  );
+}
+```
+
+**Hour Bucket Key Format**:
+
+```typescript
+/**
+ * Create a bucket key for an event timestamp.
+ * Uses local timezone for hour alignment.
+ */
+function getBucketKey(timestamp: string): string {
+  const date = new Date(timestamp);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  return `${year}-${month}-${day}-${hour}`;
+}
+```
+
+**Color Scale Function**:
+
+```typescript
+/**
+ * Get heatmap color based on event count.
+ */
+function getHeatmapColor(count: number): string {
+  if (count === 0) return '#1a1a2e';   // Dark (no activity)
+  if (count <= 10) return '#2d4a3e';   // Low activity
+  if (count <= 25) return '#3d6b4f';   // Medium activity
+  if (count <= 50) return '#4d8c5f';   // High activity
+  return '#5dad6f';                     // Very high activity
+}
+```
+
+**View Toggle Pattern**:
+
+```typescript
+/**
+ * View toggle with accessible role and state.
+ */
+function ViewToggle({ viewDays, onViewChange }: ViewToggleProps) {
+  return (
+    <div className="flex gap-1" role="group" aria-label="View range selector">
+      {VIEW_OPTIONS.map((days) => (
+        <button
+          key={days}
+          type="button"
+          onClick={() => onViewChange(days)}
+          className={viewDays === days ? 'bg-blue-600' : 'bg-gray-700'}
+          aria-pressed={viewDays === days}
+        >
+          {days} Days
+        </button>
+      ))}
+    </div>
+  );
+}
+```
+
+Key conventions for CSS Grid heatmaps:
+1. **Grid template columns**: Use `auto repeat(N, minmax(0, 1fr))` for flexible cell sizing
+2. **Contents display**: Use `display: contents` on row wrappers to maintain grid flow
+3. **Inline color styles**: Use inline `backgroundColor` for dynamic color values
+4. **Hour bucket keys**: Format as `YYYY-MM-DD-HH` for unique identification and sorting
+5. **Local timezone**: Use `Date.getHours()` for user-expected hour alignment
+6. **View toggle**: Use `role="group"` with `aria-pressed` for accessibility
+7. **Cell keyboard nav**: Support Enter/Space for activation
+8. **Memoization**: Memoize event counting and cell generation for performance
+
 ### Exponential Backoff Pattern (TypeScript - Phase 7)
 
 Implement reconnection delays with jitter:
