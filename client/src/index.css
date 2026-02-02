@@ -1,0 +1,11 @@
+@import "tailwindcss";
+
+/* VibeTea Theme - CSS-first configuration for Tailwind v4 */
+@theme {
+  /* Heatmap color scale (from spec) */
+  --color-heatmap-0: #1a1a2e;
+  --color-heatmap-1: #2d4a3e;
+  --color-heatmap-2: #3d6b4f;
+  --color-heatmap-3: #4d8c5f;
+  --color-heatmap-4: #5dad6f;
+}
