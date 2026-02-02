@@ -176,28 +176,28 @@ VibeTea uses a multi-project structure:
 
 ### Start Phase 4
 
-- [ ] T068 [GIT] Verify working tree is clean before starting Phase 4
-- [ ] T069 [GIT] Pull and rebase on origin/main if needed
-- [ ] T070 [US2] Create retro/P4.md for this phase
+- [X] T068 [GIT] Verify working tree is clean before starting Phase 4
+- [X] T069 [GIT] Pull and rebase on origin/main if needed
+- [X] T070 [US2] Create retro/P4.md for this phase
 
 ### File Watching
 
-- [ ] T071 [US2] Implement file watcher in monitor/src/watcher.rs using notify crate to watch ~/.claude/projects/**/*.jsonl (use devs:rust-dev agent)
-- [ ] T072 [GIT] Commit: add file watcher
-- [ ] T073 [US2] Implement file position tracking for JSONL tailing in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [ ] T074 [GIT] Commit: add file position tracking
+- [X] T071 [US2] Implement file watcher in monitor/src/watcher.rs using notify crate to watch ~/.claude/projects/**/*.jsonl (use devs:rust-dev agent)
+- [X] T072 [GIT] Commit: add file watcher
+- [X] T073 [US2] Implement file position tracking for JSONL tailing in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [X] T074 [GIT] Commit: add file position tracking
 
 ### JSONL Parsing
 
-- [ ] T075 [US2] Implement Claude Code JSONL parser in monitor/src/parser.rs mapping to VibeTea event types (use devs:rust-dev agent)
-- [ ] T076 [GIT] Commit: add JSONL parser
-- [ ] T077 [US2] Implement session detection (new file = session started, summary event = session ended) in monitor/src/parser.rs (use devs:rust-dev agent)
-- [ ] T078 [GIT] Commit: add session detection
+- [X] T075 [US2] Implement Claude Code JSONL parser in monitor/src/parser.rs mapping to VibeTea event types (use devs:rust-dev agent)
+- [X] T076 [GIT] Commit: add JSONL parser
+- [X] T077 [US2] Implement session detection (new file = session started, summary event = session ended) in monitor/src/parser.rs (use devs:rust-dev agent)
+- [X] T078 [GIT] Commit: add session detection
 
 ### Monitor Types
 
-- [ ] T079 [US2] Create shared event types in monitor/src/types.rs matching server types (use devs:rust-dev agent)
-- [ ] T080 [GIT] Commit: add monitor event types
+- [X] T079 [US2] Create shared event types in monitor/src/types.rs matching server types (use devs:rust-dev agent)
+- [X] T080 [GIT] Commit: add monitor event types
 
 ### Phase 4 Completion
 
