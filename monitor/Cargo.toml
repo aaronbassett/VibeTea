@@ -1,0 +1,47 @@
+[package]
+name = "vibetea-monitor"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "VibeTea Monitor - Claude Code session watcher"
+
+[[bin]]
+name = "vibetea-monitor"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio.workspace = true
+
+# HTTP client
+reqwest.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# File watching
+notify.workspace = true
+
+# Cryptography
+ed25519-dalek.workspace = true
+rand.workspace = true
+base64.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Utilities
+uuid.workspace = true
+chrono.workspace = true
+directories.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true
