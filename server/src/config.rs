@@ -172,10 +172,7 @@ fn parse_public_keys() -> Result<HashMap<String, String>, ConfigError> {
         if parts.len() != 2 {
             return Err(ConfigError::InvalidFormat {
                 var: "VIBETEA_PUBLIC_KEYS".to_string(),
-                message: format!(
-                    "expected 'source:pubkey' format, got '{}'",
-                    pair
-                ),
+                message: format!("expected 'source:pubkey' format, got '{}'", pair),
             });
         }
 
@@ -260,15 +257,24 @@ mod tests {
     fn test_config_with_auth_enabled() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_UNSAFE_NO_AUTH", "false");
-        guard.set("VIBETEA_PUBLIC_KEYS", "source1:cHVia2V5MQ==,source2:cHVia2V5Mg==");
+        guard.set(
+            "VIBETEA_PUBLIC_KEYS",
+            "source1:cHVia2V5MQ==,source2:cHVia2V5Mg==",
+        );
         guard.set("VIBETEA_SUBSCRIBER_TOKEN", "secret-token");
         guard.set("PORT", "9090");
 
         let config = Config::from_env().expect("should parse config");
         assert!(!config.unsafe_no_auth);
         assert_eq!(config.public_keys.len(), 2);
-        assert_eq!(config.public_keys.get("source1"), Some(&"cHVia2V5MQ==".to_string()));
-        assert_eq!(config.public_keys.get("source2"), Some(&"cHVia2V5Mg==".to_string()));
+        assert_eq!(
+            config.public_keys.get("source1"),
+            Some(&"cHVia2V5MQ==".to_string())
+        );
+        assert_eq!(
+            config.public_keys.get("source2"),
+            Some(&"cHVia2V5Mg==".to_string())
+        );
         assert_eq!(config.subscriber_token, Some("secret-token".to_string()));
         assert_eq!(config.port, 9090);
     }
@@ -296,7 +302,9 @@ mod tests {
         let result = Config::from_env();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, ConfigError::MissingEnvVar(ref v) if v == "VIBETEA_SUBSCRIBER_TOKEN"));
+        assert!(
+            matches!(err, ConfigError::MissingEnvVar(ref v) if v == "VIBETEA_SUBSCRIBER_TOKEN")
+        );
     }
 
     #[test]
@@ -329,7 +337,9 @@ mod tests {
         let result = parse_public_keys();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, ConfigError::InvalidFormat { var, .. } if var == "VIBETEA_PUBLIC_KEYS"));
+        assert!(
+            matches!(err, ConfigError::InvalidFormat { var, .. } if var == "VIBETEA_PUBLIC_KEYS")
+        );
     }
 
     #[test]

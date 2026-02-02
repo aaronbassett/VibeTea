@@ -117,10 +117,12 @@ impl Config {
 
         // Optional: VIBETEA_BUFFER_SIZE (default: 1000)
         let buffer_size = match env::var("VIBETEA_BUFFER_SIZE") {
-            Ok(val) => val.parse::<usize>().map_err(|_| ConfigError::InvalidValue {
-                key: "VIBETEA_BUFFER_SIZE".to_string(),
-                message: format!("expected positive integer, got '{val}'"),
-            })?,
+            Ok(val) => val
+                .parse::<usize>()
+                .map_err(|_| ConfigError::InvalidValue {
+                    key: "VIBETEA_BUFFER_SIZE".to_string(),
+                    message: format!("expected positive integer, got '{val}'"),
+                })?,
             Err(_) => DEFAULT_BUFFER_SIZE,
         };
 

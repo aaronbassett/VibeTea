@@ -112,7 +112,10 @@ impl fmt::Display for ServerError {
             Self::Config(err) => write!(f, "configuration error: {err}"),
             Self::Auth(msg) => write!(f, "authentication failed: {msg}"),
             Self::Validation(msg) => write!(f, "validation error: {msg}"),
-            Self::RateLimit { source, retry_after } => {
+            Self::RateLimit {
+                source,
+                retry_after,
+            } => {
                 write!(
                     f,
                     "rate limit exceeded for {source}, retry after {retry_after} seconds"
@@ -450,7 +453,11 @@ mod tests {
             source: "192.168.1.1".to_string(),
             retry_after: 60,
         };
-        if let ServerError::RateLimit { source, retry_after } = err {
+        if let ServerError::RateLimit {
+            source,
+            retry_after,
+        } = err
+        {
             assert_eq!(source, "192.168.1.1");
             assert_eq!(retry_after, 60);
         } else {

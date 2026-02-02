@@ -197,10 +197,7 @@ mod tests {
             serde_json::to_string(&EventType::Activity).unwrap(),
             "\"activity\""
         );
-        assert_eq!(
-            serde_json::to_string(&EventType::Tool).unwrap(),
-            "\"tool\""
-        );
+        assert_eq!(serde_json::to_string(&EventType::Tool).unwrap(), "\"tool\"");
         assert_eq!(
             serde_json::to_string(&EventType::Agent).unwrap(),
             "\"agent\""

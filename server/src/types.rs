@@ -75,28 +75,19 @@ pub enum EventPayload {
     ///
     /// Requires `session_id` and `summary`.
     #[serde(rename_all = "camelCase")]
-    Summary {
-        session_id: Uuid,
-        summary: String,
-    },
+    Summary { session_id: Uuid, summary: String },
 
     /// Agent state change events.
     ///
     /// Requires `session_id` and `state`.
     #[serde(rename_all = "camelCase")]
-    Agent {
-        session_id: Uuid,
-        state: String,
-    },
+    Agent { session_id: Uuid, state: String },
 
     /// Error events for monitoring purposes.
     ///
     /// Requires `session_id` and `category`.
     #[serde(rename_all = "camelCase")]
-    Error {
-        session_id: Uuid,
-        category: String,
-    },
+    Error { session_id: Uuid, category: String },
 
     /// Activity heartbeat events.
     ///
