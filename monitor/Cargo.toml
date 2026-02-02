@@ -42,6 +42,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 directories.workspace = true
+gethostname.workspace = true
 
 [dev-dependencies]
 tokio-test.workspace = true
