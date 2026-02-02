@@ -273,7 +273,13 @@ impl Sender {
                 "Sending event batch"
             );
 
-            let result = self.client.post(&url).headers(headers).body(body.clone()).send().await;
+            let result = self
+                .client
+                .post(&url)
+                .headers(headers)
+                .body(body.clone())
+                .send()
+                .await;
 
             match result {
                 Ok(response) => {
@@ -291,10 +297,7 @@ impl Sender {
                         }
                         StatusCode::TOO_MANY_REQUESTS => {
                             let retry_after = self.parse_retry_after(&response);
-                            warn!(
-                                retry_after_secs = retry_after,
-                                "Rate limited by server"
-                            );
+                            warn!(retry_after_secs = retry_after, "Rate limited by server");
 
                             if attempts >= MAX_RETRY_ATTEMPTS {
                                 return Err(SenderError::MaxRetriesExceeded { attempts });
@@ -499,14 +502,21 @@ mod tests {
             let jittered = sender.add_jitter(base);
             let secs = jittered.as_secs_f64();
             // Should be within ±25% of 10 seconds
-            assert!(secs >= 7.5 && secs <= 12.5, "Jitter out of bounds: {}", secs);
+            assert!(
+                secs >= 7.5 && secs <= 12.5,
+                "Jitter out of bounds: {}",
+                secs
+            );
         }
     }
 
     #[test]
     fn test_increase_retry_delay_doubles() {
         let mut sender = create_test_sender();
-        assert_eq!(sender.current_retry_delay.as_secs(), INITIAL_RETRY_DELAY_SECS);
+        assert_eq!(
+            sender.current_retry_delay.as_secs(),
+            INITIAL_RETRY_DELAY_SECS
+        );
 
         sender.increase_retry_delay();
         assert_eq!(sender.current_retry_delay.as_secs(), 2);
@@ -530,7 +540,10 @@ mod tests {
         sender.current_retry_delay = Duration::from_secs(30);
 
         sender.reset_retry_delay();
-        assert_eq!(sender.current_retry_delay.as_secs(), INITIAL_RETRY_DELAY_SECS);
+        assert_eq!(
+            sender.current_retry_delay.as_secs(),
+            INITIAL_RETRY_DELAY_SECS
+        );
     }
 
     #[test]

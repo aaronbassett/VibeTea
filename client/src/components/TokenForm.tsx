@@ -5,6 +5,7 @@
  * which is stored in localStorage for WebSocket connection.
  */
 
+import type { ChangeEvent, FormEvent } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 // -----------------------------------------------------------------------------
@@ -97,7 +98,7 @@ export function TokenForm({
    * Save the token to localStorage.
    */
   const handleSave = useCallback(
-    (event: React.FormEvent<HTMLFormElement>) => {
+    (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
 
       const trimmedToken = tokenInput.trim();
@@ -129,7 +130,7 @@ export function TokenForm({
    * Handle input changes.
    */
   const handleInputChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
+    (event: ChangeEvent<HTMLInputElement>) => {
       setTokenInput(event.target.value);
     },
     []
