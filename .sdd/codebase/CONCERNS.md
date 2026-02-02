@@ -21,11 +21,17 @@ Security-related issues requiring attention:
 | SEC-012 | Client | No bearer token management implementation | High | High | Open | Implement token storage and refresh logic |
 | SEC-013 | Client | No client-side authorization checks | Medium | Medium | Open | Add event filtering before rendering |
 | SEC-014 | All | No per-client session isolation | High | High | Open | Implement user/client-based event filtering |
+| SEC-015 | Monitor | File permissions on ~/.claude/projects not validated | Medium | Low | Open | Warn if directory is world-readable |
+| SEC-016 | Parser | No size limits on JSONL files | Medium | Medium | Open | Add max file size configuration |
+| SEC-017 | Watcher | No limit on concurrent file operations | Low | Medium | Open | Add semaphore for file I/O concurrency |
 
 **Fixed in Phase 3:**
 - SEC-005: Rate limiting middleware now fully implemented
 - SEC-010: Base64 key validation improved during signature verification
 - SEC-011: Token validation now includes length checks
+
+**New in Phase 4:**
+- SEC-015 to SEC-017: File watching security considerations identified
 
 ## Technical Debt
 
@@ -41,6 +47,8 @@ Items that should be addressed before scaling:
 | TD-004 | Server - Logging | Missing structured logging for auth decisions | Difficult debugging of auth issues | Medium | Open |
 | TD-005 | All | No tracing/observability for security events | Can't detect or respond to attacks | High | Open |
 | TD-008 | Server | WebSocket authentication fully enforced | Completed | High | Resolved |
+| TD-026 | Monitor - Parser | JSONL session tracking requires position management | Parser state must be passed between events | Medium | Resolved |
+| TD-027 | Monitor - Watcher | File system event handling requires async coordination | Position map synchronization across threads | Medium | Resolved |
 
 ### Medium Priority
 
@@ -54,6 +62,10 @@ Items to address when working in the area:
 | TD-014 | Client | No security-related error handling | UI doesn't guide users on auth failures | Medium | Open |
 | TD-015 | `server/src/config.rs` | Public key parsing uses manual string splitting | Fragile to changes, no structured format | Medium | Open |
 | TD-016 | Client | Event payload validation missing client-side | Malformed events not caught early | Low | Open |
+| TD-018 | `monitor/src/parser.rs` | URL decoding implementation is custom | Non-standard implementation may miss edge cases | Low | Open |
+| TD-019 | `monitor/src/watcher.rs` | Thread spawning in notify callbacks | Potential resource exhaustion with rapid file changes | Medium | Open |
+| TD-024 | Monitor - JSONL | No rate limiting on local file parsing | May consume CPU on large sessions | Medium | Open |
+| TD-025 | Monitor - Events | Event buffer may fill faster than transmission | Could lose events in backpressure scenario | Medium | Open |
 
 ### Low Priority
 
@@ -65,6 +77,8 @@ Nice to have improvements:
 | TD-021 | Monitor | Add progress reporting for key loading | Better UX on startup | Low | Open |
 | TD-022 | All | Add security documentation to README | Improves onboarding | Low | Open |
 | TD-023 | Client | Add JSDoc for security-critical functions | Better code review | Low | Open |
+| TD-028 | Parser | Add comprehensive roundtrip tests for JSONL events | Validate serialization stability | Low | Open |
+| TD-029 | Watcher | Add metrics for file watching performance | Better observability | Low | Open |
 
 ## Missing Security Controls
 
@@ -79,6 +93,8 @@ Critical gaps in security infrastructure:
 | Security headers | CORS, CSP, HSTS headers | Production deployment | Phase 2 | tower-http configuration | Open |
 | Certificate validation | TLS validation in reqwest | Prevent MITM attacks | Phase 2 | Monitor HTTP client config | Open |
 | Client auth state | Token storage and refresh | Client authentication | Phase 2/3 | Client useAuthStore hook | Open |
+| File monitoring auth | Authentication for monitor startup | Prevent unauthorized monitoring | Phase 4+ | Monitor main entry point | Open |
+| Privacy guarantees | Verification that code/prompts not leaked | User trust | Phase 4+ | Integration tests | Pending |
 
 ## Fragile Areas
 
@@ -91,6 +107,10 @@ Code areas that are brittle or risky to modify:
 | `server/src/auth.rs:192-233` | Signature verification (now critical path) | Comprehensive unit + integration tests present | signature verification implementation | Resolved |
 | `server/src/auth.rs:269-295` | Token comparison (critical security) | 15 test cases covering edge cases | Token validation implementation | Resolved |
 | `monitor/src/config.rs:97-143` | Configuration validation | Add URL format validation and tests | Server URL parsing | Open |
+| `monitor/src/parser.rs:353-384` | JSONL parsing state management | SessionParser must be correctly instantiated per file | parse_line modifies mutable state | Resolved |
+| `monitor/src/parser.rs:465-488` | Path extraction and sanitization | Ensure basename extraction is comprehensive | extract_context_from_input validation | Open |
+| `monitor/src/watcher.rs:260-281` | Notify watcher setup and event routing | Test all event types and edge cases | Async/sync context switching | Resolved |
+| `monitor/src/watcher.rs:521-579` | File position tracking and truncation handling | Verify position map stays consistent | read_new_lines position updates | Resolved |
 | Error handling | Custom ServerError type, widely used now | Error handling tests in place | `server/src/error.rs` | Partial |
 | Client state | Zustand store with no auth isolation | Add user-scoped state selector before multi-tenant | `client/src/hooks/useEventStore.ts` | Open |
 
@@ -103,6 +123,9 @@ Active bugs that haven't been fixed:
 | BUG-001 | Server config | Invalid unicode in PORT env var crashes config loading | Medium | Ensure PORT contains only ASCII digits | Open |
 | BUG-002 | Monitor config | No validation of server URL format (accepts invalid URLs) | Low | Provide correct VIBETEA_SERVER_URL value | Open |
 | BUG-003 | Client | Event buffer has no size limit protection beyond 1000 events | Low | Monitor applies FIFO eviction at 1000 max | Open |
+| BUG-004 | Monitor - Watcher | Thread spawning on each file event may exhaust resources | Medium | Monitor file activity carefully, restart if needed | Open |
+| BUG-005 | Monitor - Parser | UUID validation accepts any valid UUID format in filename | Low | Expect valid UUIDs from Claude Code only | Open |
+| BUG-006 | Monitor - Watcher | Rapid file modifications may batch events in notify | Low | Expected behavior of OS file system | Open |
 
 ## Deprecated Code
 
@@ -125,6 +148,9 @@ Areas lacking proper observability:
 | WebSocket connections | Connection metrics (open, closed, failures) | Can't monitor client disconnect storms | Medium | Add ws::connect event logging |
 | Configuration load | Startup diagnostics | Hard to debug config issues | Medium | Add detailed startup logging in `main.rs` |
 | Cryptographic operations | Signature verify traces | Implemented (verify_strict calls logged) | Medium | Add performance metrics to auth operations |
+| File watching | File change events and latency | Can't measure monitoring lag | Medium | Add metrics to watcher event handling |
+| Parser performance | JSON parsing time and error rates | Can't detect parsing bottlenecks | Low | Add instrumentation to parser |
+| Session lifecycle | Session creation/completion events | Can't track active sessions | Medium | Log SessionStarted/Summary events |
 
 ## Performance Concerns
 
@@ -138,6 +164,9 @@ Potential performance issues:
 | PERF-004 | Config | Validation on every startup | Adds latency to boot | Lazy load, cache parsed config | Low |
 | PERF-005 | Client | Event buffer unbounded growth potential | Memory leak if buffer limit breached | Add additional safeguards beyond 1000 limit | Medium |
 | PERF-006 | Server | Rate limiter stale cleanup runs every 30s | Background task overhead | Configurable cleanup interval | Low |
+| PERF-007 | Monitor - Parser | Large JSONL files loaded into memory | Memory spike on big sessions | Stream parsing instead of full file | Medium |
+| PERF-008 | Monitor - Watcher | Recursive directory scan on startup | Slow on deep hierarchies | Optimize traversal, parallelize scans | Low |
+| PERF-009 | Monitor - Events | Event transmission may buffer in channels | Backpressure not handled | Add configurable buffer management | Medium |
 
 ## Dependency Risks
 
@@ -152,6 +181,7 @@ Dependencies that may need attention:
 | notify | File watching, platform-specific bugs | Monitor issue tracker | Ongoing | Medium |
 | reqwest | HTTP client, security updates important | Keep up-to-date with patches | Ongoing | High |
 | zustand | State management, no auth features built-in | Monitor for auth library integrations | Ongoing | Medium |
+| directories | Home directory resolution | Platform-specific edge cases possible | Ongoing | Low |
 
 ## Improvement Opportunities
 
@@ -167,6 +197,8 @@ Areas that could benefit from refactoring or enhancement:
 | Documentation | Code comments present | Inline security considerations | Better review | Low |
 | Client auth | Token in env variable | Secure token storage and refresh | Better client UX | High |
 | Event filtering | Broadcast to all | Per-client filtered streams | Better security and performance | High |
+| File monitoring | Reactive to changes | Proactive verification of privacy | User trust | High |
+| Parser resilience | Skips malformed lines silently | User feedback on parsing issues | Better diagnostics | Low |
 
 ## TODO Items
 
@@ -190,6 +222,7 @@ Configuration-related issues:
 | Missing URL format validation | Invalid server URLs accepted | Add URL parsing validation | Low | Phase 3+ |
 | No configuration schema documentation | Hard for users to configure | Generate schema from code | Medium | Phase 3+ |
 | No production checklist | Easy to deploy insecurely | Create deployment guide | Low | Phase 3+ |
+| JSONL directory permissions | Silently accepts world-readable dirs | Add startup validation with warning | Low | Phase 4+ |
 
 ## Code Quality Concerns
 
@@ -202,6 +235,9 @@ Configuration-related issues:
 | Type guards | Client-side validation present | Add schema validation library | Medium | Open |
 | Auth tests | 28 comprehensive test cases present | Additional integration tests | Medium | Partial |
 | Rate limit tests | 18 comprehensive test cases present | Production load testing | Medium | Open |
+| Parser tests | 44 comprehensive unit tests present | Integration tests for real JSONL files | Medium | Resolved |
+| Watcher tests | 14 comprehensive unit tests present | Long-running integration tests | Medium | Resolved |
+| Privacy verification | No tests for privacy guarantees | Add tests to verify code/prompts excluded | High | Open |
 
 ## Security Review Checklist
 
@@ -226,6 +262,8 @@ Items to verify before production:
 - [ ] Documentation updated with security practices
 - [ ] Penetration testing performed
 - [ ] Dependency vulnerability scanning in CI/CD
+- [ ] Privacy guarantee tests for JSONL parser (NEW Phase 4)
+- [ ] File watcher permission checks (NEW Phase 4)
 
 ## External Risk Factors
 
@@ -239,22 +277,35 @@ Items to verify before production:
 | Unencrypted transit of sensitive data | Low | High | Enforce HTTPS/WSS only | Phase 1/3 |
 | Unauthorized data access | High | High | Implement proper authorization | Phase 3+ |
 | Timing attacks on token validation | Low | Medium | Constant-time comparison now used | Phase 3 |
+| File system race conditions on watcher | Low | Medium | Atomic operations, careful error handling | Phase 4 |
+| Privacy breach via metadata extraction | Medium | High | Comprehensive privacy tests required | Phase 4+ |
 
-## Phase 3 Security Implementation Summary
+## Phase 4 Changes Summary
 
-Changes introduced in Phase 3:
+New concerns introduced in Phase 4 (monitor enhancements):
 
-| Component | Changes | Security Impact | Outstanding Work |
-|-----------|---------|-----------------|------------------|
-| `server/src/auth.rs` | Full signature verification with verify_strict() | Enables monitor authentication | Integration tests at scale |
-| `server/src/rate_limit.rs` | Complete token bucket implementation | Prevents DoS attacks | Metrics/observability |
-| `server/src/routes.rs` | Authentication middleware integrated | Enforces auth on event ingestion | Security header configuration |
-| `unsafe_mode_test.rs` | Comprehensive test suite for unsafe mode | Validates development bypass behavior | None - tests complete |
-| `server/src/main.rs` | Rate limiter cleanup task spawned | Prevents memory growth | Configuration options |
-| Config validation | Enhanced error handling for auth fields | Better deployment safety | Documentation |
-| Token validation | Constant-time comparison implemented | Prevents timing attacks | Load testing |
+**Added Components:**
+- `monitor/src/parser.rs` - JSONL parsing with privacy-first design
+- `monitor/src/watcher.rs` - File system monitoring with position tracking
 
-**Assessment**: Phase 3 has successfully implemented all critical authentication, authorization, and rate limiting controls. The codebase is now production-ready for basic security requirements. Remaining work focuses on advanced features (RBAC, audit logging, security headers) and operational concerns (monitoring, documentation).
+**New Security Considerations:**
+- File watcher event handling and potential resource exhaustion
+- JSONL parser correctness and privacy guarantees
+- Position map consistency under concurrent file changes
+- Thread spawning overhead in notify callbacks
+- Large file parsing memory footprint
+
+**Risk Assessment:**
+- Privacy concerns are mitigated by design (code/prompts explicitly excluded)
+- Parser error resilience tested comprehensively (44+ unit tests)
+- Watcher async safety verified (14+ unit tests)
+- Overall security posture improved with selective event extraction
+
+**Outstanding Work:**
+- Integration tests against real Claude Code session files
+- Privacy guarantee verification tests
+- Performance profiling under high event rates
+- File system edge case handling (symlinks, hard links, etc.)
 
 ---
 

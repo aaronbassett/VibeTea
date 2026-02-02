@@ -1,13 +1,13 @@
 # Technology Stack
 
-**Status**: Phase 3 Implementation - Authentication, broadcasting, and rate limiting modules complete
+**Status**: Phase 4 Implementation - Claude Code JSONL parser and file watcher modules added
 **Last Updated**: 2026-02-02
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, event capture and signing |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, event capture and signing |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 
@@ -38,6 +38,7 @@
 | gethostname        | 1.0     | System hostname retrieval | Monitor |
 | subtle             | 2.6     | Constant-time comparison for cryptography | Server (auth) |
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
+| futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
 
 ### TypeScript/JavaScript (Client)
 
@@ -71,6 +72,7 @@
 | Package      | Version | Purpose |
 |--------------|---------|---------|
 | tokio-test   | 0.4     | Tokio testing utilities |
+| tempfile     | 3.15    | Temporary file/directory management for tests |
 
 ### TypeScript Testing
 | Package                | Version  | Purpose |
@@ -86,6 +88,7 @@
 |------|-----------|---------|
 | `client/vite.config.ts` | Vite | Build configuration, WebSocket proxy to server on port 8080 |
 | `client/tsconfig.json` | TypeScript | Strict mode, ES2020 target |
+| `client/eslint.config.js` | ESLint | Flat config format with TypeScript support |
 | `Cargo.toml` (workspace) | Cargo | Rust workspace configuration and shared dependencies |
 | `server/Cargo.toml` | Cargo | Server package configuration |
 | `monitor/Cargo.toml` | Cargo | Monitor package configuration |
@@ -101,6 +104,7 @@
 | Async Model | Tokio (Rust), Promises (TypeScript) |
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
+| File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
 
 ## Communication Protocols & Formats
 
@@ -109,6 +113,7 @@
 | Monitor → Server | HTTPS POST | JSON | Ed25519 signature |
 | Server → Client | WebSocket | JSON | Bearer token |
 | Client → Server | WebSocket | JSON | Bearer token |
+| Monitor → File System | Native | JSONL | N/A (local file access) |
 
 ## Data Serialization
 
@@ -117,6 +122,7 @@
 | Server/Monitor | serde (Rust) | JSON with snake_case for env configs |
 | Client | TypeScript/JSON | camelCase for API contracts |
 | Events | serde_json | Standardized event schema across components |
+| Claude Code Files | JSONL (JSON Lines) | Privacy-first parsing extracting only metadata |
 
 ## Build Output
 
@@ -152,6 +158,8 @@
 - `config.rs` - Configuration from environment variables (server URL, source ID, key path, buffer size)
 - `error.rs` - Error types
 - `types.rs` - Event types
+- `parser.rs` - **NEW**: Claude Code JSONL parser (privacy-first metadata extraction)
+- `watcher.rs` - **NEW**: File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
 - `lib.rs` - Public interface
 - `main.rs` - Monitor entry point
 
@@ -163,45 +171,35 @@
 | Client | CDN | Static files | Optimized builds with compression |
 | Monitor | Local | Native binary | Users download and run locally |
 
-## Phase 3 Additions
+## Phase 4 Additions
 
-**Server Authentication Module** (`server/src/auth.rs`):
-- Ed25519 signature verification with `subtle::ConstantTimeEq` for timing-resistant comparison
-- Token validation for WebSocket clients
-- Comprehensive AuthError enum with detailed error types
-- Support for unknown sources, invalid signatures, base64 encoding failures, malformed keys
-- Unsafe mode support for development (skips signature verification when enabled)
+**Monitor Parser Module** (`monitor/src/parser.rs`):
+- Claude Code JSONL parsing with privacy-first approach
+- Extracts only metadata: tool names, timestamps, file basenames
+- Never processes code content, prompts, or assistant responses
+- Event mapping: assistant tool_use → ToolStarted, progress PostToolUse → ToolCompleted
+- SessionParser state tracking for multi-line file processing
+- ParsedEvent and ParsedEventKind types for normalized event representation
+- Support for session detection from file paths (slugified project names)
+- Comprehensive ParseError enum for error handling
 
-**Server Broadcasting Module** (`server/src/broadcast.rs`):
-- EventBroadcaster wrapping tokio broadcast channels
-- SubscriberFilter for filtering events by type, source, and project
-- 1000-event channel capacity for handling burst traffic
-- Thread-safe, cloneable broadcaster for sharing across async tasks
+**Monitor File Watcher Module** (`monitor/src/watcher.rs`):
+- Watches `~/.claude/projects/**/*.jsonl` for changes using notify crate
+- Position tracking map to efficiently tail files (no re-reading previous content)
+- WatchEvent enum: FileCreated, LinesAdded, FileRemoved
+- BufReader-based line reading with seek position management
+- Automatic cleanup of removed files from position tracking
+- WatcherError enum for I/O and initialization failures
+- Thread-safe Arc<RwLock<>> position map for async operation
 
-**Server Rate Limiting Module** (`server/src/rate_limit.rs`):
-- Per-source token bucket rate limiting
-- 100 events/second default rate with 100-token burst capacity
-- Per-source configuration with automatic stale entry cleanup
-- Returns Retry-After value for rate-limited clients
+**New Dependencies**:
+- `futures` 0.3 - Futures trait and utilities for async coordination
+- `tempfile` 3.15 - Temporary file/directory management for testing
 
-**Server Routes Module** (`server/src/routes.rs`):
-- AppState struct containing config, broadcaster, rate limiter, and uptime tracking
-- POST /events endpoint with signature verification and event broadcasting
-- GET /ws endpoint with WebSocket upgrade and token validation
-- GET /health endpoint with uptime reporting
-- Rate limiting applied per source via X-Source-ID header
-- Comprehensive error handling with HTTP status codes (401, 429, 400, 202, 101)
-
-**Integration Tests** (`server/tests/unsafe_mode_test.rs`):
-- 18 comprehensive integration tests for unsafe mode functionality
-- Tests for POST /events without signature, with invalid/malformed signatures
-- Tests for GET /ws upgrade without token and with invalid tokens
-- Tests for event broadcasting and ordering
-- Tests for rate limiting persistence in unsafe mode
-- Tests for source ID requirement and event validation
-
-**New Dependency**: `subtle` 2.6 for constant-time comparison in signature verification
-**New Dependency**: `futures-util` 0.3 for WebSocket stream handling
+**Enhanced Module Exports** (`monitor/src/lib.rs`):
+- Public exports: FileWatcher, WatchEvent, WatcherError
+- Public exports: SessionParser, ParsedEvent, ParsedEventKind
+- Documentation expanded with overview, privacy statement, and module descriptions
 
 ## Not Yet Implemented
 
@@ -213,3 +211,5 @@
 - Automatic reconnection on WebSocket disconnection
 - Per-user authentication tokens
 - Token rotation and expiration
+- Monitor integration with file watcher and parser (Phase 4 in progress)
+- Chunked event sending for high-volume sessions

@@ -11,7 +11,7 @@
 | Tool | Configuration | Command |
 |------|---------------|---------|
 | Prettier (TypeScript/Client) | `.prettierrc` | `npm run format` |
-| ESLint (TypeScript/Client) | `.eslintrc.cjs` | `npm run lint` |
+| ESLint (TypeScript/Client) | `eslint.config.js` | `npm run lint` |
 | rustfmt (Rust/Server/Monitor) | Default settings | `cargo fmt` |
 | clippy (Rust/Server/Monitor) | Default lints | `cargo clippy` |
 
@@ -46,12 +46,13 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Components | PascalCase | N/A (no components yet) |
+| Components | PascalCase | N/A (placeholder dir) |
 | Hooks | camelCase with `use` prefix | `useEventStore.ts` |
 | Types | PascalCase in `types/` folder | `types/events.ts` contains `VibeteaEvent` |
-| Utilities | camelCase | N/A (no utils yet) |
+| Utilities | camelCase | `utils/` exists (placeholder) |
 | Constants | SCREAMING_SNAKE_CASE in const files | `MAX_EVENTS = 1000` |
-| Test files | Same as source + `.test.ts` | `.test.tsx` for React components |
+| Test files | Same as source + `.test.ts` | `__tests__/events.test.ts` |
+| Test directories | `__tests__/` at feature level | Co-located with related source |
 
 #### Code Elements
 
@@ -59,10 +60,11 @@
 |------|------------|---------|
 | Variables | camelCase | `sessionId`, `eventCount` |
 | Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `DEFAULT_BUFFER_SIZE` |
-| Functions | camelCase, verb prefix | `selectEventsBySession()` |
+| Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()` |
 | Classes | PascalCase (rare in modern React) | N/A |
-| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session` |
-| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload` |
+| Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent` |
+| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus` |
+| Type guards | `is` prefix | `isSessionEvent()`, `isValidEventType()` |
 | Enums | PascalCase | N/A (use union types instead) |
 
 ### Rust/Server/Monitor
@@ -71,7 +73,7 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Modules | snake_case | `config.rs`, `error.rs`, `types.rs` |
+| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs` |
 | Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError` |
 | Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
@@ -80,23 +82,23 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Functions | snake_case | `from_env()`, `generate_event_id()` |
+| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()` |
 | Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080` |
-| Structs | PascalCase | `Config`, `Event` |
+| Structs | PascalCase | `Config`, `Event`, `JsonlParser` |
 | Enums | PascalCase | `EventType`, `SessionAction`, `ServerError` |
-| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()` |
+| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.watch_for_changes()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
 ## Error Handling
 
 ### Error Patterns
 
-#### TypeScript (Not yet implemented)
+#### TypeScript
 
-Client error handling will use:
+Client error handling uses:
 - Try/catch for async operations
-- Zod for schema validation with `.parse()` and `.safeParse()`
-- Custom error classes for business logic errors
+- Type guards for runtime validation (e.g., `isValidEventType()`)
+- Discriminated unions for safe event handling (see Common Patterns section)
 
 #### Rust/Server
 
@@ -119,6 +121,7 @@ Client error handling will use:
 | HTTP errors | String-based variants | `MonitorError::Http(String)` |
 | Cryptographic errors | String-based variants | `MonitorError::Crypto(String)` |
 | File watching errors | String-based variants | `MonitorError::Watch(String)` |
+| JSONL parsing errors | String-based variants | `MonitorError::Parse(String)` |
 
 ### Error Response Format
 
@@ -206,6 +209,14 @@ type VibeteaEvent<T extends EventType = EventType> = {
 // Type guards for runtime checks
 function isSessionEvent(event: VibeteaEvent): event is VibeteaEvent<'session'> {
   return event.type === 'session';
+}
+
+// Validation type guard
+function isValidEventType(value: unknown): value is EventType {
+  return (
+    typeof value === 'string' &&
+    (VALID_EVENT_TYPES as readonly string[]).indexOf(value) !== -1
+  );
 }
 ```
 
@@ -402,6 +413,31 @@ Example from `useEventStore.ts`:
  */
 ```
 
+Example from `types/events.ts`:
+
+```typescript
+/**
+ * Type guard to check if an event is a session event.
+ */
+export function isSessionEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'session'> {
+  return event.type === 'session';
+}
+
+/**
+ * Valid event type values for runtime validation.
+ */
+const VALID_EVENT_TYPES = [
+  'session',
+  'activity',
+  'tool',
+  'agent',
+  'summary',
+  'error',
+] as const;
+```
+
 ### Rust
 
 | Type | When to Use | Format |
@@ -465,7 +501,7 @@ Format: `type(scope): description`
 | docs | Documentation | `docs: update conventions` |
 | style | Formatting changes | `style: fix ESLint warnings` |
 | refactor | Code restructure | `refactor(config): simplify validation` |
-| test | Adding/updating tests | `test(config): add environment variable tests` |
+| test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
 
 ### Branch Naming

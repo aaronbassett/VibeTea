@@ -102,6 +102,7 @@ From `server/src/auth.rs:269-295`:
 | Configuration | Structured parsing | `Config::from_env()` with validation |
 | API input | Type safety | Rust compiler enforces types |
 | Signature/Token validation | Cryptographic checks | `verify_signature()` and `validate_token()` |
+| JSONL parsing | JSON deserialization + error handling | `monitor/src/parser.rs:354-359` |
 
 ### Event Validation (Server Types)
 
@@ -114,6 +115,18 @@ Event structure from `server/src/types.rs:1-163`:
 - **Event ID**: Prefixed format (`evt_` + 20 alphanumeric chars)
 
 All event fields are type-checked at deserialization via serde. Invalid JSON fails before reaching application logic. Validation occurs at `server/src/routes.rs:325-338`.
+
+### Claude Code JSONL Parsing
+
+From `monitor/src/parser.rs`:
+
+- **Privacy-first design**: Only metadata extracted (tool names, timestamps, file basenames)
+- **Code content excluded**: Prompts, response text, tool results never extracted
+- **Structure validation**: Raw JSON deserialization validates format
+- **Event type mapping**: Untagged enum ensures only recognized events processed
+- **Path safety**: File basenames extracted without full paths via `extract_basename()`
+- **URL decoding**: Project names decoded safely with validation
+- **Error handling**: Malformed JSON lines skipped with warning logs (line 357)
 
 ### Configuration Validation (Server)
 
@@ -136,6 +149,9 @@ From `server/src/config.rs:79-202`:
 | Base64 keys | Validated during signature verification | `auth.rs:204-215` |
 | Signatures | Base64 decoding with error handling | `auth.rs:218-225` |
 | Tokens | Trimmed and length-checked | `auth.rs:270-287` |
+| JSONL lines | Whitespace trimmed, empty lines filtered | `monitor/src/parser.rs:348-350`, `monitor/src/watcher.rs:562-565` |
+| File paths from tool input | Basename extraction only | `monitor/src/parser.rs:465-488` |
+| Project names | URL decoding with validation | `monitor/src/parser.rs:491-529` |
 
 ## Data Protection
 
@@ -147,6 +163,7 @@ From `server/src/config.rs:79-202`:
 | Public key | Base64-encoded | Environment variable | On server |
 | Bearer token | Environment variable | `VIBETEA_SUBSCRIBER_TOKEN` | In-memory, passed by clients in query params |
 | Event payloads | No encryption | Memory/transit | Sent over HTTPS/WSS only |
+| JSONL data | Read from disk | `~/.claude/projects/` | Watched by monitor, only metadata extracted |
 
 ### Encryption in Transit
 
@@ -318,6 +335,8 @@ Not yet configured. Recommended headers for production:
 | Development mode enabled | Warning message | In `server/src/config.rs:94-98` |
 | WebSocket connections | Connection/disconnection events | `server/src/routes.rs:493, 554` |
 | Event broadcasts | Per-event trace logs | `server/src/routes.rs:345-350` |
+| File watcher events | File creation/modification/removal | `monitor/src/watcher.rs:329-362, 366-400, 426-456` |
+| Parser events | JSONL parsing failures logged as warnings | `monitor/src/parser.rs:357` |
 
 **Status**: Basic error logging present. Structured auth decision logging and comprehensive audit trails pending.
 
@@ -334,6 +353,7 @@ Not yet configured. Recommended headers for production:
 | Rate limit | "rate limit exceeded" | Low - expected for clients |
 | Config errors | "configuration validation failed" | Low - visible only to operator |
 | Internal errors | "server configuration error" | Low - no sensitive details exposed |
+| Parser errors | Logged as warnings without details | Low - JSON parsing failures don't expose content |
 
 ### Error Response Handling
 
@@ -345,6 +365,7 @@ Errors from `server/src/routes.rs:188-208` and `server/src/auth.rs:49-92`:
 - `AuthError::InvalidPublicKey` - Returns 500 "server configuration error"
 - `AuthError::InvalidToken` - Returns 401 "invalid token"
 - Rate limit errors - Returns 429 with Retry-After
+- Parser errors - Logged as warnings, non-fatal to file monitoring
 
 No SQL errors, path traversal details, or stack traces exposed to clients.
 
@@ -359,19 +380,23 @@ No SQL errors, path traversal details, or stack traces exposed to clients.
 | subtle | Latest | Constant-time comparison | Critical for security |
 | reqwest | 0.12 | HTTPS client | Current |
 | serde | 1.0 | Safe deserialization | Current |
+| serde_json | Latest | JSON parsing | Current |
 | rand | 0.9 | Random number gen | Current |
 | tokio | Latest | Async runtime | Current |
 | axum | Latest | HTTP framework | Current |
 | thiserror | Latest | Error handling | Current |
 | uuid | Latest | Session IDs | Current |
 | chrono | Latest | Timestamps | Current |
+| notify | Latest | File watching | Current (Phase 4) |
+| directories | Latest | Home directory resolution | Current (Phase 4) |
 
 ### Dependency Audit
 
 **Status**: No known CVEs in current dependencies (as of 2026-02-02).
 
-**Process**: Use `cargo audit` to check for vulnerabilities:
+**Process**: To check for vulnerabilities, install and run cargo-audit:
 ```bash
+cargo install cargo-audit
 cd /home/ubuntu/Projects/VibeTea && cargo audit
 ```
 
@@ -403,6 +428,39 @@ From `client/src/hooks/useEventStore.ts:1-172`:
 - No rate limiting on client side
 - No CORS origin validation (server responsibility)
 
+## Phase 4 Security Changes
+
+New components added for Claude Code monitoring:
+
+### File Watcher (`monitor/src/watcher.rs`)
+
+- **Privacy-safe file monitoring**: Watches `~/.claude/projects/**/*.jsonl` for changes only
+- **Position tracking**: Efficient tailing without re-reading via byte-offset map
+- **Error handling**: Graceful handling of permission denied, I/O errors, missing files
+- **Async implementation**: Uses tokio for non-blocking file operations
+- **Thread safety**: `Arc<RwLock>` protects position map for concurrent access
+
+Security considerations:
+- Only JSONL files processed (extension filtering)
+- Position map prevents event replay
+- File removal cleanup automatic
+- Errors logged but don't crash watcher
+
+### JSONL Parser (`monitor/src/parser.rs`)
+
+- **Privacy-first extraction**: Only metadata (tool names, file basenames, timestamps) extracted
+- **Safe path handling**: `extract_basename()` prevents full path transmission
+- **URL decoding**: Safe project name decoding with validation
+- **Error resilience**: Malformed JSON skipped with warnings
+- **Type safety**: Rust enums prevent invalid event kinds
+
+Security guarantees:
+- Code content never extracted (text blocks skipped)
+- Prompts never extracted (thinking blocks skipped)
+- Tool results never extracted
+- Full file paths never transmitted (basenames only)
+- Session start/end tracking for lifecycle management
+
 ## Known Vulnerabilities & Gaps
 
 **Fixed in Phase 3:**
@@ -419,6 +477,7 @@ From `client/src/hooks/useEventStore.ts:1-172`:
 - No CORS header configuration (pending)
 - No client-side token management (pending)
 - No per-client isolation or scoping (all clients see all events)
+- No TLS certificate validation in monitor HTTP client (reqwest default)
 
 ---
 

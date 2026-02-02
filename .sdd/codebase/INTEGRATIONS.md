@@ -1,16 +1,60 @@
 # External Integrations
 
-**Status**: Phase 3 - Authentication, broadcasting, and rate limiting operational
+**Status**: Phase 4 - Claude Code JSONL parsing and file system monitoring operational
 **Last Updated**: 2026-02-02
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local file system
+- **Monitor**: Captures Claude Code session events from local JSONL files and file system changes
 - **Server**: Receives, validates, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization
 
 All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication.
+
+## File System Integration
+
+### Claude Code JSONL Files
+
+**Source**: `~/.claude/projects/**/*.jsonl`
+**Format**: JSON Lines (one JSON object per line)
+**Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents)
+
+**Parser Location**: `monitor/src/parser.rs` (SessionParser, ParsedEvent, ParsedEventKind)
+**Watcher Location**: `monitor/src/watcher.rs` (FileWatcher, WatchEvent)
+
+**Privacy-First Approach**:
+- Only metadata extracted: tool names, timestamps, file basenames
+- Never processes code content, prompts, or assistant responses
+- File path parsing for project name extraction (slugified format)
+
+**Session File Structure**:
+```
+~/.claude/projects/<project-slug>/<session-uuid>.jsonl
+```
+
+**Supported Event Types** (from Claude Code JSONL):
+| Claude Code Type | Parsed As | VibeTea Event | Fields Extracted |
+|------------------|-----------|---------------|------------------|
+| `assistant` with `tool_use` | Tool invocation | ToolStarted | tool name, context |
+| `progress` with `PostToolUse` | Tool completion | ToolCompleted | tool name, success |
+| `user` | User activity | Activity | timestamp only |
+| `summary` | Session end marker | Summary | session metadata |
+| File creation | Session start | SessionStarted | project from path |
+
+**Watcher Behavior**:
+- Monitors `~/.claude/projects/` directory recursively
+- Detects file creation, modification, deletion events
+- Maintains position map for efficient tailing (no re-reading)
+- Emits WatchEvent::FileCreated, WatchEvent::LinesAdded, WatchEvent::FileRemoved
+- Automatic cleanup of removed files from tracking state
+
+**Configuration** (`monitor/src/config.rs`):
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `VIBETEA_CLAUDE_DIR` | No | ~/.claude | Claude Code directory to monitor |
+| `VIBETEA_BASENAME_ALLOWLIST` | No | - | Comma-separated file extensions to watch |
+| `VIBETEA_BUFFER_SIZE` | No | 1000 | Event buffer capacity |
 
 ## Authentication & Authorization
 
@@ -57,14 +101,14 @@ VIBETEA_PUBLIC_KEYS=monitor-prod:dGVzdHB1YmtleTEx,monitor-dev:dGVzdHB1YmtleTIy
 |--------|---------|---------------|
 | **Method** | Bearer token in WebSocket headers | Static token per deployment |
 | **Protocol** | WebSocket upgrade with `Authorization: Bearer <token>` | Client sends on connect |
-| **Token Type** | Opaque string (no expiration in Phase 3) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
+| **Token Type** | Opaque string (no expiration in Phase 4) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
 | **Scope** | All clients use the same token | No per-user differentiation |
 | **Validation** | Server-side validation only | In-memory, no persistence |
 
 **Configuration Location**: `server/src/config.rs`
 - Parses `VIBETEA_SUBSCRIBER_TOKEN` (required unless unsafe mode enabled)
 - Token required for all WebSocket connections
-- No token refresh mechanism in Phase 3
+- No token refresh mechanism in Phase 4
 - Stored as `Option<String>` in Config struct
 
 **Future Enhancements**: Per-user tokens, token expiration, refresh tokens
@@ -101,14 +145,11 @@ Event {
 - TypeScript types: `client/src/types/events.ts`
 - Event validation: Serde deserialization with untagged union handling
 
-**Phase 3 TypeScript Enhancements** (`client/src/types/events.ts`):
-- Discriminated union type for type-safe payload access
-- `EventPayload` union with type discriminators
-- `EventPayloadMap` interface mapping event types to payloads
-- Generic `VibeteaEvent<T>` with type parameter for type narrowing
-- Type guards: `isSessionEvent()`, `isActivityEvent()`, `isToolEvent()`, `isAgentEvent()`, `isSummaryEvent()`, `isErrorEvent()`
-- Runtime validation: `isValidEventType()` checks against VALID_EVENT_TYPES array
-- All payload fields marked as readonly for immutability
+**Phase 4 Parser Integration** (`monitor/src/parser.rs`):
+- Maps Claude Code JSONL → ParsedEvent (privacy-first extraction)
+- SessionParser converts ParsedEventKind → VibeTea Event types
+- Tool invocations tracked with extracted context (file basenames)
+- Session lifecycle inferred from JSONL file creation/removal and summary markers
 
 ### Client Event Store Integration
 
@@ -146,6 +187,7 @@ export interface EventStore {
 | Server/Monitor | JSON (serde) | snake_case in payloads | Rust source |
 | Client | TypeScript types | camelCase in UI/API | `client/src/types/events.ts` |
 | Wire Protocol | JSON | Both (depends on layer) | Event payloads |
+| Claude Code Files | JSONL | Mixed (JSON structure) | `~/.claude/projects/**/*.jsonl` |
 
 ## Network Communication
 
@@ -157,12 +199,13 @@ export interface EventStore {
 **Content-Type**: application/json
 
 **Flow**:
-1. Monitor captures event from file system
-2. Monitor signs event payload with Ed25519 private key
-3. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers
-4. Server validates signature against registered public key
-5. Server rate limits based on source ID (100 events/sec default)
-6. Server broadcasts to all connected clients via WebSocket
+1. Monitor watches local JSONL files via file watcher
+2. Parser extracts metadata from new/modified JSONL lines
+3. Monitor signs event payload with Ed25519 private key
+4. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers
+5. Server validates signature against registered public key
+6. Server rate limits based on source ID (100 events/sec default)
+7. Server broadcasts to all connected clients via WebSocket
 
 **Rate Limiting** (`server/src/rate_limit.rs`):
 - Token bucket algorithm per source
@@ -213,9 +256,30 @@ export interface EventStore {
 **Connection Details**:
 - Address/port: Configured via `PORT` environment variable (default: 8080)
 - Persistent connection model
-- No automatic reconnection (Phase 3 - future enhancement)
+- No automatic reconnection (Phase 4 - future enhancement)
 - No message queuing (direct streaming)
 - Events processed with selective subscriptions to prevent unnecessary re-renders
+
+### Monitor → File System (JSONL Watching)
+
+**Target**: `~/.claude/projects/**/*.jsonl`
+**Mechanism**: `notify` crate file system events (inotify/FSEvents)
+**Update Strategy**: Incremental line reading with position tracking
+
+**Flow**:
+1. FileWatcher initialized with watch directory
+2. Recursive file system monitoring begins
+3. File creation detected → WatchEvent::FileCreated emitted
+4. File modification detected → New lines read from position marker
+5. Lines sent in WatchEvent::LinesAdded with accumulated lines
+6. Position marker updated to avoid re-reading
+7. File deletion detected → WatchEvent::FileRemoved emitted, cleanup position state
+
+**Efficiency Features**:
+- Position tracking prevents re-reading file content
+- Only new lines since last position are extracted
+- BufReader with Seek for efficient line iteration
+- Arc<RwLock<>> for thread-safe concurrent access
 
 ## HTTP API Endpoints
 
@@ -338,9 +402,16 @@ RUST_LOG=debug                                   # Logging level
 
 **File System Monitoring**:
 - Watches directory: VIBETEA_CLAUDE_DIR
-- Captures file creation, modification, deletion, and directory changes
+- Monitors for file creation, modification, deletion, and directory changes
 - Uses `notify` crate (version 8.0) for cross-platform inotify/FSEvents
 - Optional extension filtering via VIBETEA_BASENAME_ALLOWLIST
+- **NEW Phase 4**: FileWatcher tracks position to efficiently tail JSONL files
+
+**JSONL Parsing**:
+- **NEW Phase 4**: SessionParser extracts metadata from Claude Code JSONL
+- Privacy-first: Never processes code content or prompts
+- Tool tracking: Extracts tool name and context from assistant tool_use events
+- Progress tracking: Detects tool completion from progress PostToolUse events
 
 ### Local Client Setup
 
@@ -408,17 +479,29 @@ server: {
 - File watching errors (permission denied, path not found)
 - HTTP request errors (connection refused, timeout)
 - Cryptographic errors (invalid private key)
+- **NEW Phase 4**: JSONL parsing errors (invalid JSON, malformed events)
 
 **Config Error Types**:
 - MissingEnvVar(String) - VIBETEA_SERVER_URL required
 - InvalidValue { key: String, message: String } - Invalid parsed value
 - NoHomeDirectory - Cannot determine home directory
 
+**Parser Error Types** (`monitor/src/parser.rs`):
+- InvalidJson - Failed to parse JSONL line
+- InvalidPath - Malformed file path format
+- InvalidSessionId - UUID parsing failure
+
+**Watcher Error Types** (`monitor/src/watcher.rs`):
+- WatcherInit - File system watcher initialization failure
+- Io - File system I/O errors
+- DirectoryNotFound - Watch directory missing or inaccessible
+
 **Resilience**:
 - Continues watching even if individual file operations fail
 - Retries HTTP requests with exponential backoff (future enhancement)
 - Logs errors via `tracing` crate with structured context
 - Validates VIBETEA_BUFFER_SIZE as positive integer
+- Graceful degradation on malformed JSONL lines
 
 ## File System Monitoring
 
@@ -439,6 +522,12 @@ server: {
 
 **Location**: `monitor/src/config.rs` and `monitor/src/main.rs`
 
+**Phase 4 Enhancements** (`monitor/src/watcher.rs`):
+- Position tracking for efficient file tailing
+- Detects and emits only new lines appended to JSONL files
+- Automatic cleanup of removed files from tracking state
+- Thread-safe position map for concurrent access
+
 ## Logging & Observability
 
 ### Structured Logging
@@ -454,9 +543,11 @@ server: {
 **Components**:
 - Server: Logs configuration, connection events, errors, rate limiting
 - Monitor: Logs file system events, HTTP requests, signing operations
+- **NEW Phase 4**: Parser logs invalid JSONL events with context
+- **NEW Phase 4**: Watcher logs file tracking updates and position management
 - Warning logged when VIBETEA_UNSAFE_NO_AUTH is enabled
 
-**No External Service Integration** (Phase 3):
+**No External Service Integration** (Phase 4):
 - Logs to stdout/stderr only
 - Future: Integration with logging services (e.g., ELK, Datadog)
 
@@ -482,7 +573,7 @@ server: {
 **Bearer Token**:
 - Currently a static string per deployment
 - No encryption in transit (relies on TLS via HTTPS)
-- No expiration or refresh (Phase 3 limitation)
+- No expiration or refresh (Phase 4 limitation)
 
 **Security Implications**:
 - Token should be treated like a password
@@ -504,6 +595,14 @@ server: {
 - Production deployments use WSS (Server ↔ Client)
 - Local development may use unencrypted HTTP/WS
 
+### Privacy
+
+**Claude Code JSONL**:
+- Parser never extracts code content, prompts, or responses
+- Only metadata stored: tool names, timestamps, file basenames
+- File paths used only for project name extraction
+- Event contents never logged or stored unencrypted
+
 ## Future Integration Points
 
 ### Planned (Not Yet Integrated)
@@ -513,6 +612,7 @@ server: {
 - **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 4+)
 - **Message Queues**: Redis, RabbitMQ for event buffering (Phase 5+)
 - **Webhooks**: External service notifications (Phase 5+)
+- **Monitor Integration**: Main event loop connecting watcher, parser, and HTTP client (Phase 4 in progress)
 
 ## Configuration Quick Reference
 
@@ -544,32 +644,27 @@ server: {
 
 None required for production (future configuration planned).
 
-## Phase 3 Changes
+## Phase 4 Changes
 
-**Server Authentication Module** (`server/src/auth.rs`):
-- Ed25519 signature verification with timing-resistant comparison
-- Token validation for WebSocket clients
-- Comprehensive error handling with detailed error types
+**Monitor Parser Module** (`monitor/src/parser.rs`):
+- Claude Code JSONL parsing with privacy-first approach
+- Event mapping for tool invocations and completions
+- SessionParser for multi-line file processing
+- Comprehensive error handling
 
-**Server Broadcasting Module** (`server/src/broadcast.rs`):
-- EventBroadcaster for efficient multi-subscriber delivery
-- SubscriberFilter for selective event distribution
-- Burst-tolerant 1000-event capacity
+**Monitor File Watcher Module** (`monitor/src/watcher.rs`):
+- File system watching with position tracking
+- Efficient tailing without re-reading
+- WatchEvent enum for file system notifications
+- Thread-safe Arc<RwLock<>> state management
 
-**Server Rate Limiting** (`server/src/rate_limit.rs`):
-- Per-source token bucket algorithm
-- Automatic stale entry cleanup
-- Retry-After header support
+**New Dependencies**:
+- `futures` 0.3 - Async utilities for monitor
+- `tempfile` 3.15 - Testing support
 
-**Server Routes Enhancement** (`server/src/routes.rs`):
-- AppState with shared components (config, broadcaster, rate limiter)
-- Rate limiting on POST /events
-- Query parameter filtering on GET /ws
-- Comprehensive HTTP status codes
+**Module Organization**:
+- `monitor/src/lib.rs` - Enhanced exports for parser and watcher
+- `monitor/src/parser.rs` - JSONL parsing logic
+- `monitor/src/watcher.rs` - File system watching logic
 
-**Integration Tests** (`server/tests/unsafe_mode_test.rs`):
-- 18 tests covering unsafe mode scenarios
-- Tests for signature handling variations
-- Tests for WebSocket upgrade and filtering
-- Tests for event broadcasting and ordering
-- Tests for rate limiting and source ID validation
+**Integration Status**: Parser and watcher modules complete; integration with main event loop in progress.

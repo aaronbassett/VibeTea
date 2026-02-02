@@ -1,6 +1,6 @@
 # Architecture
 
-**Status**: Phase 3 core server implementation - Auth, broadcast, and rate limiting complete
+**Status**: Phase 4 incremental update - Monitor parser and file watcher implementation
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -8,7 +8,7 @@
 
 VibeTea is a three-tier real-time event streaming system with clear separation of concerns:
 
-- **Monitor** (Rust): Event producer that captures Claude Code session activity
+- **Monitor** (Rust): Event producer that watches Claude Code session files and captures activity
 - **Server** (Rust): Event hub that authenticates monitors and broadcasts to clients
 - **Client** (TypeScript/React): Event consumer that displays sessions and activities
 
@@ -20,9 +20,10 @@ The system follows a hub-and-spoke pattern where monitors are trusted publishers
 |---------|-------------|
 | **Hub-and-Spoke** | Monitors push events to the server, clients subscribe via WebSocket |
 | **Event-Driven** | All state changes flow through immutable, versioned events |
-| **Layered** | Monitor: Config → Types; Server: Routes → Auth/Broadcast/RateLimit → Types; Client: Types → Hooks → Components |
+| **Layered** | Monitor: Config/Watcher/Parser → Types; Server: Routes → Auth/Broadcast/RateLimit → Types; Client: Types → Hooks → Components |
 | **Pub/Sub** | Server acts as event broker with asymmetric authentication (monitors sign, clients consume) |
 | **Token Bucket** | Per-source rate limiting using token bucket algorithm with stale entry cleanup |
+| **File Tailing** | Monitor uses position tracking to efficiently read only new content from JSONL files |
 
 ## Core Components
 
@@ -112,18 +113,79 @@ pub struct AppState {
 
 **Cleanup Strategy**: Removes sources inactive for >60 seconds to prevent memory growth
 
+### Monitor File Watcher
+
+**Purpose**: Detect changes to Claude Code JSONL session files
+**Location**: `monitor/src/watcher.rs`
+**Responsibility**: File system event detection and position tracking
+
+**Key Components**:
+- `FileWatcher` - Watches directory tree using `notify` crate
+  - Monitors `~/.claude/projects/**/*.jsonl` files
+  - Emits FileCreated, LinesAdded, FileRemoved events
+  - Maintains position map to track last-read byte offset per file
+  - Enables efficient tailing without re-reading content
+
+**Key Methods**:
+- `FileWatcher::new()` - Initialize watcher for directory
+- `watch()` - Start watching and emit events to channel
+- Position tracking via `RwLock<HashMap<PathBuf, u64>>`
+
+**Design Pattern**: Notify-based recursive directory watching with file position caching
+
+### Monitor JSONL Parser
+
+**Purpose**: Extract structured events from Claude Code JSONL format
+**Location**: `monitor/src/parser.rs`
+**Responsibility**: Parse and normalize Claude Code events to VibeTea types
+
+**Key Components**:
+- `SessionParser` - Stateful parser that converts Claude Code events to VibeTea events
+  - Extracts session ID from filename (UUID)
+  - Extracts project name from file path (URL-decoded)
+  - Tracks session start for first event
+
+- `ParsedEventKind` - Normalized event types
+  - ToolStarted { name, context }
+  - ToolCompleted { name, success, context }
+  - Activity
+  - Summary
+  - SessionStarted { project }
+
+**Event Mapping**:
+| Claude Code Type | VibeTea Event | Fields Extracted |
+|------------------|---------------|------------------|
+| `assistant` with `tool_use` | Tool started | tool name, context |
+| `progress` with `PostToolUse` | Tool completed | tool name, success |
+| `user` | Activity | timestamp only |
+| `summary` | Summary | marks session end |
+| First event in file | Session started | project from path |
+
+**Privacy Strategy**: Extracts only metadata (tool names, timestamps, file basenames), never processes code content or prompts
+
 ### Monitor Component
 
 **Purpose**: Captures Claude Code session activity and transmits to server
 **Location**: `monitor/src/`
-**Technologies**: Rust, tokio, file watching, Ed25519 cryptography
+**Technologies**: Rust, tokio, file watching, JSONL parsing, Ed25519 cryptography
 
-**Key Modules**:
-- `config.rs` - Environment variable parsing for monitor configuration
-- `types.rs` - Event definitions shared with server
-- `error.rs` - Error hierarchy
-- `lib.rs` - Public API (re-exports Event types)
-- `main.rs` - Application entry point (Phase 3 placeholder)
+**Module Hierarchy**:
+```
+monitor/src/
+├── main.rs       - Entry point (Phase 4 placeholder)
+├── lib.rs        - Public API exports
+├── config.rs     - Environment variable parsing
+├── types.rs      - Event definitions
+├── error.rs      - Error hierarchy
+├── watcher.rs    - File system watching (Phase 4 new)
+└── parser.rs     - JSONL parsing (Phase 4 new)
+```
+
+**Key Features (Phase 4)**:
+- File system watching for `.jsonl` files
+- Incremental parsing with position tracking
+- Claude Code event format normalization
+- Privacy-first approach (metadata only)
 
 ### Client Component
 
@@ -139,16 +201,26 @@ pub struct AppState {
 
 ## Data Flow
 
-### Monitor → Server Flow
+### Monitor → Server Flow (Phase 4)
 
 ```
 Claude Code Session Activity
          ↓
-    Monitor (Rust)
+    File System (JSONL files)
          ↓
-    Capture & Queue Events
+    FileWatcher (notify crate)
+         ↓
+    WatchEvent (FileCreated/LinesAdded)
+         ↓
+    SessionParser
+         ↓
+    ParsedEvent (normalized)
+         ↓
+    VibeTea Event Construction
          ↓
     Sign with Ed25519 Private Key
+         ↓
+    Batch and Buffer
          ↓
     HTTPS POST to /events
          ↓
@@ -164,15 +236,18 @@ Claude Code Session Activity
 ```
 
 **Flow Steps**:
-1. Monitor watches Claude Code directory for session activity
-2. Events are generated with unique ID (evt_ + 20 chars), source ID, and timestamp
-3. Events are buffered and signed with the monitor's private key
-4. Signed batch is sent to server's `/events` endpoint via HTTPS POST
-5. Server route handler extracts source ID from X-Source-ID header
-6. Auth module verifies signature using configured public key
-7. Rate limiter checks request allowance for source
-8. Event schema is validated
-9. EventBroadcaster immediately forwards to all subscribed WebSocket clients
+1. FileWatcher detects changes to JSONL files in `~/.claude/projects/`
+2. WatchEvent is emitted (FileCreated or LinesAdded with new content)
+3. SessionParser reads new lines from tracked position
+4. Parser extracts Claude Code events and converts to normalized ParsedEvent
+5. ParsedEvent is converted to VibeTea Event with session ID, timestamp, source
+6. Events are buffered and signed with monitor's private key
+7. Signed batch is sent to server's `/events` endpoint via HTTPS POST
+8. Server route handler extracts source ID from X-Source-ID header
+9. Auth module verifies signature using configured public key
+10. Rate limiter checks request allowance for source
+11. Event schema is validated
+12. EventBroadcaster immediately forwards to all subscribed WebSocket clients
 
 ### Server → Client Flow
 
@@ -217,7 +292,8 @@ Authenticated Event
 | **Auth Module** | Signature verification, token validation | Config (public keys, tokens) | Routes, broadcast |
 | **Broadcast Module** | Event distribution, subscriber filtering | Types (event schema) | Routes, auth, config |
 | **RateLimit Module** | Token bucket tracking, stale entry cleanup | None (self-contained) | Routes, auth, broadcast |
-| **Monitor Config** | Parse env vars, validate paths | Filesystem, environment | Types directly |
+| **Monitor File Watcher** | File system observation, position tracking | Filesystem | Parser directly (events via channel) |
+| **Monitor Parser** | JSONL parsing, event normalization | Types | Filesystem directly |
 | **Client Component** | Display UI, handle user actions | Store hooks, types | WebSocket layer directly |
 
 ## Dependency Rules
@@ -228,6 +304,7 @@ Authenticated Event
 - **Broadcast is fire-and-forget**: Events are sent but no confirmation/acknowledgment required
 - **Type safety**: All three languages use strong typing; event schema is enforced at compile time
 - **Asymmetric auth**: Monitors authenticate with cryptographic signatures; clients authenticate with bearer tokens
+- **File watcher isolation**: Watcher and parser communicate via channels, no direct file access from parser
 
 ## Key Interfaces & Contracts
 
@@ -259,6 +336,35 @@ let mut rx = broadcaster.subscribe() // Returns Receiver<Event>
 // Route handler checks rate limit
 rate_limiter.check_rate_limit(source_id: &str).await -> RateLimitResult
 // Returns Allowed or Limited { retry_after_secs }
+```
+
+### Monitor FileWatcher → Channel Contract
+
+```rust
+// Watcher sends events through channel
+pub enum WatchEvent {
+    FileCreated(PathBuf),
+    LinesAdded { path: PathBuf, lines: Vec<String> },
+    FileRemoved(PathBuf),
+}
+```
+
+### Monitor Parser Contract
+
+```rust
+// Parser converts Claude Code lines to VibeTea events
+pub struct ParsedEvent {
+    pub kind: ParsedEventKind,
+    pub timestamp: DateTime<Utc>,
+}
+
+pub enum ParsedEventKind {
+    ToolStarted { name: String, context: Option<String> },
+    ToolCompleted { name: String, success: bool, context: Option<String> },
+    Activity,
+    Summary,
+    SessionStarted { project: String },
+}
 ```
 
 ### Monitor ↔ Server HTTP Contract
@@ -294,6 +400,7 @@ rate_limiter.check_rate_limit(source_id: &str).await -> RateLimitResult
 | **Request Validation** | Routes layer | Immediate rejection on invalid format | Single request |
 | **Rate Limit State** | RateLimiter (token buckets) | Per-source token tracking | All requests for source |
 | **Event Buffer** | EventBroadcaster (broadcast channel) | FIFO with capacity 1000 | All subscribed clients |
+| **File Positions** | FileWatcher (RwLock HashMap) | Position map per file | Monitor session lifetime |
 | **Subscriber Filters** | Per WebSocket connection | Builder pattern applied at connect | Single connection lifetime |
 | **Server Config** | AppState (Arc<Config>) | Immutable, loaded at startup | Server process lifetime |
 | **Client State** | Zustand store | Event buffer + session derivation | Client session lifetime |
@@ -309,6 +416,8 @@ rate_limiter.check_rate_limit(source_id: &str).await -> RateLimitResult
 | **Graceful Shutdown** | Signal handling (SIGTERM/SIGINT) with timeout | `main.rs` (shutdown_signal) |
 | **Cleanup Tasks** | Background cleanup of stale rate limit entries | `main.rs` (spawn_cleanup_task) |
 | **WebSocket Protocol** | Ping/pong handling, text messages, close frames | `routes.rs` (handle_websocket) |
+| **File Watching** | Recursive directory monitoring, change detection | `watcher.rs` (notify-based) |
+| **Event Parsing** | Claude Code JSONL normalization, privacy filtering | `parser.rs` |
 
 ## Testing Strategy
 
@@ -325,8 +434,9 @@ rate_limiter.check_rate_limit(source_id: &str).await -> RateLimitResult
 
 **Running Tests**:
 ```bash
-cargo test --package vibetea-server  # All tests
+cargo test --package vibetea-server  # All server tests
 cargo test --package vibetea-server routes  # Route tests only
+cargo test --package vibetea-monitor  # All monitor tests
 ```
 
 ## Graceful Shutdown Flow

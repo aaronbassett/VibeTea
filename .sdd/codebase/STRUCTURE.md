@@ -1,6 +1,6 @@
 # Project Structure
 
-**Status**: Phase 3 core server implementation - Auth, broadcast, routes, and rate limit modules complete
+**Status**: Phase 4 incremental update - Monitor parser and file watcher implementation
 **Generated**: 2026-02-02
 **Last Updated**: 2026-02-02
 
@@ -25,13 +25,15 @@ VibeTea/
 │
 ├── monitor/                    # Rust file watcher and event producer
 │   ├── src/
-│   │   ├── main.rs            # Monitor entry point (placeholder)
-│   │   ├── lib.rs             # Public API (types module only)
+│   │   ├── main.rs            # Monitor entry point (placeholder, Phase 4)
+│   │   ├── lib.rs             # Public API exports
 │   │   ├── config.rs          # Environment variable configuration (303 lines)
 │   │   ├── error.rs           # Error types and conversions (173 lines)
-│   │   ├── types.rs           # Event definitions and tests (341 lines)
+│   │   ├── types.rs           # Event definitions (341 lines)
+│   │   ├── watcher.rs         # File system watching with position tracking (NEW - Phase 4)
+│   │   ├── parser.rs          # JSONL parsing and event normalization (NEW - Phase 4)
 │   │   └── Cargo.toml         # Rust dependencies
-│   └── tests/                 # Integration tests (empty in Phase 3)
+│   └── tests/                 # Integration tests (empty in Phase 4)
 │
 ├── client/                     # TypeScript React web dashboard
 │   ├── src/
@@ -191,15 +193,64 @@ GET /health:
 - `spawn_cleanup_task(interval)` - Background cleanup every N seconds
 - `source_count()` - Get number of tracked sources
 
-### `monitor/` - File Watcher and Event Producer
+### `monitor/src/` - File Watcher and Event Producer
 
-| File | Purpose | Lines |
-|------|---------|-------|
-| `main.rs` | Monitor entry point (placeholder) | ~10 |
-| `lib.rs` | Public API (exports types only) | ~10 |
-| `config.rs` | Environment variable parsing | 303 |
-| `error.rs` | Error types (Config, IO, JSON, HTTP, Crypto, Watch) | 173 |
-| `types.rs` | Event definitions with ID generation | 341 |
+| File | Purpose | Lines | Status |
+|------|---------|-------|--------|
+| `main.rs` | Monitor entry point | ~10 | Placeholder (Phase 4) |
+| `lib.rs` | Public API (exports modules) | ~35 | Updated (Phase 4) |
+| `config.rs` | Environment variable parsing | 303 | Phase 3 |
+| `error.rs` | Error types (Config, IO, JSON, HTTP, Crypto, Watch) | 173 | Phase 3 |
+| `types.rs` | Event definitions with ID generation | 341 | Phase 3 |
+| `watcher.rs` | File system watching with position tracking | ~300 | NEW (Phase 4) |
+| `parser.rs` | JSONL parsing and event normalization | ~400 | NEW (Phase 4) |
+
+#### Monitor File Watcher - `watcher.rs` (Phase 4 New)
+
+**Purpose**: Monitor JSONL files in `~/.claude/projects/` for changes
+
+**Key Types**:
+- `FileWatcher` - Main watcher using `notify` crate
+- `WatchEvent` - Events emitted (FileCreated, LinesAdded, FileRemoved)
+- `WatcherError` - Error types
+
+**Key Features**:
+- Recursive directory monitoring for `.jsonl` files
+- Position tracking with `RwLock<HashMap<PathBuf, u64>>`
+- Incremental file reading (only new lines)
+- Channel-based event emission
+
+**Dependencies**:
+- `notify` crate - File system event detection
+- `tokio` - Async runtime and synchronization primitives
+- `tracing` - Structured logging
+
+#### Monitor JSONL Parser - `parser.rs` (Phase 4 New)
+
+**Purpose**: Parse Claude Code JSONL format and normalize to VibeTea events
+
+**Key Types**:
+- `SessionParser` - Stateful parser with session tracking
+- `ParsedEvent` - Normalized event with kind and timestamp
+- `ParsedEventKind` - 5 event types (ToolStarted, ToolCompleted, Activity, Summary, SessionStarted)
+- `RawClaudeEvent` - Raw deserialization struct
+
+**Event Mapping**:
+| Claude Type | Parsed Event | Fields |
+|------------|--------------|--------|
+| assistant + tool_use | ToolStarted | name, context |
+| progress + PostToolUse | ToolCompleted | name, success, context |
+| user | Activity | (timestamp only) |
+| summary | Summary | (marks end) |
+| First event | SessionStarted | project (from path) |
+
+**Privacy Strategy**: Only extracts metadata (tool names, timestamps, file basenames)
+
+**Key Methods**:
+- `SessionParser::from_path()` - Create parser from file path
+- `SessionParser::parse_line()` - Parse single JSONL line
+- Extracts UUID from filename as session ID
+- URL-decodes project name from path
 
 **Configuration Variables**:
 | Variable | Purpose | Required | Default |
@@ -229,7 +280,7 @@ GET /health:
 
 ## Module Boundaries
 
-### Server Module Structure (Phase 3)
+### Server Module Structure (Phase 3+)
 
 **Public API** (`src/lib.rs`):
 ```rust
@@ -287,20 +338,57 @@ main.rs
 - `rate_limit` ← Per-source request rate limiting
 - `main` ← Server startup, logging setup, signal handling, graceful shutdown
 
-### Monitor Module Structure
+### Monitor Module Structure (Phase 4)
 
 **Public API** (`src/lib.rs`):
 ```rust
+pub mod config;
+pub mod error;
+pub mod parser;
 pub mod types;
+pub mod watcher;
 
+pub use config::Config;
+pub use error::{MonitorError, Result};
+pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
+pub use watcher::{FileWatcher, WatchEvent, WatcherError};
+```
+
+**Module Dependencies**:
+```
+watcher.rs
+  ├── uses: (filesystem + tokio)
+  └── provides: FileWatcher, WatchEvent
+
+parser.rs
+  ├── uses: types (Event, EventPayload)
+  └── provides: ParsedEvent, SessionParser
+
+config.rs
+  ├── uses: (environment only)
+  └── provides: Config struct
+
+error.rs
+  ├── uses: (self-contained)
+  └── provides: MonitorError, Result
+
+types.rs
+  ├── uses: (no dependencies)
+  └── provides: Event, EventPayload, EventType
+
+main.rs
+  ├── uses: config, watcher, parser, types
+  └── provides: Monitor bootstrap (Phase 4 placeholder)
 ```
 
 **Responsibility Separation**:
-- `config` ← Configuration loading and validation (internal only)
-- `error` ← Error type definitions and conversions (internal only)
-- `types` ← Event schema and ID generation (public API)
-- `main` ← File watching and event transmission (Phase 3)
+- `config` ← Configuration loading and validation from environment
+- `error` ← Error type definitions and conversions
+- `types` ← Event schema and serialization
+- `watcher` ← File system monitoring and position tracking (Phase 4)
+- `parser` ← JSONL parsing and event normalization (Phase 4)
+- `main` ← File watching, parsing, batching, and transmission (Phase 4 placeholder)
 
 ### Client Module Structure
 
@@ -317,13 +405,16 @@ pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 | New server feature logic | `server/src/{feature}.rs` in public mod or routes | `auth.rs`, `broadcast.rs`, `rate_limit.rs` |
 | New HTTP route | `server/src/routes.rs` function | `post_events`, `get_ws`, `get_health` |
 | New error type | `server/src/error.rs` enum variant | `AuthError`, `RateLimitError` |
-| New monitor capability | `monitor/src/` new module | `monitor/src/watch.rs`, `monitor/src/signing.rs` |
+| New monitor feature | `monitor/src/{feature}.rs` | `watcher.rs`, `parser.rs` (Phase 4 added) |
+| File watching logic | `monitor/src/watcher.rs` | Extend FileWatcher (Phase 4) |
+| JSONL parsing logic | `monitor/src/parser.rs` | Extend SessionParser (Phase 4) |
+| Monitor main logic | `monitor/src/main.rs` | Watch directory, parse files, send events (Phase 4) |
 | New React component | `client/src/components/{feature}/` | `client/src/components/sessions/SessionList.tsx` |
 | New client hook | `client/src/hooks/` | `client/src/hooks/useWebSocket.ts` |
 | New utility function | `client/src/utils/` | `client/src/utils/formatDate.ts` |
 | New type definition | `client/src/types/` | `client/src/types/api.ts` |
 | Server integration tests | `server/tests/` | `server/tests/unsafe_mode_test.rs` |
-| Monitor tests | `monitor/tests/` | `monitor/tests/config_parsing.rs` |
+| Monitor tests | `monitor/tests/` | `monitor/tests/parser.rs`, `monitor/tests/watcher.rs` |
 
 ## Import Paths
 
@@ -344,6 +435,8 @@ use crate::routes::{create_router, AppState};
 use crate::auth::verify_signature;
 use crate::broadcast::EventBroadcaster;
 use crate::rate_limit::RateLimiter;
+use crate::watcher::FileWatcher;
+use crate::parser::SessionParser;
 ```
 
 ### TypeScript
@@ -377,8 +470,8 @@ import { formatDate } from '@utils/formatDate';
 |------|---------|--------|
 | `server/src/main.rs` | Server application bootstrap with graceful shutdown | Phase 3 complete |
 | `server/src/lib.rs` | Server public library API | Exports all modules |
-| `monitor/src/main.rs` | Monitor application bootstrap | Placeholder (Phase 3) |
-| `monitor/src/lib.rs` | Monitor public library API | Exports types only |
+| `monitor/src/main.rs` | Monitor application bootstrap | Placeholder (Phase 4) |
+| `monitor/src/lib.rs` | Monitor public library API | Exports watcher, parser, types (Phase 4) |
 | `client/src/main.tsx` | React DOM render | Renders App into #root |
 | `client/src/App.tsx` | Root React component | Placeholder (Phase 3) |
 | `client/index.html` | HTML template | Vite entry point |
@@ -394,46 +487,34 @@ Files that are auto-generated or compile-time artifacts:
 | `client/dist/` | `npm run build` (Vite) | Bundled client JavaScript and CSS |
 | `Cargo.lock` | `cargo` | Dependency lock file (committed) |
 
-## Phase 3 Implementation Summary
+## Phase 4 Implementation Summary
 
-The following modules were added/completed in Phase 3 for the server:
+The following modules were added/updated in Phase 4 for the monitor:
 
-**Server Core Implementation**:
-- `src/main.rs` - Complete server entry point with:
-  - Structured JSON logging initialization
-  - Graceful shutdown handling (SIGTERM/SIGINT)
-  - Background rate limiter cleanup task (30s interval)
-  - Configuration loading with error reporting
-  - TCP listener binding and server startup
+**Monitor New Modules**:
 
-- `src/routes.rs` - Complete HTTP API with:
-  - POST /events - Event ingestion with signature verification and rate limiting
-  - GET /ws - WebSocket subscription with optional filtering
-  - GET /health - Health check endpoint
-  - AppState shared across handlers
-  - Comprehensive test coverage (60+ tests)
+- `src/watcher.rs` - File system watching (NEW)
+  - FileWatcher using notify crate
+  - WatchEvent enum (FileCreated, LinesAdded, FileRemoved)
+  - Position tracking with RwLock HashMap
+  - Recursive `.jsonl` file monitoring
 
-- `src/auth.rs` - Complete authentication module with:
-  - Ed25519 signature verification (verify_strict for robustness)
-  - Constant-time token comparison using subtle crate
-  - Detailed error types with classification methods
-  - Comprehensive test coverage (40+ tests)
+- `src/parser.rs` - JSONL parsing (NEW)
+  - SessionParser for stateful parsing
+  - ParsedEventKind enum (5 event types)
+  - Claude Code event format mapping
+  - Privacy-first metadata extraction
+  - Session ID from filename, project from path
 
-- `src/broadcast.rs` - Complete event distribution with:
-  - Tokio broadcast channel for multi-subscriber support
-  - EventBroadcaster with configurable capacity
-  - SubscriberFilter with source/type/project filtering
-  - Comprehensive test coverage (50+ tests)
+- `src/lib.rs` - Updated public API (Phase 4)
+  - Now exports watcher and parser modules
+  - Exports ParsedEvent and SessionParser types
 
-- `src/rate_limit.rs` - Complete rate limiting with:
-  - Token bucket algorithm per source
-  - Configurable rate and capacity
-  - Automatic stale entry cleanup
-  - Background cleanup task spawning
-  - Comprehensive test coverage (20+ tests)
-
-**Testing**:
-- `server/tests/unsafe_mode_test.rs` - Integration tests in unsafe mode
+**Monitor Existing Modules** (Phase 3):
+- `src/main.rs` - Entry point (still placeholder, awaiting Phase 4+ implementation)
+- `src/config.rs` - Configuration loading
+- `src/error.rs` - Error types
+- `src/types.rs` - Event definitions
 
 ---
 

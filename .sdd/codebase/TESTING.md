@@ -10,8 +10,8 @@
 
 | Type | Framework | Configuration | Status |
 |------|-----------|---------------|--------|
-| Unit | Vitest | `vitest` (dev dependency) | Ready |
-| Integration | Vitest | Same as unit | Ready |
+| Unit | Vitest | Inline in `vite.config.ts` | Ready |
+| Integration | Vitest | Inline in `vite.config.ts` | Ready |
 | E2E | Not selected | TBD | Not started |
 
 ### Rust/Server
@@ -19,7 +19,7 @@
 | Type | Framework | Configuration | Status |
 |------|-----------|---------------|--------|
 | Unit | Rust built-in | `#[cfg(test)]` inline | In use |
-| Integration | Rust built-in | `tests/` directory | Ready |
+| Integration | Rust built-in | `tests/` directory | In use |
 | E2E | Not selected | TBD | Not started |
 
 ### Rust/Monitor
@@ -50,7 +50,7 @@
 | `cargo test --lib` | Run library unit tests only |
 | `cargo test --test '*'` | Run integration tests only |
 | `cargo test -- --nocapture` | Run tests with println output |
-| `cargo test -- --test-threads=1` | Run tests sequentially |
+| `cargo test -- --test-threads=1` | Run tests sequentially (prevents env var interference) |
 
 ## Test Organization
 
@@ -63,10 +63,13 @@ client/
 │   │   └── events.ts           # Type definitions
 │   ├── hooks/
 │   │   └── useEventStore.ts    # Zustand store
+│   ├── components/             # Placeholder (empty with .gitkeep)
+│   ├── utils/                  # Placeholder (empty with .gitkeep)
 │   ├── App.tsx
 │   └── main.tsx
-└── tests/                       # Placeholder (empty with .gitkeep)
-    └── .gitkeep
+└── src/
+    └── __tests__/              # Co-located test directory
+        └── events.test.ts      # Event type tests
 ```
 
 ### Rust/Server Directory Structure
@@ -77,10 +80,11 @@ server/
 │   ├── config.rs               # Config module with inline tests (12 tests)
 │   ├── error.rs                # Error module with inline tests (18+ tests)
 │   ├── types.rs                # Types module with inline tests (10+ tests)
+│   ├── routes.rs               # HTTP routes implementation
 │   ├── lib.rs                  # Library entrypoint
 │   └── main.rs                 # Binary entrypoint
-└── tests/                       # Integration tests (to be created)
-    └── (none yet)
+└── tests/
+    └── unsafe_mode_test.rs     # Integration test for unsafe auth mode
 ```
 
 ### Rust/Monitor Directory Structure
@@ -91,26 +95,103 @@ monitor/
 │   ├── config.rs               # Config module with inline tests
 │   ├── error.rs                # Error module with inline tests
 │   ├── types.rs                # Types module with inline tests
+│   ├── watcher.rs              # File watching implementation
+│   ├── parser.rs               # JSONL parser implementation
 │   ├── lib.rs                  # Library entrypoint
 │   └── main.rs                 # Binary entrypoint
-└── tests/                       # Integration tests (to be created)
-    └── (none yet)
+└── tests/                       # Integration tests directory (to be created)
 ```
 
 ### Test File Location Strategy
 
-**TypeScript**: Co-located tests (same filename + `.test.ts` extension)
+**TypeScript**: Co-located tests in `__tests__/` directory
 
 | Source File | Test File |
 |-------------|-----------|
-| `src/hooks/useEventStore.ts` | `src/hooks/useEventStore.test.ts` |
-| `src/App.tsx` | `src/App.test.tsx` |
+| `src/types/events.ts` | `src/__tests__/events.test.ts` |
+| `src/hooks/useEventStore.ts` | `src/__tests__/useEventStore.test.ts` (planned) |
+| `src/App.tsx` | `src/__tests__/App.test.tsx` (planned) |
 
 **Rust**: Inline tests in same module (`#[cfg(test)] mod tests`)
 
 Tests for a function go in the same file, grouped in a `tests` module at the end of the file.
 
 ## Test Patterns
+
+### Unit Tests (TypeScript)
+
+Tests follow the Arrange-Act-Assert pattern using Vitest:
+
+#### Example from `src/__tests__/events.test.ts`
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import type { VibeteaEvent, EventType } from '../types/events';
+
+describe('Event Types', () => {
+  it('should create a valid session event', () => {
+    // Arrange
+    const event: VibeteaEvent<'session'> = {
+      id: 'evt_test123456789012345',
+      source: 'test-source',
+      timestamp: new Date().toISOString(),
+      type: 'session',
+      payload: {
+        sessionId: '123e4567-e89b-12d3-a456-426614174000',
+        action: 'started',
+        project: 'test-project',
+      },
+    };
+
+    // Act + Assert
+    expect(event.type).toBe('session');
+    expect(event.payload.action).toBe('started');
+  });
+
+  it('should create a valid tool event', () => {
+    // Arrange
+    const event: VibeteaEvent<'tool'> = {
+      id: 'evt_test123456789012345',
+      source: 'test-source',
+      timestamp: new Date().toISOString(),
+      type: 'tool',
+      payload: {
+        sessionId: '123e4567-e89b-12d3-a456-426614174000',
+        tool: 'Read',
+        status: 'completed',
+        context: 'file.ts',
+        project: 'test-project',
+      },
+    };
+
+    // Act + Assert
+    expect(event.type).toBe('tool');
+    expect(event.payload.tool).toBe('Read');
+    expect(event.payload.status).toBe('completed');
+  });
+
+  it('should support all event types', () => {
+    // Arrange
+    const eventTypes: EventType[] = [
+      'session',
+      'activity',
+      'tool',
+      'agent',
+      'summary',
+      'error',
+    ];
+
+    // Act + Assert
+    expect(eventTypes).toHaveLength(6);
+  });
+});
+```
+
+Key patterns:
+1. **Imports**: Vitest `describe`, `it`, `expect` at top
+2. **Type safety**: Tests use actual TypeScript types for validation
+3. **Descriptive names**: Test names describe the behavior
+4. **Arrange-Act-Assert**: Clear three-part structure (though Act and Assert often combined in simple tests)
 
 ### Unit Tests (Rust)
 
@@ -219,40 +300,21 @@ mod tests {
 ```
 
 Key patterns:
-
 1. **Error display**: Tests verify error messages format correctly
 2. **Conversions**: Tests validate `impl From` and `impl Into` conversions
 3. **Utility methods**: Tests verify helper methods like `is_client_error()`
 
-### Unit Tests (TypeScript - Not Yet Implemented)
+### Integration Tests (Rust)
 
-When tests are added, they will follow this pattern:
+Larger tests that exercise multiple components together:
 
-```typescript
-import { describe, it, expect } from 'vitest';
-import { selectEventsBySession } from '../hooks/useEventStore';
-import type { EventStore, VibeteaEvent } from '../types/events';
+#### Example from `server/tests/unsafe_mode_test.rs`
 
-describe('selectEventsBySession', () => {
-  it('should return events for the specified session', () => {
-    // Arrange
-    const sessionId = 'session-123';
-    const event1: VibeteaEvent = { /* ... */ };
-    const event2: VibeteaEvent = { /* ... */ };
-    const state: EventStore = {
-      status: 'connected',
-      events: [event1, event2],
-      sessions: new Map(),
-      // ... other required fields
-    };
+Integration tests verify end-to-end functionality with full configuration:
 
-    // Act
-    const result = selectEventsBySession(state, sessionId);
-
-    // Assert
-    expect(result).toHaveLength(2);
-  });
-});
+```rust
+// Tests for unsafe mode authentication
+// Run with: cargo test --test unsafe_mode_test
 ```
 
 ### Error Handling Tests
@@ -290,8 +352,8 @@ When needed, mocking will use:
 | Layer | Mock Strategy | Location |
 |-------|---------------|----------|
 | HTTP | MSW (Mock Service Worker) | `src/mocks/handlers.ts` |
-| WebSocket | Manual test doubles | Test files |
-| State | Create test fixtures | Test files |
+| WebSocket | Manual test doubles or `vitest.mock()` | Test files |
+| State | Create test fixtures or real store in tests | Test files |
 | Time | `vi.useFakeTimers()` (Vitest) | Test setup |
 
 ### Rust
@@ -303,6 +365,24 @@ No mocking framework is used currently. Tests use:
 3. **Direct instantiation**: Create test instances with test data
 
 ## Test Data
+
+### TypeScript Fixtures
+
+Test data is created directly in test files. Example from `__tests__/events.test.ts`:
+
+```typescript
+const event: VibeteaEvent<'session'> = {
+  id: 'evt_test123456789012345',
+  source: 'test-source',
+  timestamp: new Date().toISOString(),
+  type: 'session',
+  payload: {
+    sessionId: '123e4567-e89b-12d3-a456-426614174000',
+    action: 'started',
+    project: 'test-project',
+  },
+};
+```
 
 ### Rust Fixtures
 
@@ -338,32 +418,6 @@ fn test_event_serialization_tool() {
 }
 ```
 
-### TypeScript Fixtures (Planned)
-
-When fixtures are needed:
-
-```typescript
-// tests/fixtures/events.ts
-export const testUser = {
-  id: 'test-user-id',
-  email: 'test@example.com',
-  name: 'Test User',
-};
-
-export function createSession(overrides = {}) {
-  return {
-    sessionId: 'session-' + Math.random().toString(36).substr(2, 9),
-    source: 'test-source',
-    project: 'test-project',
-    startedAt: new Date(),
-    lastEventAt: new Date(),
-    status: 'active' as const,
-    eventCount: 1,
-    ...overrides,
-  };
-}
-```
-
 ## Coverage Requirements
 
 ### Targets
@@ -380,8 +434,9 @@ Files/patterns excluded from coverage (will be configured):
 
 - `dist/` - Built artifacts
 - `*.config.ts` - Configuration files (already tested by usage)
-- `src/types/` - Type definitions only (no logic)
+- `src/types/` - Type definitions (logic tested via usage)
 - `node_modules/` - External dependencies
+- `src/__tests__/` - Test files themselves
 
 ## Test Categories
 
@@ -396,8 +451,16 @@ Tests that must pass before any deploy:
 | Config tests | Configuration loading | `server/src/config.rs` and `monitor/src/config.rs` tests |
 | Error tests | Error type safety | `server/src/error.rs` tests |
 | Serialization tests | JSON round-trips | `server/src/types.rs` tests |
+| Event type tests | Type-safe event creation | `client/src/__tests__/events.test.ts` |
 
 ### Unit Tests by Module
+
+#### TypeScript/Client
+
+**events.test.ts** (3 tests)
+- Session event creation and validation
+- Tool event creation and validation
+- Event type enumeration validation
 
 #### Rust/Server
 
@@ -425,17 +488,25 @@ Tests that must pass before any deploy:
 
 #### Rust/Monitor
 
-Tests follow similar patterns to server modules.
+Tests follow similar patterns to server modules covering:
+- Configuration parsing and validation
+- Error type formatting and conversions
+- Event type serialization
 
 ### Integration Tests
 
-None yet. Will test:
+#### Rust/Server
 
+**unsafe_mode_test.rs** (Tests integration of auth bypass)
+- Tests server startup with unsafe auth mode
+- Verifies event acceptance without signatures
+- Validates WebSocket connections in unsafe mode
+
+Planned integration tests will cover:
 - Full event creation and serialization pipeline
 - Configuration loading + usage together
-- File watching workflow
-- HTTP request building with signatures
-- End-to-end monitor → server communication
+- HTTP request handling with signatures
+- WebSocket connection and message broadcast
 
 ## CI Integration
 
@@ -451,6 +522,7 @@ test:
   - Lint Rust (clippy)
   - Format check Rust (rustfmt)
   - Unit tests (cargo test)
+  - Integration tests (cargo test --test)
   - Coverage report (optional)
 ```
 
@@ -460,38 +532,68 @@ test:
 |-------|----------|---------|
 | TypeScript linting | Yes | Style consistency |
 | TypeScript type check | Yes | Type safety |
-| Unit tests pass | Yes | Correctness |
+| TypeScript unit tests | Yes | Correctness |
 | Rust linting (clippy) | Yes | Code quality |
-| Rust tests pass | Yes | Correctness |
+| Rust unit tests | Yes | Correctness |
+| Rust integration tests | Yes | End-to-end behavior |
 | Code formatting matches | Yes | Consistency |
 
 ## Current Test Coverage
+
+### TypeScript/Client
+
+- **__tests__/events.test.ts**: 3 test cases for event type validation and creation
+- Framework (Vitest) installed and ready
+- Test organization structure established
 
 ### Rust Modules - Server
 
 - **config.rs**: 12 test cases covering env parsing, defaults, validation, public key parsing
 - **error.rs**: 18+ test cases covering error formatting, conversions, utility methods
 - **types.rs**: 10+ test cases covering event serialization and round-trips
+- **Integration tests**: 1 test file covering unsafe authentication mode
 
 ### Rust Modules - Monitor
 
 - **config.rs**: Test cases covering env parsing, path resolution, defaults
 - **error.rs**: Test cases covering error formatting and conversions
 - **types.rs**: Test cases covering event serialization
+- Integration tests directory ready for full pipeline tests
 
-### TypeScript
+## Test Execution
 
-- No tests yet (test directory is empty placeholder)
-- Test framework (Vitest) is installed and ready
-- Types and hooks ready for test coverage
+### Running All Tests
+
+```bash
+# TypeScript
+cd client && npm test              # Run once
+cd client && npm run test:watch    # Watch mode
+
+# Rust (entire workspace)
+cargo test                         # All tests
+cargo test -- --test-threads=1    # Sequential (prevents env var interference)
+```
+
+### Running Specific Test Modules
+
+```bash
+# Rust - specific module
+cargo test -p vibetea-server config::tests
+cargo test -p vibetea-server error::tests
+
+# Rust - integration tests
+cargo test --test unsafe_mode_test
+```
 
 ## Next Steps for Testing
 
-1. **TypeScript**: Create test fixtures and first unit tests for Zustand store and selector functions
-2. **Rust**: Add integration test directory and full-pipeline tests for both server and monitor
-3. **E2E**: Evaluate Playwright or Cypress for client workflow testing
-4. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
-5. **Snapshot testing**: Consider for event serialization if JSON formats become complex
+1. **TypeScript**: Create additional unit tests for Zustand store and selector functions
+2. **TypeScript**: Add component tests for UI elements as they're built
+3. **Rust/Server**: Expand integration tests for HTTP routes and WebSocket functionality
+4. **Rust/Monitor**: Add integration tests for file watching and JSONL parsing
+5. **Coverage**: Set up coverage reporting in CI/CD pipeline with threshold enforcement
+6. **E2E**: Evaluate Playwright or Cypress for client workflow testing once UI is more complete
+7. **Snapshot testing**: Consider for event serialization if JSON formats become complex
 
 ---
 
