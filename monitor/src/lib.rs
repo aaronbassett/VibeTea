@@ -23,17 +23,23 @@
 //! - [`config`]: Configuration from environment variables
 //! - [`error`]: Error types for monitor operations
 //! - [`privacy`]: Privacy pipeline for sanitizing event payloads
+//! - [`crypto`]: Ed25519 keypair generation and event signing
+//! - [`sender`]: HTTP client with retry, buffering, and rate limiting
 
 pub mod config;
+pub mod crypto;
 pub mod error;
 pub mod parser;
 pub mod privacy;
+pub mod sender;
 pub mod types;
 pub mod watcher;
 
 pub use config::Config;
+pub use crypto::{Crypto, CryptoError};
 pub use error::{MonitorError, Result};
 pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
+pub use sender::{Sender, SenderConfig, SenderError};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 pub use watcher::{FileWatcher, WatchEvent, WatcherError};
