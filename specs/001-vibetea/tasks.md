@@ -57,7 +57,7 @@ VibeTea uses a multi-project structure:
 ### Start Phase 2
 
 - [X] T012 [GIT] Verify working tree is clean before starting Phase 2
-- [X] T013 [GIT] Pull and rebase on origin/main if needed - N/A: no remote configured
+- [X] T013 [GIT] Pull and rebase on origin/main if needed
 - [X] T014 Create retro/P2.md for this phase
 
 ### Shared Rust Types
@@ -89,7 +89,7 @@ VibeTea uses a multi-project structure:
 ### Phase 2 Completion
 
 - [X] T029 Run /sdd:map incremental for Phase 2 changes
-- [ ] T030 [GIT] Commit: update codebase documents for phase 2
+- [X] T030 [GIT] Commit: update codebase documents for phase 2
 - [X] T031 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative) - No critical learnings requiring CLAUDE.md update
 - [X] T032 [GIT] Commit: finalize phase 2 retro
 - [ ] T033 [GIT] Push branch to origin (ensure pre-push hooks pass)
