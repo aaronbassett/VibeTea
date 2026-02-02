@@ -4,6 +4,13 @@
  * Provides centralized state management for the VibeTea event stream,
  * with selective subscriptions to prevent unnecessary re-renders
  * during high-frequency event updates.
+ *
+ * Session State Machine:
+ * - New File Detected -> Active (first event)
+ * - Active -> Inactive (no events for 5 minutes)
+ * - Inactive -> Active (event received)
+ * - Active/Inactive -> Ended (summary event received)
+ * - Ended/Inactive -> Removed (30 minutes since last event)
  */
 
 import { create } from 'zustand';
@@ -40,6 +47,8 @@ export interface EventStore {
   readonly setStatus: (status: ConnectionStatus) => void;
   /** Clear all events from the buffer */
   readonly clearEvents: () => void;
+  /** Update session states based on time thresholds (called periodically) */
+  readonly updateSessionStates: () => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -48,6 +57,15 @@ export interface EventStore {
 
 /** Maximum number of events to retain in the buffer */
 const MAX_EVENTS = 1000;
+
+/** Time threshold for transitioning from 'active' to 'inactive' (5 minutes) */
+export const INACTIVE_THRESHOLD_MS = 5 * 60 * 1000;
+
+/** Time threshold for removing sessions from display (30 minutes) */
+export const REMOVAL_THRESHOLD_MS = 30 * 60 * 1000;
+
+/** Interval for checking session states (30 seconds) */
+export const SESSION_CHECK_INTERVAL_MS = 30 * 1000;
 
 // -----------------------------------------------------------------------------
 // Store Implementation
@@ -111,11 +129,23 @@ export const useEventStore = create<EventStore>()((set) => ({
             ? event.payload.project
             : existingSession.project;
 
+        // Determine new status based on event type and current status:
+        // - Summary event: always transition to 'ended'
+        // - Non-summary event: transition to 'active' (even if currently 'inactive')
+        // Note: Once 'ended', sessions stay 'ended' until removed (30 min rule)
+        let newStatus = existingSession.status;
+        if (isSummaryEvent) {
+          newStatus = 'ended';
+        } else if (existingSession.status === 'inactive') {
+          // Reactivate inactive session on new non-summary event
+          newStatus = 'active';
+        }
+
         const updatedSession: Session = {
           ...existingSession,
           project,
           lastEventAt: now,
-          status: isSummaryEvent ? 'ended' : 'active',
+          status: newStatus,
           eventCount: existingSession.eventCount + 1,
         };
         newSessions.set(sessionId, updatedSession);
@@ -134,6 +164,47 @@ export const useEventStore = create<EventStore>()((set) => ({
 
   clearEvents: () => {
     set({ events: [], sessions: new Map<string, Session>() });
+  },
+
+  updateSessionStates: () => {
+    set((state) => {
+      const now = Date.now();
+      const newSessions = new Map<string, Session>();
+      let hasChanges = false;
+
+      for (const [sessionId, session] of state.sessions) {
+        const timeSinceLastEvent = now - session.lastEventAt.getTime();
+
+        // Remove sessions that have been inactive/ended for 30+ minutes
+        if (timeSinceLastEvent >= REMOVAL_THRESHOLD_MS) {
+          hasChanges = true;
+          continue; // Don't add to newSessions - effectively removes it
+        }
+
+        // Transition active sessions to inactive after 5+ minutes without events
+        if (
+          session.status === 'active' &&
+          timeSinceLastEvent >= INACTIVE_THRESHOLD_MS
+        ) {
+          hasChanges = true;
+          newSessions.set(sessionId, {
+            ...session,
+            status: 'inactive',
+          });
+          continue;
+        }
+
+        // Keep session unchanged
+        newSessions.set(sessionId, session);
+      }
+
+      // Only update state if there were actual changes
+      if (hasChanges) {
+        return { sessions: newSessions };
+      }
+
+      return state;
+    });
   },
 }));
 
