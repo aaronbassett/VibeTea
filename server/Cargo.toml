@@ -7,6 +7,10 @@ license.workspace = true
 repository.workspace = true
 description = "VibeTea Server - Real-time event hub"
 
+[lib]
+name = "vibetea_server"
+path = "src/lib.rs"
+
 [[bin]]
 name = "vibetea-server"
 path = "src/main.rs"
