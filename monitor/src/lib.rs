@@ -25,6 +25,7 @@
 //! - [`privacy`]: Privacy pipeline for sanitizing event payloads
 //! - [`crypto`]: Ed25519 keypair generation and event signing
 //! - [`sender`]: HTTP client with retry, buffering, and rate limiting
+//! - [`trackers`]: Enhanced data tracking modules
 
 pub mod config;
 pub mod crypto;
@@ -32,6 +33,7 @@ pub mod error;
 pub mod parser;
 pub mod privacy;
 pub mod sender;
+pub mod trackers;
 pub mod types;
 pub mod watcher;
 
