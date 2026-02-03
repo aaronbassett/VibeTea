@@ -1,0 +1,53 @@
+@import 'tailwindcss';
+
+/* VibeTea Theme - CSS-first configuration for Tailwind v4 */
+@theme {
+  /* Heatmap color scale (from spec) */
+  --color-heatmap-0: #1a1a2e;
+  --color-heatmap-1: #2d4a3e;
+  --color-heatmap-2: #3d6b4f;
+  --color-heatmap-3: #4d8c5f;
+  --color-heatmap-4: #5dad6f;
+
+  /* Activity indicator pulse animations */
+  --animate-pulse-slow: pulse-slow 1s ease-in-out infinite;
+  --animate-pulse-medium: pulse-medium 0.5s ease-in-out infinite;
+  --animate-pulse-fast: pulse-fast 0.33s ease-in-out infinite;
+}
+
+/* Activity indicator pulse keyframes */
+@keyframes pulse-slow {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes pulse-medium {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes pulse-fast {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}

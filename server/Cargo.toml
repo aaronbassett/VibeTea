@@ -1,0 +1,52 @@
+[package]
+name = "vibetea-server"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "VibeTea Server - Real-time event hub"
+
+[lib]
+name = "vibetea_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vibetea-server"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime
+tokio.workspace = true
+
+# HTTP server
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Cryptography
+ed25519-dalek.workspace = true
+base64.workspace = true
+subtle.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Utilities
+uuid.workspace = true
+chrono.workspace = true
+futures-util = "0.3"
+
+[dev-dependencies]
+tokio-test.workspace = true
+reqwest.workspace = true
+serial_test = "3.2"
