@@ -71,8 +71,8 @@
 - [x] T027 [P] Create useReducedMotion hook at client/src/hooks/useReducedMotion.ts (use devs:react-dev agent)
 - [x] T028 [P] Create usePageVisibility hook at client/src/hooks/usePageVisibility.ts (use devs:react-dev agent)
 - [x] T029 [P] Create useAnimationThrottle hook at client/src/hooks/useAnimationThrottle.ts (use devs:react-dev agent)
-- [ ] T030 [GIT] Commit: add animation utility hooks
-- [ ] T031 Create AnimationErrorBoundary component at client/src/components/animated/ErrorBoundary.tsx (use devs:react-dev agent)
+- [x] T030 [GIT] Commit: add animation utility hooks
+- [x] T031 Create AnimationErrorBoundary component at client/src/components/animated/ErrorBoundary.tsx (use devs:react-dev agent)
 - [ ] T032 [GIT] Commit: add AnimationErrorBoundary component
 - [ ] T033 Configure LazyMotion provider wrapper in client/src/App.tsx (use devs:react-dev agent)
 - [ ] T034 [GIT] Commit: configure LazyMotion provider
