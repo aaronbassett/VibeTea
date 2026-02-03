@@ -221,8 +221,152 @@ impl KeyOption {
 }
 
 // =============================================================================
-// Hostname Detection
+// Key Detection and Hostname Detection
 // =============================================================================
+
+/// Checks if cryptographic keys already exist in the default location.
+///
+/// Checks for the existence of key files in `~/.vibetea/`.
+///
+/// # Returns
+///
+/// `true` if keys exist, `false` otherwise (including if the directory
+/// doesn't exist or cannot be accessed).
+///
+/// # FR-004 Compliance
+///
+/// This function supports FR-004: "Key generation option MUST default to
+/// 'Use existing' if keys exist, or 'Generate new' if no keys exist."
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::detect_existing_keys;
+///
+/// let keys_exist = detect_existing_keys();
+/// if keys_exist {
+///     println!("Found existing keys in ~/.vibetea");
+/// } else {
+///     println!("No existing keys found");
+/// }
+/// ```
+pub fn detect_existing_keys() -> bool {
+    let key_dir = directories::BaseDirs::new()
+        .map(|dirs| dirs.home_dir().join(".vibetea"))
+        .unwrap_or_else(|| PathBuf::from(".vibetea"));
+
+    crate::crypto::Crypto::exists(&key_dir)
+}
+
+/// Checks if cryptographic keys exist in a specific directory.
+///
+/// This is useful for testing or when using a custom key directory.
+///
+/// # Arguments
+///
+/// * `key_dir` - Directory to check for key files
+///
+/// # Returns
+///
+/// `true` if keys exist in the specified directory, `false` otherwise.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::detect_existing_keys_in_dir;
+/// use std::path::Path;
+///
+/// let keys_exist = detect_existing_keys_in_dir(Path::new("/custom/key/dir"));
+/// ```
+pub fn detect_existing_keys_in_dir(key_dir: &Path) -> bool {
+    crate::crypto::Crypto::exists(key_dir)
+}
+
+/// Creates a new [`SetupFormState`] with auto-detected defaults.
+///
+/// This function:
+/// - Sets the session name to the system hostname (FR-003)
+/// - Detects if existing keys are present (FR-004)
+/// - Sets the key option to [`KeyOption::UseExisting`] if keys exist,
+///   [`KeyOption::GenerateNew`] otherwise
+///
+/// Use this function when initializing the TUI to provide the best defaults
+/// based on the current system state.
+///
+/// # FR-003 Compliance
+///
+/// The session name defaults to the system hostname as specified in FR-003.
+///
+/// # FR-004 Compliance
+///
+/// The key option defaults based on whether existing keys are found:
+/// - "Use existing" if keys exist in `~/.vibetea`
+/// - "Generate new" if no keys exist
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::{setup_form_with_detected_defaults, KeyOption};
+///
+/// let form_state = setup_form_with_detected_defaults();
+///
+/// // Session name is set to hostname
+/// assert!(!form_state.session_name.is_empty());
+///
+/// // Key option is set based on whether keys exist
+/// if form_state.existing_keys_found {
+///     assert_eq!(form_state.key_option, KeyOption::UseExisting);
+/// } else {
+///     assert_eq!(form_state.key_option, KeyOption::GenerateNew);
+/// }
+/// ```
+pub fn setup_form_with_detected_defaults() -> SetupFormState {
+    let existing_keys = detect_existing_keys();
+
+    SetupFormState {
+        session_name: default_session_name(),
+        session_name_error: None,
+        key_option: if existing_keys {
+            KeyOption::UseExisting
+        } else {
+            KeyOption::GenerateNew
+        },
+        focused_field: SetupField::default(),
+        existing_keys_found: existing_keys,
+    }
+}
+
+/// Creates a new [`SetupFormState`] with auto-detected defaults for a specific key directory.
+///
+/// This is useful for testing or when using a custom key directory.
+///
+/// # Arguments
+///
+/// * `key_dir` - Directory to check for existing keys
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::{setup_form_with_detected_defaults_in_dir, KeyOption};
+/// use std::path::Path;
+///
+/// let form_state = setup_form_with_detected_defaults_in_dir(Path::new("/custom/key/dir"));
+/// ```
+pub fn setup_form_with_detected_defaults_in_dir(key_dir: &Path) -> SetupFormState {
+    let existing_keys = detect_existing_keys_in_dir(key_dir);
+
+    SetupFormState {
+        session_name: default_session_name(),
+        session_name_error: None,
+        key_option: if existing_keys {
+            KeyOption::UseExisting
+        } else {
+            KeyOption::GenerateNew
+        },
+        focused_field: SetupField::default(),
+        existing_keys_found: existing_keys,
+    }
+}
 
 /// Returns the system hostname for use as the default session name.
 ///
@@ -2808,5 +2952,146 @@ mod tests {
 
         assert_eq!(state.dashboard.stats.events_sent, 0);
         assert_eq!(state.dashboard.stats.events_failed, 0);
+    }
+
+    // =============================================================================
+    // Key Detection Tests (T072)
+    // =============================================================================
+
+    #[test]
+    fn detect_existing_keys_returns_false_for_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        // Empty directory should have no keys
+        assert!(!detect_existing_keys_in_dir(temp_dir.path()));
+    }
+
+    #[test]
+    fn detect_existing_keys_returns_true_when_keys_exist() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Generate and save keys
+        let crypto = crate::crypto::Crypto::generate();
+        crypto.save(temp_dir.path()).unwrap();
+
+        // Now the function should return true
+        assert!(detect_existing_keys_in_dir(temp_dir.path()));
+    }
+
+    #[test]
+    fn detect_existing_keys_returns_false_for_nonexistent_dir() {
+        let path = std::path::Path::new("/nonexistent/path/that/does/not/exist");
+        assert!(!detect_existing_keys_in_dir(path));
+    }
+
+    #[test]
+    fn detect_existing_keys_in_dir_is_consistent() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Before keys exist
+        assert!(!detect_existing_keys_in_dir(temp_dir.path()));
+        assert!(!detect_existing_keys_in_dir(temp_dir.path()));
+
+        // Generate keys
+        let crypto = crate::crypto::Crypto::generate();
+        crypto.save(temp_dir.path()).unwrap();
+
+        // After keys exist
+        assert!(detect_existing_keys_in_dir(temp_dir.path()));
+        assert!(detect_existing_keys_in_dir(temp_dir.path()));
+    }
+
+    // =============================================================================
+    // setup_form_with_detected_defaults Tests (T072 - FR-004)
+    // =============================================================================
+
+    #[test]
+    fn setup_form_with_detected_defaults_uses_existing_when_keys_present() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Generate and save keys
+        let crypto = crate::crypto::Crypto::generate();
+        crypto.save(temp_dir.path()).unwrap();
+
+        // Create form state with detected defaults
+        let form_state = setup_form_with_detected_defaults_in_dir(temp_dir.path());
+
+        // Should default to UseExisting since keys exist (FR-004)
+        assert_eq!(form_state.key_option, KeyOption::UseExisting);
+        assert!(form_state.existing_keys_found);
+    }
+
+    #[test]
+    fn setup_form_with_detected_defaults_generates_new_when_no_keys() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // No keys in this directory
+        let form_state = setup_form_with_detected_defaults_in_dir(temp_dir.path());
+
+        // Should default to GenerateNew since no keys exist (FR-004)
+        assert_eq!(form_state.key_option, KeyOption::GenerateNew);
+        assert!(!form_state.existing_keys_found);
+    }
+
+    #[test]
+    fn setup_form_with_detected_defaults_sets_session_name_to_hostname() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let form_state = setup_form_with_detected_defaults_in_dir(temp_dir.path());
+
+        // Session name should be set to hostname (FR-003)
+        assert!(!form_state.session_name.is_empty());
+        assert_eq!(form_state.session_name, default_session_name());
+    }
+
+    #[test]
+    fn setup_form_with_detected_defaults_has_no_error() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let form_state = setup_form_with_detected_defaults_in_dir(temp_dir.path());
+
+        // Should have no initial error
+        assert!(form_state.session_name_error.is_none());
+    }
+
+    #[test]
+    fn setup_form_with_detected_defaults_focuses_session_name() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let form_state = setup_form_with_detected_defaults_in_dir(temp_dir.path());
+
+        // Should focus the session name field initially
+        assert_eq!(form_state.focused_field, SetupField::SessionName);
+    }
+
+    #[test]
+    fn setup_form_with_detected_defaults_existing_keys_found_matches_key_option() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Without keys
+        let form_state = setup_form_with_detected_defaults_in_dir(temp_dir.path());
+        assert!(!form_state.existing_keys_found);
+        assert_eq!(form_state.key_option, KeyOption::GenerateNew);
+
+        // Generate keys
+        let crypto = crate::crypto::Crypto::generate();
+        crypto.save(temp_dir.path()).unwrap();
+
+        // With keys
+        let form_state = setup_form_with_detected_defaults_in_dir(temp_dir.path());
+        assert!(form_state.existing_keys_found);
+        assert_eq!(form_state.key_option, KeyOption::UseExisting);
+    }
+
+    #[test]
+    fn setup_form_with_detected_defaults_for_nonexistent_dir() {
+        let path = std::path::Path::new("/nonexistent/path/that/does/not/exist");
+
+        let form_state = setup_form_with_detected_defaults_in_dir(path);
+
+        // Should default to GenerateNew for nonexistent directory
+        assert_eq!(form_state.key_option, KeyOption::GenerateNew);
+        assert!(!form_state.existing_keys_found);
+        // Session name should still be set
+        assert!(!form_state.session_name.is_empty());
     }
 }

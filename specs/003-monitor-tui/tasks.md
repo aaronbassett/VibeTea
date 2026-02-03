@@ -151,8 +151,8 @@
 
 ### Default Values
 - [x] T070 [US1] Implement hostname detection for default session name in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T071 [GIT] Commit: add hostname default for session name
-- [ ] T072 [US1] Auto-detect existing keys and set default key option in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T071 [GIT] Commit: add hostname default for session name
+- [x] T072 [US1] Auto-detect existing keys and set default key option in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T073 [GIT] Commit: auto-detect existing keys
 
 ### Codebase Mapping and Retro
