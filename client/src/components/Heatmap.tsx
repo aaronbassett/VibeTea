@@ -20,6 +20,7 @@ import { AnimatePresence, m } from 'framer-motion';
 
 import { COLORS, SPRING_CONFIGS } from '../constants/design-tokens';
 import { useEventStore } from '../hooks/useEventStore';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 
 import type { VibeteaEvent } from '../types/events';
 
@@ -317,10 +318,35 @@ function HourHeader() {
 /**
  * Tooltip component for showing cell details on hover.
  * Animated with spring physics for smooth entrance/exit transitions.
+ * Respects prefers-reduced-motion by using instant transitions.
  */
-function CellTooltip({ cell }: { readonly cell: HoveredCell }) {
+function CellTooltip({
+  cell,
+  prefersReducedMotion,
+}: {
+  readonly cell: HoveredCell;
+  readonly prefersReducedMotion: boolean;
+}) {
   const dateTime = formatCellDateTime(new Date(cell.date), cell.hour);
   const eventText = cell.count === 1 ? 'event' : 'events';
+
+  // Use instant transitions when reduced motion is preferred
+  const transition = prefersReducedMotion
+    ? { duration: 0 }
+    : SPRING_CONFIGS.standard;
+
+  // Skip entrance/exit animations for reduced motion
+  const animationProps = prefersReducedMotion
+    ? {
+        initial: { opacity: 1, y: 0, scale: 1 },
+        animate: { opacity: 1, y: 0, scale: 1 },
+        exit: { opacity: 0, y: 0, scale: 1 },
+      }
+    : {
+        initial: { opacity: 0, y: 8, scale: 0.95 },
+        animate: { opacity: 1, y: 0, scale: 1 },
+        exit: { opacity: 0, y: 8, scale: 0.95 },
+      };
 
   return (
     <m.div
@@ -334,10 +360,8 @@ function CellTooltip({ cell }: { readonly cell: HoveredCell }) {
         borderStyle: 'solid',
         borderColor: COLORS.background.tertiary,
       }}
-      initial={{ opacity: 0, y: 8, scale: 0.95 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: 8, scale: 0.95 }}
-      transition={SPRING_CONFIGS.standard}
+      {...animationProps}
+      transition={transition}
       role="tooltip"
     >
       <div className="font-medium" style={{ color: COLORS.text.primary }}>
@@ -402,16 +426,19 @@ function getGlowStyles(intensity: number): React.CSSProperties {
 
 /**
  * Individual heatmap cell component.
+ * Respects prefers-reduced-motion by showing static glow and disabling transitions.
  */
 function HeatmapCellComponent({
   cell,
   glowIntensity,
+  prefersReducedMotion,
   onHover,
   onLeave,
   onClick,
 }: {
   readonly cell: HeatmapCell;
   readonly glowIntensity: number;
+  readonly prefersReducedMotion: boolean;
   readonly onHover: (cell: HeatmapCell, event: React.MouseEvent) => void;
   readonly onLeave: () => void;
   readonly onClick: (cell: HeatmapCell) => void;
@@ -419,7 +446,20 @@ function HeatmapCellComponent({
   const backgroundColor = getHeatmapColor(cell.count);
   const eventText = cell.count === 1 ? 'event' : 'events';
   const ariaLabel = `${cell.count} ${eventText} on ${cell.dateLabel} at ${String(cell.hour).padStart(2, '0')}:00`;
-  const glowStyles = getGlowStyles(glowIntensity);
+
+  // When reduced motion is preferred:
+  // - Show static max glow if there's any glow intensity (no decay animation)
+  // - Skip the brightness filter animation
+  const effectiveGlowIntensity = prefersReducedMotion && glowIntensity > 0
+    ? MAX_GLOW_INTENSITY
+    : glowIntensity;
+
+  // Get glow styles, but skip brightness filter for reduced motion
+  const glowStyles = getGlowStyles(effectiveGlowIntensity);
+  if (prefersReducedMotion && glowStyles.filter !== undefined) {
+    // Remove brightness animation for reduced motion
+    delete glowStyles.filter;
+  }
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -428,12 +468,22 @@ function HeatmapCellComponent({
     }
   };
 
+  // Disable CSS transitions when reduced motion is preferred
+  const transitionClass = prefersReducedMotion
+    ? ''
+    : 'transition-all duration-200';
+
+  // Disable scale animation on hover when reduced motion is preferred
+  const hoverClass = prefersReducedMotion
+    ? ''
+    : 'hover:scale-110';
+
   return (
     <div
       role="gridcell"
       tabIndex={0}
       aria-label={ariaLabel}
-      className="aspect-square rounded-sm cursor-pointer transition-all duration-200 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+      className={`aspect-square rounded-sm cursor-pointer ${transitionClass} ${hoverClass} focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset`}
       style={{ backgroundColor, ...glowStyles }}
       onMouseEnter={(e) => onHover(cell, e)}
       onMouseLeave={onLeave}
@@ -503,6 +553,9 @@ function EmptyState() {
 export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
   // Selective subscription: only re-render when events change
   const events = useEventStore((state) => state.events);
+
+  // Respect user's reduced motion preference (FR-008)
+  const prefersReducedMotion = useReducedMotion();
 
   // State
   const [viewDays, setViewDays] = useState<ViewDays>(7);
@@ -753,6 +806,7 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
                       key={cell.key}
                       cell={cell}
                       glowIntensity={glowState.intensities.get(cell.key) ?? 0}
+                      prefersReducedMotion={prefersReducedMotion}
                       onHover={handleCellHover}
                       onLeave={handleCellLeave}
                       onClick={handleCellClick}
@@ -765,7 +819,12 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
 
           {/* Tooltip */}
           <AnimatePresence>
-            {hoveredCell !== null && <CellTooltip cell={hoveredCell} />}
+            {hoveredCell !== null && (
+              <CellTooltip
+                cell={hoveredCell}
+                prefersReducedMotion={prefersReducedMotion}
+              />
+            )}
           </AnimatePresence>
 
           {/* Legend */}
