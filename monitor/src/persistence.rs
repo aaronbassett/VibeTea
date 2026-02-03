@@ -69,6 +69,12 @@ const MAX_BATCH_SIZE: usize = 1000;
 /// HTTP request timeout in seconds.
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
+/// Initial retry delay in milliseconds (per FR-015).
+const INITIAL_RETRY_DELAY_MS: u64 = 1000;
+
+/// Multiplier for exponential backoff (per FR-015).
+const RETRY_BACKOFF_MULTIPLIER: u64 = 2;
+
 /// Errors that can occur during event persistence.
 #[derive(Error, Debug)]
 pub enum PersistenceError {
@@ -263,6 +269,16 @@ impl EventBatcher {
     /// Serializes the buffered events to JSON, signs the payload using Ed25519,
     /// and sends it to the ingest endpoint with authentication headers.
     ///
+    /// # Retry Behavior (FR-015)
+    ///
+    /// On transient failures (server errors, network issues), this method retries
+    /// with exponential backoff (1s, 2s, 4s delays). After exceeding the configured
+    /// retry limit, the batch is dropped and a warning is logged to prevent
+    /// unbounded memory growth.
+    ///
+    /// Authentication errors (401) are NOT retried, as they indicate a
+    /// configuration issue that requires human intervention.
+    ///
     /// # Returns
     ///
     /// The number of events successfully sent. Returns `Ok(0)` if the buffer
@@ -273,33 +289,69 @@ impl EventBatcher {
     /// Returns `PersistenceError` if:
     /// - The HTTP request fails
     /// - JSON serialization fails
-    /// - The server returns an authentication error (401)
-    /// - The server returns an error status
-    /// - Maximum retry attempts are exceeded
+    /// - The server returns an authentication error (401) - not retried
+    /// - The server returns an error status - retried until limit
+    /// - Maximum retry attempts are exceeded - batch is dropped
     pub async fn flush(&mut self) -> Result<usize, PersistenceError> {
+        self.flush_with_delay(INITIAL_RETRY_DELAY_MS).await
+    }
+
+    /// Internal flush implementation with configurable initial delay for testing.
+    async fn flush_with_delay(&mut self, initial_delay_ms: u64) -> Result<usize, PersistenceError> {
         if self.buffer.is_empty() {
             debug!("flush called with empty buffer, skipping");
             return Ok(0);
         }
 
-        let count = self.buffer.len();
-        debug!(event_count = count, "flushing event buffer");
+        let events: Vec<Event> = self.buffer.clone();
+        let event_count = events.len();
+        let mut delay_ms = initial_delay_ms;
 
-        match self.send_batch(&self.buffer.clone()).await {
-            Ok(sent) => {
-                self.buffer.clear();
-                self.consecutive_failures = 0;
-                info!(event_count = sent, "successfully flushed events");
-                Ok(sent)
-            }
-            Err(e) => {
-                self.consecutive_failures += 1;
-                error!(
-                    error = %e,
-                    consecutive_failures = self.consecutive_failures,
-                    "failed to flush events"
-                );
-                Err(e)
+        debug!(event_count = event_count, "flushing event buffer");
+
+        loop {
+            match self.send_batch(&events).await {
+                Ok(count) => {
+                    self.buffer.clear();
+                    self.consecutive_failures = 0;
+                    info!(event_count = count, "successfully flushed events");
+                    return Ok(count);
+                }
+                Err(PersistenceError::AuthFailed) => {
+                    // Auth failures are not retryable - they require config changes
+                    self.consecutive_failures += 1;
+                    error!(
+                        consecutive_failures = self.consecutive_failures,
+                        "authentication failed, not retrying"
+                    );
+                    return Err(PersistenceError::AuthFailed);
+                }
+                Err(e) => {
+                    self.consecutive_failures += 1;
+
+                    if self.consecutive_failures >= self.config.retry_limit {
+                        // Drop the batch and reset to prevent unbounded memory growth
+                        warn!(
+                            attempts = self.consecutive_failures,
+                            events = event_count,
+                            "max retries exceeded, dropping batch"
+                        );
+                        let attempts = self.consecutive_failures;
+                        self.buffer.clear();
+                        self.consecutive_failures = 0;
+                        return Err(PersistenceError::MaxRetriesExceeded { attempts });
+                    }
+
+                    debug!(
+                        attempt = self.consecutive_failures,
+                        delay_ms = delay_ms,
+                        error = %e,
+                        "batch send failed, will retry"
+                    );
+
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    delay_ms = delay_ms.saturating_mul(RETRY_BACKOFF_MULTIPLIER);
+                }
             }
         }
     }
@@ -790,33 +842,38 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_flush_returns_error_on_500() {
+        // With retry logic, a persistent 500 error will exhaust retries.
+        // Use retry_limit=1 to test the basic error handling path.
         let mock_server = MockServer::start().await;
 
         Mock::given(method("POST"))
             .and(path("/ingest"))
             .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .expect(1)
             .mount(&mock_server)
             .await;
 
-        let config = create_config_with_url(&mock_server.uri());
+        // Use retry_limit=1 so it fails immediately without retrying
+        let config = create_config_with_retry_limit(&mock_server.uri(), 1);
         let mut batcher = EventBatcher::new(config, create_test_crypto());
 
         batcher.queue(create_test_event_with_source("monitor"));
 
-        let result = batcher.flush().await;
+        // Use fast delay for testing
+        let result = batcher.flush_with_delay(1).await;
         assert!(result.is_err());
 
+        // With retry logic, this becomes MaxRetriesExceeded after retry_limit=1
         match result.unwrap_err() {
-            PersistenceError::ServerError { status, message } => {
-                assert_eq!(status, 500);
-                assert_eq!(message, "Internal Server Error");
+            PersistenceError::MaxRetriesExceeded { attempts } => {
+                assert_eq!(attempts, 1);
             }
-            other => panic!("Expected ServerError, got {:?}", other),
+            other => panic!("Expected MaxRetriesExceeded, got {:?}", other),
         }
 
-        // Buffer should NOT be cleared on error
-        assert_eq!(batcher.buffer_len(), 1);
-        assert_eq!(batcher.consecutive_failures, 1);
+        // Buffer should be cleared after max retries (batch dropped per FR-015)
+        assert!(batcher.is_empty());
+        assert_eq!(batcher.consecutive_failures, 0);
     }
 
     #[tokio::test]
@@ -884,37 +941,40 @@ mod integration_tests {
 
     #[tokio::test]
     async fn test_flush_resets_consecutive_failures_on_success() {
+        // Test that after a retry eventually succeeds, consecutive_failures is reset.
+        // We set up 2 failures followed by success within the retry limit.
         let mock_server = MockServer::start().await;
 
-        // First mock: return error
+        // First 2 requests fail, 3rd succeeds
         Mock::given(method("POST"))
             .and(path("/ingest"))
             .respond_with(ResponseTemplate::new(500).set_body_string("error"))
+            .up_to_n_times(2)
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
             .expect(1)
             .mount(&mock_server)
             .await;
 
-        let config = create_config_with_url(&mock_server.uri());
+        // Use retry_limit=5 to allow recovery
+        let config = create_config_with_retry_limit(&mock_server.uri(), 5);
         let mut batcher = EventBatcher::new(config, create_test_crypto());
 
         batcher.queue(create_test_event_with_source("monitor"));
 
-        // First flush fails
-        let _ = batcher.flush().await;
-        assert_eq!(batcher.consecutive_failures, 1);
+        // Flush should eventually succeed after retries
+        let result = batcher.flush_with_delay(1).await;
 
-        // Reset mocks and add success response
-        mock_server.reset().await;
-        Mock::given(method("POST"))
-            .and(path("/ingest"))
-            .respond_with(ResponseTemplate::new(200))
-            .mount(&mock_server)
-            .await;
-
-        // Second flush succeeds
-        let result = batcher.flush().await;
         assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        // consecutive_failures should be reset to 0 on success
         assert_eq!(batcher.consecutive_failures, 0);
+        assert!(batcher.is_empty());
     }
 
     #[tokio::test]
@@ -987,5 +1047,295 @@ mod integration_tests {
             64,
             "Ed25519 signature should be 64 bytes"
         );
+    }
+
+    // =========================================================================
+    // FR-015: Retry Logic Tests
+    // =========================================================================
+
+    /// Helper to create config with custom retry limit and fast delays for testing.
+    fn create_config_with_retry_limit(url: &str, retry_limit: u8) -> PersistenceConfig {
+        PersistenceConfig {
+            supabase_url: url.to_string(),
+            batch_interval_secs: 60,
+            retry_limit,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_flush_retries_on_server_error() {
+        let mock_server = MockServer::start().await;
+
+        // Mock returns 500 twice, then succeeds on third attempt
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .up_to_n_times(2)
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 5);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        // Use fast delay (1ms) for testing
+        let result = batcher.flush_with_delay(1).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        assert!(batcher.is_empty());
+        assert_eq!(batcher.consecutive_failures, 0);
+
+        // Verify 3 requests were made (2 failures + 1 success)
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_flush_respects_retry_limit() {
+        let mock_server = MockServer::start().await;
+
+        // Mock always returns 500
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .expect(3) // Should be called exactly 3 times (retry_limit = 3)
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 3);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        // Use fast delay (1ms) for testing
+        let result = batcher.flush_with_delay(1).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PersistenceError::MaxRetriesExceeded { attempts } => {
+                assert_eq!(attempts, 3);
+            }
+            other => panic!("Expected MaxRetriesExceeded, got {:?}", other),
+        }
+
+        // Verify exactly 3 requests were made
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_flush_does_not_retry_on_401() {
+        let mock_server = MockServer::start().await;
+
+        // Mock returns 401 - should NOT be retried
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(401))
+            .expect(1) // Should only be called once
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 5);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        // Use fast delay (1ms) for testing
+        let result = batcher.flush_with_delay(1).await;
+
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), PersistenceError::AuthFailed));
+
+        // Buffer should NOT be cleared on auth error
+        assert_eq!(batcher.buffer_len(), 1);
+        assert_eq!(batcher.consecutive_failures, 1);
+
+        // Verify only 1 request was made (no retries)
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_flush_clears_buffer_after_max_retries() {
+        let mock_server = MockServer::start().await;
+
+        // Mock always returns 500
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 3);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        // Queue multiple events
+        batcher.queue(create_test_event_with_source("monitor"));
+        batcher.queue(create_test_event_with_source("monitor"));
+        batcher.queue(create_test_event_with_source("monitor"));
+        assert_eq!(batcher.buffer_len(), 3);
+
+        // Use fast delay (1ms) for testing
+        let result = batcher.flush_with_delay(1).await;
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            PersistenceError::MaxRetriesExceeded { .. }
+        ));
+
+        // Buffer should be cleared after max retries (batch dropped)
+        assert!(batcher.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_flush_resets_failures_after_max_retries() {
+        let mock_server = MockServer::start().await;
+
+        // Mock always returns 500 for first batch
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 3);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        // First flush should fail after max retries
+        let result = batcher.flush_with_delay(1).await;
+        assert!(result.is_err());
+
+        // consecutive_failures should be reset to 0 after dropping batch
+        assert_eq!(batcher.consecutive_failures, 0);
+
+        // Now queue another event and reset mock to succeed
+        mock_server.reset().await;
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        batcher.queue(create_test_event_with_source("monitor"));
+        let result = batcher.flush_with_delay(1).await;
+
+        // Second flush should succeed without accumulated failures affecting it
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_flush_exponential_backoff_timing() {
+        let mock_server = MockServer::start().await;
+
+        // Mock returns 500 for first 3 attempts, then succeeds
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .up_to_n_times(3)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 5);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        // Use 10ms initial delay to verify exponential backoff
+        // Expected delays: 10ms, 20ms, 40ms = ~70ms minimum total
+        let start = std::time::Instant::now();
+        let result = batcher.flush_with_delay(10).await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_ok());
+        // Allow some tolerance for test execution time
+        // Minimum: 10 + 20 + 40 = 70ms of sleep time
+        assert!(
+            elapsed.as_millis() >= 60,
+            "Expected at least 60ms elapsed, got {}ms",
+            elapsed.as_millis()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flush_retry_with_configurable_limit() {
+        let mock_server = MockServer::start().await;
+
+        // Test with retry_limit = 1 (no retries after first failure)
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 1);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+        let result = batcher.flush_with_delay(1).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            PersistenceError::MaxRetriesExceeded { attempts } => {
+                assert_eq!(attempts, 1);
+            }
+            other => panic!("Expected MaxRetriesExceeded, got {:?}", other),
+        }
+
+        // Only 1 request should be made with retry_limit = 1
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_flush_succeeds_on_last_retry() {
+        let mock_server = MockServer::start().await;
+
+        // Mock returns 500 for first 2 attempts, succeeds on 3rd (retry_limit = 3)
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .up_to_n_times(2)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_retry_limit(&mock_server.uri(), 3);
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+        let result = batcher.flush_with_delay(1).await;
+
+        // Should succeed on the 3rd attempt (just before hitting limit)
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        assert!(batcher.is_empty());
+        assert_eq!(batcher.consecutive_failures, 0);
     }
 }
