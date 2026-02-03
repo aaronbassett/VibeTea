@@ -80,6 +80,7 @@ Code areas that are brittle or risky to modify:
 | `server/src/config.rs` | Configuration parsing affects entire server security posture | Test with invalid inputs; document parsing rules |
 | `server/src/routes.rs` | Source validation happens in multiple places; easy to miss one | Centralize source validation logic; add integration tests |
 | `monitor/src/crypto.rs` | Signing is security-critical; keys must not leak | Never log keys; use constant-time operations only |
+| `monitor/src/trackers/agent_tracker.rs` | Privacy-critical: must never extract or transmit prompt content | Maintain type-safe design (no prompt field in struct); review any struct field additions |
 
 ## Deprecated Code
 
@@ -146,6 +147,26 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 
 6. **Rate limiter state**: HashMap can grow unbounded if many unique source IDs are used; stale entry cleanup helps but may not be sufficient under attack.
 
+## Privacy-Related Concerns
+
+### Phase 4: Agent Tracking Privacy
+
+| ID | Area | Description | Status | Notes |
+|----|------|-------------|--------|-------|
+| PRIV-001 | `monitor/src/trackers/agent_tracker.rs` | Task tool prompt extraction eliminated | Resolved (Phase 4) | `TaskToolInput` struct intentionally lacks prompt field |
+| PRIV-002 | `monitor/src/trackers/agent_tracker.rs` | Type-safe privacy enforcement | Implemented | Privacy guaranteed at compile-time via struct definition |
+| PRIV-003 | `monitor/src/trackers/agent_tracker.rs` | Only metadata extracted | Implemented | Extracts: subagent_type, description (non-sensitive fields) |
+
+### Privacy Design Pattern
+
+The agent tracker implements privacy-by-design:
+- Struct definition prevents prompt extraction: `TaskToolInput` has no `prompt` field
+- Parser silently ignores prompt field in JSON (serde default behavior)
+- Type system enforces that prompts cannot be included in events
+- Test coverage verifies prompt field is ignored (`tests` module, line 378-393)
+
+This approach is more robust than runtime validation because it's impossible to accidentally transmit sensitive data.
+
 ## Compliance Notes
 
 - No formal security audit has been performed
@@ -154,6 +175,7 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 - Cryptographic operations use well-tested libraries (`ed25519_dalek`, `subtle`)
 - No SQL injection vectors (no SQL used)
 - No code injection vectors (no eval/exec)
+- Privacy controls built into type system (no prompt field in task tracking)
 
 ---
 

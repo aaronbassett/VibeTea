@@ -1,7 +1,7 @@
 # External Integrations
 
-**Status**: Phase 10 Implementation - Session overview with activity indicators and timeout management
-**Last Updated**: 2026-02-02
+**Status**: Phase 4 Implementation - Agent spawning and token usage tracking
+**Last Updated**: 2026-02-03
 
 ## Summary
 
@@ -23,9 +23,10 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 **Parser Location**: `monitor/src/parser.rs` (SessionParser, ParsedEvent, ParsedEventKind)
 **Watcher Location**: `monitor/src/watcher.rs` (FileWatcher, WatchEvent)
 **Privacy Pipeline**: `monitor/src/privacy.rs` (PrivacyConfig, PrivacyPipeline, extract_basename)
+**Agent Tracker**: `monitor/src/trackers/agent_tracker.rs` (Phase 4 - Task tool agent spawn tracking)
 
 **Privacy-First Approach**:
-- Only metadata extracted: tool names, timestamps, file basenames
+- Only metadata extracted: tool names, timestamps, file basenames, agent types, descriptions
 - Never processes code content, prompts, or assistant responses
 - File path parsing for project name extraction (slugified format)
 - All event payloads pass through PrivacyPipeline before transmission
@@ -38,11 +39,31 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 **Supported Event Types** (from Claude Code JSONL):
 | Claude Code Type | Parsed As | VibeTea Event | Fields Extracted |
 |------------------|-----------|---------------|------------------|
-| `assistant` with `tool_use` | Tool invocation | ToolStarted | tool name, context |
+| `assistant` with `tool_use` (non-Task) | Tool invocation | ToolStarted | tool name, context |
+| `assistant` with `tool_use` (Task tool) | Agent spawn | AgentSpawned | subagent_type, description |
 | `progress` with `PostToolUse` | Tool completion | ToolCompleted | tool name, success |
 | `user` | User activity | Activity | timestamp only |
 | `summary` | Session end marker | Summary | session metadata |
 | File creation | Session start | SessionStarted | project from path |
+
+**Task Tool Special Handling** (Phase 4):
+- Task tool invocations (Claude Code subagents) trigger dual event emission
+- ToolStarted event: Tracks the Task tool itself
+- AgentSpawned event: Tracks the spawned subagent with type and description
+- Uses `monitor/src/trackers/agent_tracker.rs` for parsing
+- Privacy-first: Only extracts subagent_type and description, never the prompt field
+
+**Agent Tracker Module** (`monitor/src/trackers/agent_tracker.rs`):
+- **TaskToolInput**: Structure holding parsed Task tool metadata
+  - `subagent_type`: Type of agent being spawned (e.g., "devs:rust-dev", "task")
+  - `description`: Task description for the spawned agent
+- **parse_task_tool_use()**: Extracts Task tool metadata from Claude Code events
+  - Ignores `prompt` field for privacy
+  - Handles missing fields with sensible defaults
+  - Returns Option<TaskToolInput>
+- **try_extract_agent_spawn()**: Creates AgentSpawnEvent from Task tool invocation
+  - Combines parsing and event construction
+  - Maps subagent_type to agent_type in output event
 
 **Watcher Behavior**:
 - Monitors `~/.claude/projects/` directory recursively
@@ -102,7 +123,8 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 | Activity | Pass through unchanged |
 | Tool (sensitive) | Context set to `None` |
 | Tool (other) | Context → basename, apply allowlist, pass if allowed else `None` |
-| Agent | Pass through unchanged |
+| Agent | Pass through unchanged (description is high-level task description) |
+| AgentSpawn | Pass through unchanged (subagent_type and description are safe) |
 | Summary | Summary text replaced with "Session ended" |
 | Error | Pass through (category already sanitized) |
 
@@ -122,6 +144,9 @@ Output: Tool { context: Some("auth.rs"), tool: "Read", ... }
 
 Input:  Tool { context: Some("rm -rf /home"), tool: "Bash", ... }
 Output: Tool { context: None, tool: "Bash", ... }  # Sensitive tool
+
+Input:  AgentSpawn { description: "Implement error handling", agent_type: "devs:rust-dev", ... }
+Output: AgentSpawn { description: "Implement error handling", agent_type: "devs:rust-dev", ... }  # Pass through
 
 Input:  Tool { context: Some("/home/user/config.py"), tool: "Read", allowlist: [.rs,.ts] }
 Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
@@ -176,6 +201,108 @@ Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
    - Path patterns never appear (e.g., `/home/`, `/Users/`, `C:\`)
    - Command patterns removed (e.g., `rm -rf`, `sudo`, `curl -`, `Bearer`)
    - Credentials not transmitted
+
+## Agent Spawn Tracking (Phase 4)
+
+### Agent Tracker Integration
+
+**Module Location**: `monitor/src/trackers/agent_tracker.rs` (716 lines)
+
+**Purpose**: Detects and tracks Claude Code Task tool agent spawns for monitoring subagent execution.
+
+**Core Types**:
+
+1. **TaskToolInput** - Represents parsed Task tool parameters
+   ```rust
+   pub struct TaskToolInput {
+       pub subagent_type: String,    // e.g., "devs:rust-dev", "task"
+       pub description: String,       // Task description for the spawned agent
+   }
+   ```
+
+2. **AgentSpawnEvent** - Emitted when Task tool spawns subagent
+   ```rust
+   pub struct AgentSpawnEvent {
+       pub session_id: String,        // Session where agent was spawned
+       pub agent_type: String,        // Type of agent spawned
+       pub description: String,       // Description of agent's task
+       pub timestamp: DateTime<Utc>,  // When it was spawned
+   }
+   ```
+
+**Parsing Functions**:
+
+1. **parse_task_tool_use(tool_name, input)** → Option<TaskToolInput>
+   - Checks if tool_name equals "Task" (case-sensitive)
+   - Deserializes JSON input to TaskToolInput
+   - Handles missing fields with defaults: subagent_type defaults to "task", description to ""
+   - Never deserializes or stores the `prompt` field
+   - Returns None for non-Task tools or parse failures
+
+2. **create_agent_spawn_event(session_id, timestamp, task_input)** → AgentSpawnEvent
+   - Constructs full event from parsed input
+   - Maps task_input.subagent_type → agent_type
+   - Preserves session context and timestamp
+
+3. **try_extract_agent_spawn(tool_name, input, session_id, timestamp)** → Option<AgentSpawnEvent>
+   - Convenience function combining parsing and creation
+   - Returns complete AgentSpawnEvent or None
+
+**Privacy Guarantees**:
+- **Prompt field never extracted**: Privacy-first design ignores sensitive task prompts
+- **Metadata only**: Only subagent_type and description captured
+- **Type mapping safe**: Agent type is categorical, never contains sensitive info
+- **Description safe**: Expected to be high-level task description, not code or details
+
+**Event Emission**:
+- Task tool invocations emit TWO events:
+  1. ToolStarted - For the Task tool itself (maps tool context to basename)
+  2. AgentSpawned - For the spawned subagent (includes type and description)
+- Non-Task tools emit only ToolStarted event
+- Both pass through PrivacyPipeline before transmission
+
+**Supported Agent Types** (examples):
+- `task` - Generic task agent
+- `devs:rust-dev` - Rust developer agent
+- `devs:python-dev` - Python developer agent
+- `background:file-watcher` - Background file watcher agent
+- Custom: Any value in subagent_type field
+
+**Test Coverage**: 40+ test cases validating:
+- Task tool parsing with all fields
+- Subagent type extraction and defaults
+- Description extraction and handling
+- Non-Task tool rejection
+- Missing field handling
+- Extra field handling
+- Edge cases (empty input, null, malformed JSON)
+- Realistic JSONL parsing from Claude Code format
+
+### Stats Tracker Module (Phase 4)
+
+**Module Location**: `monitor/src/trackers/stats_tracker.rs` (265 lines)
+
+**Purpose**: Accumulates token usage and session statistics from events for monitoring system health.
+
+**Core Type**:
+
+1. **StatsTracker** - Maintains aggregated statistics
+   - Tracks per-session and per-model token consumption
+   - Accumulates activity patterns across 24-hour windows
+   - Provides snapshot of global and session-level metrics
+
+**Tracking Capabilities**:
+- **Token usage by model**: Input/output tokens, cache read/write tokens
+- **Per-session metrics**: Total sessions, messages, tool invocations
+- **Activity patterns**: Hourly distribution of events
+- **Model distribution**: Token usage breakdown by model with cache metrics
+- **Cache metrics**: Hit rates and efficiency by model
+
+**Integration Points**:
+- Receives events from main event loop
+- Accumulates TokenUsageEvent data
+- Maintains in-memory statistics (not persisted in Phase 4)
+- Provides metrics for emission to server
 
 ## Cryptographic Authentication & Key Management
 
@@ -674,6 +801,7 @@ interface TokenFormProps {
    - activity: Green badge with comment emoji
    - tool: Blue badge with wrench emoji
    - agent: Amber badge with robot emoji
+   - agent_spawn: Indigo badge with sparkle emoji
    - summary: Cyan badge with clipboard emoji
    - error: Red badge with warning emoji
 
@@ -682,6 +810,7 @@ interface TokenFormProps {
    - Activity: "Activity in project-name" or "Activity heartbeat"
    - Tool: "tool-name status" with optional context
    - Agent: "Agent state: state-name"
+   - AgentSpawn: "Agent spawned: agent_type for description"
    - Summary: First 80 chars of summary text + ellipsis
    - Error: "Error: error-category"
 
@@ -910,18 +1039,19 @@ Event {
   id: String,           // evt_<20-char-alphanumeric>
   source: String,       // Source identifier (e.g., hostname)
   timestamp: DateTime,  // RFC 3339 UTC
-  type: EventType,      // session, activity, tool, agent, summary, error
+  type: EventType,      // session, activity, tool, agent, agent_spawn, summary, error
   payload: EventPayload // Type-specific data (EventPayload enum)
 }
 ```
 
-**Supported Event Types**:
+**Supported Event Types** (Phase 4+):
 | Type | Payload Fields | Purpose |
 |------|----------------|---------|
 | `session` | sessionId, action (started/ended), project | Track session lifecycle |
 | `activity` | sessionId, project (optional) | Heartbeat events |
 | `tool` | sessionId, tool, status (started/completed), context, project | Tool usage tracking |
 | `agent` | sessionId, state | Agent state changes |
+| `agent_spawn` | sessionId, agent_type, description, timestamp | Task tool agent spawns (Phase 4) |
 | `summary` | sessionId, summary | End-of-session summary |
 | `error` | sessionId, category | Error reporting |
 
@@ -934,13 +1064,16 @@ Event {
 - Maps Claude Code JSONL → ParsedEvent (privacy-first extraction)
 - SessionParser converts ParsedEventKind → VibeTea Event types
 - Tool invocations tracked with extracted context (file basenames)
+- Task tool invocations emit AgentSpawned events
 - Session lifecycle inferred from JSONL file creation/removal and summary markers
+- Agent tracking integrated via `monitor/src/trackers/agent_tracker.rs`
 
 **Phase 5 Privacy Integration** (`monitor/src/privacy.rs`):
 - ProcessedEvent payloads through PrivacyPipeline before transmission
 - Sensitive contexts stripped according to tool type
 - Paths reduced to basenames with extension filtering
 - Summary text neutralized to privacy-safe message
+- AgentSpawn payloads pass through unchanged (descriptions are safe)
 
 **Phase 6 Signing Integration** (`monitor/src/crypto.rs` + `monitor/src/sender.rs`):
 - Events signed with Ed25519 private key
@@ -1253,6 +1386,7 @@ RUST_LOG=debug                                   # Logging level
 - Phase 4: SessionParser extracts metadata from Claude Code JSONL
 - Privacy-first: Never processes code content or prompts
 - Tool tracking: Extracts tool name and context from assistant tool_use events
+- Agent tracking: Detects Task tool invocations with agent_tracker module
 - Progress tracking: Detects tool completion from progress PostToolUse events
 
 **Privacy Pipeline** (Phase 5):
@@ -1353,6 +1487,7 @@ server: {
 - HTTP request errors (connection refused, timeout)
 - Cryptographic errors (invalid private key)
 - Phase 4: JSONL parsing errors (invalid JSON, malformed events)
+- Phase 4: Agent tracking errors (malformed Task tool input)
 - Phase 5: Privacy processing errors (path parsing failures)
 - Phase 6: Key management errors (missing/invalid keys)
 - Phase 6: HTTP sender errors (connection, rate limit, signature)
@@ -1451,6 +1586,7 @@ server: {
 - Monitor: Logs file system events, HTTP requests, signing operations (Phase 6)
 - Phase 4: Parser logs invalid JSONL events with context
 - Phase 4: Watcher logs file tracking updates and position management
+- Phase 4: Agent tracker logs Task tool detections and parsing
 - Phase 5: Privacy pipeline logs filtering decisions and sensitive tool detection
 - Phase 6: Crypto logs key generation, loading, and signature operations
 - Phase 6: Sender logs buffering, retry, rate limit decisions
@@ -1513,13 +1649,16 @@ server: {
 
 **Claude Code JSONL** (Phase 4-5):
 - Parser never extracts code content, prompts, or responses
-- Only metadata stored: tool names, timestamps, file basenames
+- Only metadata stored: tool names, timestamps, file basenames, agent types
 - File paths used only for project name extraction
 - PrivacyPipeline (Phase 5) ensures sensitive data not transmitted:
   - Full paths reduced to basenames
   - Sensitive tool contexts always stripped
   - Extension allowlist filtering applied
   - Summary text neutralized
+- Agent tracker (Phase 4) only extracts safe metadata:
+  - Subagent type and description
+  - Never extracts or transmits prompts
 - Event contents never logged or stored unencrypted
 - All transformations logged without revealing sensitive data
 
@@ -1601,7 +1740,41 @@ None required for production (future configuration planned).
 
 ## Phase Changes Summary
 
-### Phase 10 Changes
+### Phase 4 Changes (Current)
+
+**Agent Tracker Module** (`monitor/src/trackers/agent_tracker.rs`):
+- Detects and parses Task tool agent spawns from Claude Code JSONL
+- Extracts subagent_type and description (never the prompt)
+- Emits AgentSpawnEvent for monitoring subagent execution
+- Provides parse_task_tool_use(), create_agent_spawn_event(), try_extract_agent_spawn()
+- 40+ test cases covering parsing, defaults, edge cases, realistic JSONL
+
+**Stats Tracker Module** (`monitor/src/trackers/stats_tracker.rs`):
+- Accumulates token usage and session statistics
+- Per-model token consumption tracking
+- Activity pattern and hourly distribution
+- Model distribution and cache metrics
+
+**Enhanced Parser** (`monitor/src/parser.rs`):
+- New ParsedEventKind::AgentSpawned variant
+- Task tool detection and dual event emission
+- ToolStarted (for Task tool itself) + AgentSpawned (for spawned agent)
+
+**Enhanced Event Types** (`monitor/src/types.rs`):
+- AgentSpawnEvent with session_id, agent_type, description, timestamp
+- EventType::AgentSpawn enum variant
+- EventPayload::AgentSpawn payload variant
+- Multiple new event types for token tracking and metrics
+
+**Integration Points**:
+- Agent tracker called from parser for Task tool invocations
+- AgentSpawn events processed through PrivacyPipeline (pass-through)
+- Both ToolStarted and AgentSpawned emitted for Task tools
+- StatsTracker integrated into main event loop for token accumulation
+- Client EventStream displays agent_spawn events with special badge
+- Session tracking includes agent spawn count in metrics
+
+### Phase 10 Changes (Previous)
 
 **Client Session Timeout Hook** (`client/src/hooks/useSessionTimeouts.ts` - 48 lines):
 - Sets up periodic interval (30 seconds) to check and update session states

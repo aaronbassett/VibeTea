@@ -101,6 +101,24 @@ The authentication flow for event submission (POST /events):
 | Authentication (WebSocket) | Constant-time string comparison | `VIBETEA_SUBSCRIBER_TOKEN` env var |
 | Transport security | HTTPS/TLS (application-agnostic) | Configured at load balancer/reverse proxy |
 
+## Privacy Controls
+
+### Agent Tracking Privacy
+
+| Aspect | Implementation | Location |
+|--------|----------------|----------|
+| Task tool extraction | Metadata only (no prompts) | `monitor/src/trackers/agent_tracker.rs` |
+| Extracted fields | `subagent_type`, `description` | `TaskToolInput` struct |
+| Privacy-first principle | `prompt` field intentionally omitted | Line 75, struct definition |
+| Events transmitted | Contain only agent_type and description | `monitor/src/types.rs:64` (AgentSpawnEvent) |
+
+### Data Handling Philosophy
+
+- **Privacy-first design**: The `TaskToolInput` struct intentionally lacks a `prompt` field to prevent accidental transmission of sensitive task instructions
+- **Metadata extraction**: Only non-sensitive metadata is extracted and tracked (agent type, task description)
+- **No prompt logging**: Prompts are never extracted, parsed, or transmitted to monitoring systems
+- **Type-safe privacy**: Privacy enforcement is built into the struct definition, not runtime validation
+
 ## Rate Limiting
 
 | Endpoint | Limit | Window | Per |

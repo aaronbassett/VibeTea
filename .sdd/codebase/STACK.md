@@ -1,7 +1,7 @@
 # Technology Stack
 
-**Status**: Phase 10 Implementation - Session overview cards with activity indicators and timeout management
-**Last Updated**: 2026-02-02
+**Status**: Phase 4 Implementation - Agent spawning and token usage tracking
+**Last Updated**: 2026-02-03
 
 ## Languages & Runtimes
 
@@ -39,6 +39,9 @@
 | subtle             | 2.6     | Constant-time comparison for cryptography | Server (auth) |
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
+| lru                | 0.12    | LRU cache for session tracking | Monitor (Phase 4) |
+| clap               | 4.5     | CLI argument parsing | Monitor |
+| serial_test        | 3.2     | Serial test execution for env var isolation | Monitor, Server (tests) |
 
 ### TypeScript/JavaScript (Client)
 
@@ -73,6 +76,7 @@
 |--------------|---------|---------|
 | tokio-test   | 0.4     | Tokio testing utilities |
 | tempfile     | 3.15    | Temporary file/directory management for tests |
+| wiremock     | 0.6     | HTTP mocking for integration tests |
 
 ### TypeScript Testing
 | Package                | Version  | Purpose |
@@ -81,6 +85,7 @@
 | @testing-library/react | ^16.3.2  | React testing utilities |
 | @testing-library/jest-dom | ^6.9.1 | DOM matchers for testing |
 | jsdom                  | ^28.0.0  | DOM implementation for Node.js |
+| happy-dom              | ^20.5.0  | Lightweight DOM implementation |
 
 ## Configuration Files
 
@@ -170,12 +175,16 @@
 - `config.rs` - Configuration from environment variables (server URL, source ID, key path, buffer size)
 - `error.rs` - Error types
 - `types.rs` - Event types
-- `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction)
+- `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction, Phase 4 agent spawn parsing)
 - `watcher.rs` - File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
 - `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
 - `crypto.rs` - **Phase 6**: Ed25519 keypair generation, loading, saving, and event signing
 - `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
 - `main.rs` - **Phase 6**: CLI entry point with init and run commands
+- `trackers/` - **Phase 4**: Enhanced tracking modules
+  - `agent_tracker.rs` - Task tool agent spawn detection and parsing
+  - `stats_tracker.rs` - Token usage and session statistics accumulation
+  - `mod.rs` - Trackers module exports
 - `lib.rs` - Public interface
 
 ## Deployment Targets
@@ -188,33 +197,58 @@
 
 ## Phase 4 Additions
 
-**Monitor Parser Module** (`monitor/src/parser.rs`):
-- Claude Code JSONL parsing with privacy-first approach
-- Extracts only metadata: tool names, timestamps, file basenames
-- Never processes code content, prompts, or assistant responses
-- Event mapping: assistant tool_use → ToolStarted, progress PostToolUse → ToolCompleted
-- SessionParser state tracking for multi-line file processing
-- ParsedEvent and ParsedEventKind types for normalized event representation
-- Support for session detection from file paths (slugified project names)
-- Comprehensive ParseError enum for error handling
+**Monitor Agent Tracker Module** (`monitor/src/trackers/agent_tracker.rs` - 716 lines):
+- **AgentSpawnEvent**: Event type for Task tool agent spawns with session_id, agent_type, description, timestamp
+- **TaskToolInput**: Parsed Task tool input with subagent_type and description fields
+- **parse_task_tool_use()**: Extracts Task tool metadata from Claude Code events, ignores prompt field (privacy-first)
+- **create_agent_spawn_event()**: Constructs AgentSpawnEvent from parsed input and session context
+- **try_extract_agent_spawn()**: Convenience function combining parsing and event creation
+- **Privacy-first approach**: Only subagent_type and description extracted; prompt field never transmitted
+- **40+ comprehensive test cases**: Validates Task tool parsing, edge cases, malformed input handling
+- **ParsedEventKind::AgentSpawned**: New variant in parser for agent spawn events
+- **Integration in parser.rs**: Task tool invocations emit both ToolStarted and AgentSpawned events
 
-**Monitor File Watcher Module** (`monitor/src/watcher.rs`):
-- Watches `~/.claude/projects/**/*.jsonl` for changes using notify crate
-- Position tracking map to efficiently tail files (no re-reading previous content)
-- WatchEvent enum: FileCreated, LinesAdded, FileRemoved
-- BufReader-based line reading with seek position management
-- Automatic cleanup of removed files from position tracking
-- WatcherError enum for I/O and initialization failures
-- Thread-safe Arc<RwLock<>> position map for async operation
+**Monitor Stats Tracker Module** (`monitor/src/trackers/stats_tracker.rs` - 265 lines):
+- **StatsTracker**: Accumulates token usage and session statistics from events
+- **Session-level metrics**: Input/output tokens, cache read/write tokens per model
+- **Global metrics**: Total sessions, messages, tool usage across all sessions
+- **Token usage aggregation**: Per-model token consumption tracking with cache hit rates
+- **Activity pattern tracking**: Hourly distribution of events across 24-hour windows
+- **Model distribution**: Token usage breakdown by model with detailed summaries
+- **Test suite**: Validates token accumulation, multiple models, cache metrics
+
+**Enhanced Parser** (`monitor/src/parser.rs`):
+- **AgentSpawned event kind**: New ParsedEventKind variant for Task tool spawns
+- **Task tool handling**: Detects Task tool invocations, extracts subagent_type and description
+- **Dual event emission**: Task tools emit both ToolStarted (for Task tool itself) and AgentSpawned (for spawned agent)
+- **Agent type mapping**: Maps subagent_type to agent_type field in AgentSpawnEvent
+- **Integration with agent_tracker**: Uses parse_task_tool_use() for metadata extraction
+
+**Enhanced Main Event Loop** (`monitor/src/main.rs`):
+- **AgentSpawnEvent handling**: Emits Event::AgentSpawn payload for spawned agents
+- **StatsTracker integration**: Accumulates token usage from events
+- **TokenUsageEvent emission**: Emits token metrics to server for tracking
+- **Session-level token tracking**: Maintains per-session token consumption statistics
 
 **New Dependencies**:
-- `futures` 0.3 - Futures trait and utilities for async coordination
-- `tempfile` 3.15 - Temporary file/directory management for testing
+- `lru` 0.12 - LRU cache for session tracking in stats tracker
+- `clap` 4.5 - Structured CLI argument parsing with derive macros
+- `serial_test` 3.2 - Serial test execution for environment variable isolation
+- `wiremock` 0.6 - HTTP mocking for integration tests
 
 **Enhanced Module Exports** (`monitor/src/lib.rs`):
-- Public exports: FileWatcher, WatchEvent, WatcherError
-- Public exports: SessionParser, ParsedEvent, ParsedEventKind
-- Documentation expanded with overview, privacy statement, and module descriptions
+- Public exports: `trackers` module with `agent_tracker`, `stats_tracker`
+- Public exports: `AgentSpawnEvent`, `TaskToolInput`, `parse_task_tool_use`, `try_extract_agent_spawn`
+- Documentation updated with tracker module descriptions
+
+**Event Type Enhancements** (`monitor/src/types.rs`):
+- **AgentSpawnEvent**: New event type with session_id, agent_type, description, timestamp fields
+- **EventType::AgentSpawn**: New enum variant for agent spawn events
+- **EventPayload::AgentSpawn**: Payload variant wrapping AgentSpawnEvent
+- **TokenUsageEvent**: Tracks per-model token consumption (input, output, cache_read, cache_creation)
+- **EventType::TokenUsage**: New enum variant for token tracking events
+- **Multiple new event types**: SessionMetrics, ActivityPattern, ModelDistribution, TodoProgress, FileChange, ProjectActivity
+- **Enhanced testing**: 30+ tests validating new event types and serialization
 
 ## Phase 5 Additions
 
@@ -389,38 +423,11 @@
 **Formatting Tests** (`client/src/__tests__/formatting.test.ts` - 229 lines):
 - **33 comprehensive test cases**: Full coverage of all formatting functions
 - **Test framework**: Vitest with descriptive test groups
-- **formatTimestamp tests** (6 tests):
-  - Valid RFC 3339 timestamps
-  - Timezone offset handling
-  - Empty string fallback
-  - Invalid timestamp handling
-  - Whitespace-only input
-- **formatTimestampFull tests** (4 tests):
-  - Valid full datetime formatting
-  - Timezone offset handling
-  - Empty string and invalid input fallbacks
-- **formatRelativeTime tests** (8 tests):
-  - "just now" for recent events (<1 minute, future timestamps)
-  - Minutes ago ("1m", "5m", "59m")
-  - Hours ago ("1h", "2h", "23h")
-  - "yesterday" detection with timezone-aware testing
-  - Days ago ("3d", "6d")
-  - Weeks ago ("1w", "2w", "9w")
-  - Invalid input handling
-- **formatDuration tests** (10 tests):
-  - Hours and minutes ("1h 30m", "2h 1m")
-  - Minutes and seconds ("5m 30s", "1m 30s")
-  - Seconds only ("30s", "59s")
-  - Omits seconds when hours present
-  - Zero and negative values
-  - NaN handling
-  - Large durations (48h, 100h)
-- **formatDurationShort tests** (5 tests):
-  - H:MM:SS format for durations >= 1 hour
-  - M:SS format for durations < 1 hour
-  - Leading zeros for seconds
-  - Zero and negative value handling
-  - NaN and large durations
+- **formatTimestamp tests** (6 tests): Valid/invalid timestamps, timezone handling, empty strings
+- **formatTimestampFull tests** (4 tests): Full datetime formatting, timezone handling
+- **formatRelativeTime tests** (8 tests): Relative time displays, timezone-aware testing
+- **formatDuration tests** (10 tests): Duration formatting with various time ranges
+- **formatDurationShort tests** (5 tests): Compact duration formatting
 - **Test coverage**: 100% of exported functions and key code paths
 
 **Integration Points** (Phase 8):
@@ -561,12 +568,12 @@
 
 ## Not Yet Implemented
 
-- Main event loop integration (watcher, parser, privacy, crypto, sender pipeline)
-- Database/persistence layer
+- Main event loop integration with all modules (watcher, parser, privacy, crypto, sender pipeline)
+- Database/persistence layer for event storage and replay
 - Advanced state management patterns (beyond Context + Zustand)
 - Session persistence beyond memory
 - Request/response logging to external services
-- Enhanced error tracking
+- Enhanced error tracking and recovery
 - Per-user authentication tokens (beyond static bearer token)
 - Token rotation and expiration
 - Chunked event sending for high-volume sessions

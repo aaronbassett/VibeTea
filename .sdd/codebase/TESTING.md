@@ -56,6 +56,7 @@
 | `cargo test --test privacy_test` | Run privacy integration tests |
 | `cargo test -p vibetea-monitor crypto` | Run crypto module tests |
 | `cargo test -p vibetea-monitor sender` | Run sender module tests |
+| `cargo test -p vibetea-monitor agent_tracker` | Run agent_tracker module tests |
 
 ## Test Organization
 
@@ -110,10 +111,14 @@ monitor/
 │   ├── error.rs                # Error module with inline tests
 │   ├── types.rs                # Types module with inline tests
 │   ├── watcher.rs              # File watching implementation
-│   ├── parser.rs               # JSONL parser implementation
+│   ├── parser.rs               # JSONL parser implementation with AgentSpawned integration
 │   ├── privacy.rs              # Privacy pipeline with 38 inline unit tests
 │   ├── crypto.rs               # Ed25519 crypto operations with 14 inline unit tests (Phase 6)
 │   ├── sender.rs               # HTTP sender with 8 inline unit tests (Phase 6)
+│   ├── trackers/
+│   │   ├── mod.rs              # Trackers module index
+│   │   ├── agent_tracker.rs    # Agent spawn event parsing with 28 unit tests (Phase 4)
+│   │   └── stats_tracker.rs    # Token usage stats tracking
 │   ├── lib.rs                  # Library entrypoint
 │   └── main.rs                 # Binary entrypoint (CLI)
 └── tests/
@@ -1043,6 +1048,59 @@ Sender unit tests cover (8 tests):
 6. **Retry reset**: Reset to initial delay on success
 7. **Buffer state**: Empty/non-empty checks
 
+### Unit Tests (Rust) - Agent Tracker Module (Phase 4)
+
+Agent tracker tests validate Task tool parsing and AgentSpawnEvent creation with comprehensive coverage:
+
+#### Example from monitor/src/trackers/agent_tracker.rs inline tests (28 tests)
+
+The agent_tracker module includes 28 unit tests organized into sections:
+
+**Section T070: Task tool_use Parsing Tests (12 tests)**
+- `parse_task_tool_use_with_all_fields`: Verifies full parsing of subagent_type and description
+- `parse_task_tool_use_extracts_subagent_type`: Validates correct agent type extraction
+- `parse_task_tool_use_extracts_description`: Validates description extraction
+- `parse_task_tool_use_returns_none_for_non_task_tool`: Ensures non-Task tools are rejected
+- `parse_task_tool_use_handles_missing_subagent_type`: Tests default "task" fallback
+- `parse_task_tool_use_handles_missing_description`: Tests empty string default
+- `parse_task_tool_use_handles_both_fields_missing`: Tests both fields defaulting
+- `parse_task_tool_use_handles_empty_input`: Tests empty JSON object handling
+- `parse_task_tool_use_handles_null_input`: Validates null input rejection
+- `parse_task_tool_use_ignores_prompt_field`: Verifies prompt field is not parsed (privacy)
+- `parse_task_tool_use_handles_extra_fields`: Tests graceful handling of unknown fields
+- `parse_task_tool_use_handles_empty_string_values`: Handles empty strings for both fields
+
+**Section T071: AgentSpawnEvent Emission Tests (6 tests)**
+- `create_agent_spawn_event_maps_fields_correctly`: Validates event field mapping
+- `create_agent_spawn_event_uses_subagent_type_as_agent_type`: Verifies type field mapping
+- `create_agent_spawn_event_preserves_empty_description`: Tests empty description handling
+- `create_agent_spawn_event_preserves_timestamp`: Validates timestamp preservation
+- `create_agent_spawn_event_handles_unicode_description`: Tests UTF-8 support
+
+**Integration Tests: Full Parse to Event Flow (3 tests)**
+- `try_extract_agent_spawn_full_flow`: End-to-end parsing and event creation
+- `try_extract_agent_spawn_returns_none_for_non_task`: Non-Task tool rejection
+- `try_extract_agent_spawn_with_defaults`: Validates defaults in full flow
+
+**TaskToolInput Struct Tests (3 tests)**
+- `task_tool_input_debug`: Debug output formatting
+- `task_tool_input_clone`: Clone trait functionality
+- `task_tool_input_equality`: Equality comparison
+
+**Edge Case Tests (4 tests)**
+- `parse_handles_numeric_type_values`: Rejects wrong types (numeric descriptions)
+- `parse_handles_array_input`: Rejects array input
+- `parse_handles_nested_objects`: Handles nested fields correctly
+- `parse_realistic_jsonl_task_tool_use`: Validates parsing of real Claude Code JSONL
+
+Key patterns in agent_tracker testing (28 tests):
+1. **Privacy validation**: Confirms prompt field is never parsed
+2. **Lenient defaults**: Tests sensible defaults for missing fields
+3. **Error handling**: Validates rejection of invalid inputs
+4. **Type safety**: Tests discriminated union pattern with correct event types
+5. **Realistic scenarios**: Tests with actual Claude Code JSONL format
+6. **Integration with parser**: Validates use in SessionParser context
+
 ### Integration Tests (Rust)
 
 Larger tests that exercise multiple components together:
@@ -1181,6 +1239,140 @@ Privacy integration tests cover Constitution I requirements:
 4. **Extension filtering**: Allowlist correctly filters by file extension
 5. **Comprehensive coverage**: All event types processed safely, no sensitive data in JSON
 
+### Integration Tests (Rust) - Parser with Agent Tracker (Phase 4)
+
+Parser integration tests validate AgentSpawned event emission:
+
+#### Example from monitor/src/parser.rs integration tests
+
+```rust
+#[test]
+fn session_parser_emits_agent_spawned_for_task_tool_use() {
+    let mut parser = SessionParser::new(Uuid::new_v4(), "my-project".to_string());
+
+    // Skip the first event handling
+    let _ = parser.parse_line(r#"{"type": "user"}"#);
+
+    // Task tool use should emit BOTH ToolStarted AND AgentSpawned
+    let line = r#"{
+        "type": "assistant",
+        "timestamp": "2026-01-15T10:00:00Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_01Fw1HCjXzYHNtWX7jXWzgBj",
+                    "name": "Task",
+                    "input": {
+                        "description": "Create unit tests",
+                        "subagent_type": "devs:rust-dev"
+                    }
+                }
+            ]
+        }
+    }"#;
+
+    let events = parser.parse_line(line);
+
+    assert_eq!(events.len(), 2);
+
+    // First event should be ToolStarted
+    match &events[0].kind {
+        ParsedEventKind::ToolStarted { name, .. } => {
+            assert_eq!(name, "Task");
+        }
+        _ => panic!("Expected ToolStarted as first event"),
+    }
+
+    // Second event should be AgentSpawned
+    match &events[1].kind {
+        ParsedEventKind::AgentSpawned {
+            agent_type,
+            description,
+        } => {
+            assert_eq!(agent_type, "devs:rust-dev");
+            assert_eq!(description, "Create unit tests");
+        }
+        _ => panic!("Expected AgentSpawned as second event"),
+    }
+}
+
+#[test]
+fn session_parser_uses_defaults_for_missing_task_fields() {
+    let mut parser = SessionParser::new(Uuid::new_v4(), "my-project".to_string());
+
+    let _ = parser.parse_line(r#"{"type": "user"}"#);
+
+    let line = r#"{
+        "type": "assistant",
+        "timestamp": "2026-01-15T10:00:00Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_01XYZ",
+                    "name": "Task",
+                    "input": {}
+                }
+            ]
+        }
+    }"#;
+
+    let events = parser.parse_line(line);
+
+    assert_eq!(events.len(), 2);
+
+    // Second event should be AgentSpawned with defaults
+    match &events[1].kind {
+        ParsedEventKind::AgentSpawned {
+            agent_type,
+            description,
+        } => {
+            assert_eq!(agent_type, "task"); // default
+            assert_eq!(description, ""); // default
+        }
+        _ => panic!("Expected AgentSpawned event"),
+    }
+}
+
+#[test]
+fn session_parser_no_agent_spawned_for_non_task_tools() {
+    let mut parser = SessionParser::new(Uuid::new_v4(), "my-project".to_string());
+
+    let _ = parser.parse_line(r#"{"type": "user"}"#);
+
+    // Regular tool use should NOT emit AgentSpawned
+    let line = r#"{
+        "type": "assistant",
+        "timestamp": "2026-01-15T10:00:00Z",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_01XYZ",
+                    "name": "Read",
+                    "input": {
+                        "file_path": "/path/to/file.rs"
+                    }
+                }
+            ]
+        }
+    }"#;
+
+    let events = parser.parse_line(line);
+
+    // Should only have ToolStarted, no AgentSpawned
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0].kind, ParsedEventKind::ToolStarted { .. }));
+}
+```
+
+Key patterns for parser integration tests:
+1. **Dual event emission**: Task tools emit both ToolStarted and AgentSpawned
+2. **Default handling**: Tests with and without optional fields
+3. **Non-Task rejection**: Validates that other tools don't trigger AgentSpawned
+4. **Field preservation**: Validates subagent_type and description are correctly passed
+
 ## Mocking Strategy
 
 ### TypeScript (Planned)
@@ -1296,6 +1488,7 @@ Tests that must pass before any deploy:
 | Privacy tests | Constitution I compliance | `monitor/src/privacy.rs` (unit) + `monitor/tests/privacy_test.rs` (integration) |
 | Crypto tests | Ed25519 keypair and signing | `monitor/src/crypto.rs` unit tests (Phase 6) |
 | Sender tests | Event buffering and retry | `monitor/src/sender.rs` unit tests (Phase 6) |
+| Agent tracker tests | Task tool parsing | `monitor/src/trackers/agent_tracker.rs` unit tests (Phase 4) |
 
 ### Unit Tests by Module
 
@@ -1430,6 +1623,13 @@ Tests follow similar patterns to server modules covering:
 - **Retry logic** (3): Jitter bounds, delay doubling, max cap
 - **Buffer state** (2): Empty checks, reset
 
+**trackers/agent_tracker.rs** (28 unit tests - Phase 4)
+- **Task parsing tests** (12): Full parsing, field extraction, defaults, type rejection
+- **AgentSpawnEvent tests** (6): Event creation, field mapping, timestamp preservation
+- **Integration tests** (3): Full parse-to-event flow, default handling
+- **Struct tests** (3): Debug, clone, equality
+- **Edge case tests** (4): Invalid types, arrays, nested objects, realistic JSONL
+
 ### Integration Tests
 
 #### Rust/Server
@@ -1466,6 +1666,13 @@ Each integration test:
 - Verifies no sensitive data appears in JSON output
 - Uses helper functions for consistency and maintainability
 
+#### Rust/Monitor (Phase 4) - Parser with Agent Tracker
+
+**parser.rs integration tests**:
+- `session_parser_emits_agent_spawned_for_task_tool_use` - Task tool generates AgentSpawned event
+- `session_parser_uses_defaults_for_missing_task_fields` - Missing fields use defaults
+- `session_parser_no_agent_spawned_for_non_task_tools` - Non-Task tools don't trigger AgentSpawned
+
 ## CI Integration
 
 ### Test Pipeline
@@ -1483,8 +1690,10 @@ test:
   - Privacy unit tests (cargo test -p vibetea-monitor privacy)
   - Crypto unit tests (cargo test -p vibetea-monitor crypto)
   - Sender unit tests (cargo test -p vibetea-monitor sender)
+  - Agent tracker unit tests (cargo test -p vibetea-monitor agent_tracker)
   - Integration tests (cargo test --test '*')
   - Privacy integration tests (cargo test --test privacy_test)
+  - Parser integration tests (cargo test -p vibetea-monitor parser)
   - Coverage report (optional)
 ```
 
@@ -1500,6 +1709,7 @@ test:
 | Privacy unit tests | Yes | Constitution I compliance |
 | Crypto unit tests | Yes | Security and correctness (Phase 6) |
 | Sender unit tests | Yes | Reliability of event transmission (Phase 6) |
+| Agent tracker unit tests | Yes | Task tool parsing correctness (Phase 4) |
 | Rust integration tests | Yes | End-to-end behavior |
 | Privacy integration tests | Yes | Constitution I compliance in production scenarios |
 | Code formatting matches | Yes | Consistency |
@@ -1530,6 +1740,8 @@ test:
 - **privacy_test.rs** (Phase 5): 17 integration tests covering Constitution I compliance
 - **crypto.rs** (Phase 6): 14 unit tests covering keypair generation, persistence, signing, validation
 - **sender.rs** (Phase 6): 8 unit tests covering buffering, retry logic, jitter
+- **trackers/agent_tracker.rs** (Phase 4): 28 unit tests covering Task tool parsing, event creation, defaults
+- **parser.rs integration tests** (Phase 4): Integration tests for AgentSpawned event emission
 - Integration tests directory ready for full pipeline tests
 
 ## Test Execution
@@ -1549,6 +1761,7 @@ cargo test -- --test-threads=1    # Sequential (prevents env var interference)
 cargo test -p vibetea-monitor privacy  # Privacy tests only
 cargo test -p vibetea-monitor crypto   # Crypto tests only (Phase 6)
 cargo test -p vibetea-monitor sender   # Sender tests only (Phase 6)
+cargo test -p vibetea-monitor agent_tracker  # Agent tracker tests only (Phase 4)
 ```
 
 ### Running Specific Test Modules
@@ -1571,6 +1784,12 @@ cargo test -p vibetea-monitor crypto::tests
 
 # Sender tests specifically (Phase 6)
 cargo test -p vibetea-monitor sender::tests
+
+# Agent tracker tests specifically (Phase 4)
+cargo test -p vibetea-monitor trackers::agent_tracker::tests
+
+# Parser integration tests (Phase 4)
+cargo test -p vibetea-monitor parser::  # All parser tests
 ```
 
 ## Next Steps for Testing

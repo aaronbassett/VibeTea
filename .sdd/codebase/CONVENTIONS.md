@@ -75,8 +75,8 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs` |
-| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command` |
+| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs`, `trackers/` |
+| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent` |
 | Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
 
@@ -84,11 +84,11 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60` |
-| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command` |
-| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command` |
-| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()` |
+| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()`, `parse_task_tool_use()`, `try_extract_agent_spawn()` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60`, `STATS_DEBOUNCE_MS = 200` |
+| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent` |
+| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command`, `ParsedEventKind` |
+| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()`, `.parse()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
 ## Error Handling
@@ -1402,6 +1402,118 @@ Key conventions in sender module:
 - **Authentication**: Signs events using crypto module (Ed25519)
 - **Structured logging**: Uses `tracing` crate for info/warn/debug/error logging
 
+### Agent Tracker Pattern (Rust - Phase 4)
+
+The agent_tracker module (`monitor/src/trackers/agent_tracker.rs`) handles extraction of agent spawn events from Task tool invocations:
+
+```rust
+/// Task tool input parameters parsed from Claude Code JSONL.
+///
+/// Only metadata fields needed for event creation are extracted;
+/// the prompt field is intentionally omitted for privacy.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TaskToolInput {
+    /// The type of subagent being spawned (e.g., "devs:rust-dev", "task").
+    /// Defaults to "task" if not present.
+    #[serde(default = "default_subagent_type")]
+    pub subagent_type: String,
+
+    /// Description of the task being delegated to the subagent.
+    /// Defaults to empty string if not present.
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Parses a Task tool_use input, extracting the relevant metadata.
+///
+/// # Returns
+/// * `Some(TaskToolInput)` if the tool is "Task" and input can be parsed
+/// * `None` if the tool is not "Task" or parsing fails
+#[must_use]
+pub fn parse_task_tool_use(tool_name: &str, input: &serde_json::Value) -> Option<TaskToolInput> {
+    // Only process Task tool invocations
+    if tool_name != "Task" {
+        return None;
+    }
+
+    // Attempt to deserialize the input; return None on parse failure
+    serde_json::from_value(input.clone()).ok()
+}
+
+/// Creates an [`AgentSpawnEvent`] from parsed Task tool input.
+///
+/// Constructs a complete event structure from the parsed task input
+/// combined with session context (session ID and timestamp).
+#[must_use]
+pub fn create_agent_spawn_event(
+    session_id: String,
+    timestamp: DateTime<Utc>,
+    task_input: &TaskToolInput,
+) -> AgentSpawnEvent {
+    AgentSpawnEvent {
+        session_id,
+        agent_type: task_input.subagent_type.clone(),
+        description: task_input.description.clone(),
+        timestamp,
+    }
+}
+
+/// Convenience function combining parse_task_tool_use and create_agent_spawn_event.
+///
+/// # Returns
+/// * `Some(AgentSpawnEvent)` if this is a valid Task tool invocation
+/// * `None` if the tool is not Task or parsing fails
+#[must_use]
+pub fn try_extract_agent_spawn(
+    tool_name: &str,
+    input: &serde_json::Value,
+    session_id: String,
+    timestamp: DateTime<Utc>,
+) -> Option<AgentSpawnEvent> {
+    let task_input = parse_task_tool_use(tool_name, input)?;
+    Some(create_agent_spawn_event(session_id, timestamp, &task_input))
+}
+```
+
+**Usage in Parser** (`monitor/src/parser.rs`):
+
+```rust
+/// Parses an assistant event for Task tool usage, emitting AgentSpawned events.
+fn parse_agent_spawn(
+    &self,
+    raw: &RawClaudeEvent,
+    timestamp: DateTime<Utc>,
+) -> Option<ParsedEvent> {
+    let message = raw.message.as_ref()?;
+
+    // Look for Task tool_use blocks
+    for block in &message.content {
+        if let ContentBlock::ToolUse { name, input } = block {
+            // Use the agent_tracker module to parse Task tool input
+            if let Some(task_input) = agent_tracker::parse_task_tool_use(name, input) {
+                return Some(ParsedEvent {
+                    kind: ParsedEventKind::AgentSpawned {
+                        agent_type: task_input.subagent_type,
+                        description: task_input.description,
+                    },
+                    timestamp,
+                });
+            }
+        }
+    }
+
+    None
+}
+```
+
+Key conventions in agent_tracker module:
+- **Privacy first**: Only `subagent_type` and `description` extracted; `prompt` field intentionally omitted
+- **Lenient parsing**: Missing fields get sensible defaults ("task" for subagent_type, empty string for description)
+- **Type-safe extraction**: Uses serde for automatic deserialization with `#[serde(default)]`
+- **Modular design**: Separate functions for parsing and event creation allow flexibility in usage
+- **Comprehensive testing**: 28 unit tests covering normal cases, edge cases, and realistic JSONL parsing
+- **Doc comments with examples**: Every public function includes doc comments showing usage
+
 ### CLI Pattern (Rust - Phase 6)
 
 The main binary (`monitor/src/main.rs`) implements a simple command-line interface with async runtime management:
@@ -1601,6 +1713,15 @@ use tracing_subscriber::EnvFilter;
 use vibetea_monitor::config::Config;
 use vibetea_monitor::crypto::Crypto;
 use vibetea_monitor::sender::{Sender, SenderConfig};
+```
+
+Example from `monitor/src/trackers/agent_tracker.rs` (Phase 4):
+
+```rust
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+
+use crate::types::AgentSpawnEvent;
 ```
 
 ## Comments & Documentation
@@ -1958,6 +2079,71 @@ Example from `monitor/src/privacy.rs` (Phase 5):
 const SENSITIVE_TOOLS: &[&str] = &["Bash", "Grep", "Glob", "WebSearch", "WebFetch"];
 ```
 
+Example from `monitor/src/trackers/agent_tracker.rs` (Phase 4):
+
+```rust
+//! Agent tracker for detecting Task tool agent spawns.
+//!
+//! This module extracts [`AgentSpawnEvent`] data from Task tool invocations
+//! in Claude Code session JSONL files.
+//!
+//! # Task Tool Format
+//!
+//! When Claude Code spawns a subagent using the Task tool, the JSONL contains:
+//! [example JSON structure]
+//!
+//! # Privacy
+//!
+//! This module follows the privacy-first principle: only the `subagent_type`
+//! (as agent_type) and `description` are extracted. The `prompt` field is
+//! never transmitted or stored.
+
+/// Task tool input parameters.
+///
+/// Represents the `input` field of a Task tool_use content block.
+/// Only the metadata fields needed for event creation are extracted;
+/// the `prompt` field is intentionally omitted for privacy.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TaskToolInput {
+    /// The type of subagent being spawned (e.g., "devs:rust-dev", "task").
+    ///
+    /// If not present in the input, defaults to "task".
+    #[serde(default = "default_subagent_type")]
+    pub subagent_type: String,
+
+    /// Description of the task being delegated to the subagent.
+    ///
+    /// If not present in the input, defaults to an empty string.
+    #[serde(default)]
+    pub description: String,
+}
+
+/// Parses a Task tool_use input, extracting the relevant metadata.
+///
+/// This function takes the tool name and input from a `ContentBlock::ToolUse`
+/// and returns `Some(TaskToolInput)` if the tool is the Task tool.
+///
+/// # Arguments
+///
+/// * `tool_name` - The name of the tool (must be "Task" for a match)
+/// * `input` - The tool input as a JSON value
+///
+/// # Returns
+///
+/// * `Some(TaskToolInput)` if the tool is "Task" and the input can be parsed
+/// * `None` if the tool is not "Task" or parsing fails
+#[must_use]
+pub fn parse_task_tool_use(tool_name: &str, input: &serde_json::Value) -> Option<TaskToolInput> {
+    // Only process Task tool invocations
+    if tool_name != "Task" {
+        return None;
+    }
+
+    // Attempt to deserialize the input; return None on parse failure
+    serde_json::from_value(input.clone()).ok()
+}
+```
+
 ## Git Conventions
 
 ### Commit Messages
@@ -1995,6 +2181,11 @@ Examples with Phase 6:
 - `feat(monitor): implement CLI with init and run commands`
 - `feat(monitor): add HTTP sender with retry and buffering`
 - `feat(monitor): add Ed25519 keypair generation and signing`
+
+Examples with Phase 4:
+- `feat(monitor): add agent_tracker for Task tool agent spawn extraction`
+- `test(monitor): add 28 unit tests for agent_tracker parsing and event creation`
+- `feat(parser): emit AgentSpawned events for Task tool invocations`
 
 ### Branch Naming
 
