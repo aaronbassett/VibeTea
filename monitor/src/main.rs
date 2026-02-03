@@ -31,7 +31,10 @@ use vibetea_monitor::crypto::Crypto;
 use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
-use vibetea_monitor::types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
+use vibetea_monitor::trackers::stats_tracker::StatsTracker;
+use vibetea_monitor::types::{
+    Event, EventPayload, EventType, SessionAction, TokenUsageEvent, ToolStatus,
+};
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
 /// Default key directory name relative to home.
@@ -232,6 +235,27 @@ async fn run_monitor() -> Result<()> {
         "File watcher initialized"
     );
 
+    // Create channel for token usage events from stats tracker
+    let (token_tx, mut token_rx) = mpsc::channel::<TokenUsageEvent>(config.buffer_size);
+
+    // Initialize stats tracker for token usage monitoring
+    let _stats_tracker = match StatsTracker::new(token_tx) {
+        Ok(tracker) => {
+            info!(
+                stats_path = %tracker.stats_path().display(),
+                "Stats tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize stats tracker (token usage tracking disabled)"
+            );
+            None
+        }
+    };
+
     info!("Monitor running. Press Ctrl+C to stop.");
 
     // Main event loop
@@ -243,12 +267,21 @@ async fn run_monitor() -> Result<()> {
                 break;
             }
 
-            // Process watch events
+            // Process watch events from session JSONL files
             Some(watch_event) = watch_rx.recv() => {
                 process_watch_event(
                     watch_event,
                     &mut session_parsers,
                     &privacy_pipeline,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process token usage events from stats tracker
+            Some(token_event) = token_rx.recv() => {
+                process_token_usage_event(
+                    token_event,
                     &mut sender,
                     &config.source_id,
                 ).await;
@@ -367,6 +400,38 @@ async fn process_watch_event(
                 );
             }
         }
+    }
+}
+
+/// Processes a token usage event from the stats tracker.
+async fn process_token_usage_event(
+    token_event: TokenUsageEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        model = %token_event.model,
+        input_tokens = token_event.input_tokens,
+        output_tokens = token_event.output_tokens,
+        "Processing token usage event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::TokenUsage,
+        EventPayload::TokenUsage(token_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush token usage events, will retry later");
     }
 }
 
