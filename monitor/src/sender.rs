@@ -113,13 +113,19 @@ impl RetryPolicy {
     ///
     /// This prevents panics and pathological behavior from invalid configurations:
     /// - `jitter_factor` is clamped to 0.0..=1.0 (prevents panic in `random_range`)
+    /// - NaN `jitter_factor` is treated as 0.0 (disables jitter)
     /// - `initial_delay_ms` is clamped to at least 1
     /// - `max_delay_ms` is clamped to at least `initial_delay_ms`
     /// - `max_attempts` is clamped to at least 1
     #[must_use]
     pub fn validated(mut self) -> Self {
         // Clamp jitter factor to valid range (negative values cause random_range panic)
-        self.jitter_factor = self.jitter_factor.clamp(0.0, 1.0);
+        // NaN check is required because clamp() propagates NaN, which would panic in random_range
+        self.jitter_factor = if self.jitter_factor.is_finite() {
+            self.jitter_factor.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
 
         // Ensure positive delays
         self.initial_delay_ms = self.initial_delay_ms.max(1);
@@ -551,7 +557,10 @@ impl Sender {
 
     /// Doubles the retry delay up to the maximum.
     fn increase_retry_delay(&mut self) {
-        let new_delay_ms = (self.current_retry_delay_ms * 2).min(self.config.retry_policy.max_delay_ms);
+        let new_delay_ms = self
+            .current_retry_delay_ms
+            .saturating_mul(2)
+            .min(self.config.retry_policy.max_delay_ms);
         self.current_retry_delay_ms = new_delay_ms;
     }
 
@@ -702,6 +711,19 @@ mod tests {
 
         sender.increase_retry_delay();
         assert_eq!(sender.current_retry_delay_ms, MAX_RETRY_DELAY_SECS * 1000);
+    }
+
+    #[test]
+    fn test_increase_retry_delay_handles_overflow() {
+        let mut sender = create_test_sender();
+        // Set to a value that would overflow if multiplied by 2 without saturating
+        sender.current_retry_delay_ms = u64::MAX / 2 + 1;
+
+        // Should not panic - saturating_mul prevents overflow
+        sender.increase_retry_delay();
+
+        // Result should be capped at max_delay_ms
+        assert_eq!(sender.current_retry_delay_ms, sender.config.retry_policy.max_delay_ms);
     }
 
     #[test]
@@ -909,6 +931,29 @@ mod tests {
         }
         .validated();
         assert_eq!(policy.jitter_factor, 0.25);
+
+        // NaN jitter factor should be treated as 0.0
+        let policy = RetryPolicy {
+            jitter_factor: f64::NAN,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.jitter_factor, 0.0);
+
+        // Infinity should also be treated as 0.0
+        let policy = RetryPolicy {
+            jitter_factor: f64::INFINITY,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.jitter_factor, 0.0);
+
+        let policy = RetryPolicy {
+            jitter_factor: f64::NEG_INFINITY,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.jitter_factor, 0.0);
     }
 
     #[test]
