@@ -9,6 +9,9 @@
 //! a position map to track the last-read byte offset for each JSONL file. This allows
 //! efficient tailing of files without re-reading content that has already been processed.
 //!
+//! The notify callback is kept lightweight by sending raw events through an internal
+//! channel to a dedicated async task, which handles all file I/O and lock acquisition.
+//!
 //! # Example
 //!
 //! ```no_run
@@ -82,6 +85,14 @@ pub enum WatchEvent {
     FileRemoved(PathBuf),
 }
 
+/// Internal events from the notify callback, processed by the async task.
+#[derive(Debug)]
+enum InternalEvent {
+    FileCreated(PathBuf),
+    FileModified(PathBuf),
+    FileRemoved(PathBuf),
+}
+
 /// Errors that can occur during file watching operations.
 #[derive(Error, Debug)]
 pub enum WatcherError {
@@ -134,6 +145,7 @@ pub struct FileWatcher {
     watch_dir: PathBuf,
 
     /// Channel sender for emitting watch events.
+    #[allow(dead_code)]
     event_sender: mpsc::Sender<WatchEvent>,
 }
 
@@ -191,12 +203,19 @@ impl FileWatcher {
             "Initialized file watcher"
         );
 
-        // Create the notify watcher
-        let positions_clone = Arc::clone(&positions);
-        let sender_clone = event_sender.clone();
-        let watch_dir_clone = watch_dir.clone();
+        // Create internal channel for notify events
+        // This channel bridges the sync notify callback to our async processing task
+        let (internal_tx, internal_rx) = mpsc::channel::<InternalEvent>(1000);
 
-        let watcher = create_watcher(positions_clone, sender_clone, watch_dir_clone)?;
+        // Spawn the async processing task
+        let positions_for_task = Arc::clone(&positions);
+        let sender_for_task = event_sender.clone();
+        tokio::spawn(async move {
+            process_internal_events(internal_rx, positions_for_task, sender_for_task).await;
+        });
+
+        // Create the notify watcher with lightweight callback
+        let watcher = create_watcher(internal_tx, watch_dir.clone())?;
 
         Ok(Self {
             watcher,
@@ -256,15 +275,17 @@ impl FileWatcher {
     }
 }
 
-/// Creates the underlying notify watcher with event handling.
+/// Creates the underlying notify watcher with a lightweight callback.
+///
+/// The callback only sends events through the internal channel; all heavy
+/// processing is done by the async task.
 fn create_watcher(
-    positions: Arc<RwLock<HashMap<PathBuf, u64>>>,
-    sender: mpsc::Sender<WatchEvent>,
+    internal_tx: mpsc::Sender<InternalEvent>,
     watch_dir: PathBuf,
 ) -> Result<RecommendedWatcher> {
     let mut watcher = RecommendedWatcher::new(
         move |res: std::result::Result<Event, notify::Error>| {
-            handle_notify_event(res, &positions, &sender);
+            handle_notify_event(res, &internal_tx);
         },
         Config::default(),
     )?;
@@ -281,10 +302,13 @@ fn create_watcher(
 }
 
 /// Handles events from the notify crate.
+///
+/// This callback is kept extremely lightweight - it only filters events and
+/// sends them through a channel. All file I/O and locking is done by the
+/// async processing task.
 fn handle_notify_event(
     res: std::result::Result<Event, notify::Error>,
-    positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
-    sender: &mpsc::Sender<WatchEvent>,
+    internal_tx: &mpsc::Sender<InternalEvent>,
 ) {
     let event = match res {
         Ok(event) => event,
@@ -303,25 +327,62 @@ fn handle_notify_event(
             continue;
         }
 
-        match event.kind {
+        let internal_event = match event.kind {
             EventKind::Create(CreateKind::File) | EventKind::Create(CreateKind::Any) => {
-                handle_file_created(path, positions, sender);
+                Some(InternalEvent::FileCreated(path.clone()))
             }
             EventKind::Modify(ModifyKind::Data(_)) | EventKind::Modify(ModifyKind::Any) => {
-                handle_file_modified(path, positions, sender);
+                Some(InternalEvent::FileModified(path.clone()))
             }
             EventKind::Remove(RemoveKind::File) | EventKind::Remove(RemoveKind::Any) => {
-                handle_file_removed(path, positions, sender);
+                Some(InternalEvent::FileRemoved(path.clone()))
             }
             _ => {
                 trace!(kind = ?event.kind, path = %path.display(), "Ignoring event kind");
+                None
+            }
+        };
+
+        if let Some(evt) = internal_event {
+            // Use try_send to avoid blocking the notify thread
+            // If the channel is full, we'll miss some events, but that's
+            // preferable to blocking the file system watcher
+            if let Err(e) = internal_tx.try_send(evt) {
+                warn!(error = %e, "Failed to queue internal event, channel may be full");
             }
         }
     }
 }
 
-/// Handles a file creation event.
-fn handle_file_created(
+/// Async task that processes internal events.
+///
+/// This centralizes all async operations (file I/O, lock acquisition) into
+/// a single managed task, avoiding the need to spawn threads or block on
+/// the runtime from the notify callback.
+async fn process_internal_events(
+    mut rx: mpsc::Receiver<InternalEvent>,
+    positions: Arc<RwLock<HashMap<PathBuf, u64>>>,
+    sender: mpsc::Sender<WatchEvent>,
+) {
+    while let Some(event) = rx.recv().await {
+        match event {
+            InternalEvent::FileCreated(path) => {
+                handle_file_created_async(&path, &positions, &sender).await;
+            }
+            InternalEvent::FileModified(path) => {
+                handle_file_modified_async(&path, &positions, &sender).await;
+            }
+            InternalEvent::FileRemoved(path) => {
+                handle_file_removed_async(&path, &positions, &sender).await;
+            }
+        }
+    }
+
+    debug!("Internal event processor shutting down");
+}
+
+/// Handles a file creation event asynchronously.
+async fn handle_file_created_async(
     path: &Path,
     positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
     sender: &mpsc::Sender<WatchEvent>,
@@ -337,93 +398,60 @@ fn handle_file_created(
         }
     };
 
-    // Update position synchronously (we're in a sync callback)
-    let path_owned = path.to_path_buf();
-    let positions_clone = Arc::clone(positions);
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Handle::try_current();
-        if let Ok(handle) = rt {
-            handle.block_on(async {
-                let mut guard = positions_clone.write().await;
-                guard.insert(path_owned, size);
-            });
-        } else {
-            // Fallback for when no runtime is available
-            futures::executor::block_on(async {
-                let mut guard = positions_clone.write().await;
-                guard.insert(path_owned, size);
-            });
-        }
-    });
+    // Update position
+    {
+        let mut guard = positions.write().await;
+        guard.insert(path.to_path_buf(), size);
+    }
 
     // Send event
-    if let Err(e) = sender.blocking_send(WatchEvent::FileCreated(path.to_path_buf())) {
+    if let Err(e) = sender.send(WatchEvent::FileCreated(path.to_path_buf())).await {
         error!(error = %e, "Failed to send FileCreated event");
     }
 }
 
-/// Handles a file modification event.
-fn handle_file_modified(
+/// Handles a file modification event asynchronously.
+async fn handle_file_modified_async(
     path: &Path,
     positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
     sender: &mpsc::Sender<WatchEvent>,
 ) {
     debug!(path = %path.display(), "File modification detected");
 
-    let path = path.to_path_buf();
-    let positions_clone = Arc::clone(positions);
-    let sender_clone = sender.clone();
-
-    // Process in a separate thread to avoid blocking the watcher
-    std::thread::spawn(move || {
-        let result = process_file_modification(&path, &positions_clone);
-
-        match result {
-            Ok(lines) if !lines.is_empty() => {
-                debug!(
-                    path = %path.display(),
-                    line_count = lines.len(),
-                    "Read new lines from file"
-                );
-
-                if let Err(e) = sender_clone.blocking_send(WatchEvent::LinesAdded { path, lines }) {
-                    error!(error = %e, "Failed to send LinesAdded event");
-                }
-            }
-            Ok(_) => {
-                trace!(path = %path.display(), "No new lines to read");
-            }
+    let lines = {
+        let mut guard = positions.write().await;
+        match read_new_lines(path, &mut guard) {
+            Ok(lines) => lines,
             Err(e) => {
-                warn!(path = %path.display(), error = %e, "Failed to process file modification");
+                warn!(path = %path.display(), error = %e, "Failed to read new lines");
+                return;
             }
         }
-    });
-}
+    };
 
-/// Processes a file modification and returns new lines.
-fn process_file_modification(
-    path: &Path,
-    positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
-) -> Result<Vec<String>> {
-    // We need to handle this synchronously since we're in a thread spawned from the callback
-    let rt = tokio::runtime::Handle::try_current();
+    if !lines.is_empty() {
+        debug!(
+            path = %path.display(),
+            line_count = lines.len(),
+            "Read new lines from file"
+        );
 
-    if let Ok(handle) = rt {
-        handle.block_on(async {
-            let mut guard = positions.write().await;
-            read_new_lines(path, &mut guard)
-        })
+        if let Err(e) = sender
+            .send(WatchEvent::LinesAdded {
+                path: path.to_path_buf(),
+                lines,
+            })
+            .await
+        {
+            error!(error = %e, "Failed to send LinesAdded event");
+        }
     } else {
-        // Fallback for when no runtime is available
-        futures::executor::block_on(async {
-            let mut guard = positions.write().await;
-            read_new_lines(path, &mut guard)
-        })
+        trace!(path = %path.display(), "No new lines to read");
     }
 }
 
-/// Handles a file removal event.
-fn handle_file_removed(
+/// Handles a file removal event asynchronously.
+async fn handle_file_removed_async(
     path: &Path,
     positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
     sender: &mpsc::Sender<WatchEvent>,
@@ -431,27 +459,13 @@ fn handle_file_removed(
     info!(path = %path.display(), "JSONL file removed");
 
     // Clean up position tracking
-    let path_for_cleanup = path.to_path_buf();
-    let path_for_event = path.to_path_buf();
-    let positions_clone = Arc::clone(positions);
-
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Handle::try_current();
-        if let Ok(handle) = rt {
-            handle.block_on(async {
-                let mut guard = positions_clone.write().await;
-                guard.remove(&path_for_cleanup);
-            });
-        } else {
-            futures::executor::block_on(async {
-                let mut guard = positions_clone.write().await;
-                guard.remove(&path_for_cleanup);
-            });
-        }
-    });
+    {
+        let mut guard = positions.write().await;
+        guard.remove(path);
+    }
 
     // Send event
-    if let Err(e) = sender.blocking_send(WatchEvent::FileRemoved(path_for_event)) {
+    if let Err(e) = sender.send(WatchEvent::FileRemoved(path.to_path_buf())).await {
         error!(error = %e, "Failed to send FileRemoved event");
     }
 }
