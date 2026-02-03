@@ -99,6 +99,38 @@ jobs:
             echo "::warning::Bundle size exceeds 200KB target"
           fi
 
+  edge-functions:
+    name: Edge Functions (Deno)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: supabase/functions
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Check formatting
+        run: deno fmt --check
+
+      - name: Lint
+        run: deno lint
+
+      - name: Type check
+        run: |
+          deno check ingest/index.ts
+          deno check query/index.ts
+
+      - name: Run tests
+        run: deno test --allow-env --allow-net --allow-read
+        env:
+          VIBETEA_SUBSCRIBER_TOKEN: test-token
+          VIBETEA_PUBLIC_KEYS: test-source:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
   build-binaries:
     name: Build Binaries
     needs: [rust]
