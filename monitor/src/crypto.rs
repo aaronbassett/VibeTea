@@ -26,12 +26,24 @@
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use base64::prelude::*;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::Rng;
 use thiserror::Error;
+
+/// Indicates where the private key was loaded from.
+///
+/// Used for logging at startup (INFO level) to help users verify
+/// which key source is active.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeySource {
+    /// Key loaded from `VIBETEA_PRIVATE_KEY` environment variable.
+    EnvironmentVariable,
+    /// Key loaded from file at the given path.
+    File(PathBuf),
+}
 
 /// Private key filename.
 const PRIVATE_KEY_FILE: &str = "key.priv";
