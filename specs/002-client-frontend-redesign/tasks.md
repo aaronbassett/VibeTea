@@ -161,10 +161,10 @@
 - [x] T085 [GIT] Commit: finalize phase 4 retro
 
 ### Phase Completion
-- [ ] T086 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T087 [GIT] Create/update PR to main with phase summary
-- [ ] T088 [GIT] Verify all CI checks pass
-- [ ] T089 [GIT] Report PR ready status
+- [x] T086 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T087 [GIT] Create/update PR to main with phase summary
+- [x] T088 [GIT] Verify all CI checks pass
+- [x] T089 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 2 (Dynamic Heatmap) fully functional - cells glow, brightness stacks, tooltips animate
 
