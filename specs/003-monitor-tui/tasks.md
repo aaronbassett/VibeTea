@@ -131,10 +131,10 @@
 - [x] T056 [US1] Implement setup_form widget in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
 - [x] T057 [GIT] Commit: add setup form widget
 - [x] T058 [US1] Add session name validation per FR-026 in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T059 [GIT] Commit: add session name validation
+- [x] T059 [GIT] Commit: add session name validation
 
 ### Setup Input Handling
-- [ ] T060 [US1] Implement setup form input handling in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T060 [US1] Implement setup form input handling in monitor/src/tui/input.rs (use devs:rust-dev agent)
 - [ ] T061 [GIT] Commit: add setup form input handling
 - [ ] T062 [US1] Implement Tab/Enter navigation with form submission in monitor/src/tui/input.rs (use devs:rust-dev agent)
 - [ ] T063 [GIT] Commit: add form navigation

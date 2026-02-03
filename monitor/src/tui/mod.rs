@@ -33,7 +33,7 @@
 
 // TODO: Uncomment these module declarations as implementations are added
 pub mod app;
-// pub mod input;
+pub mod input;
 pub mod terminal;
 // pub mod ui;
 pub mod widgets;
@@ -44,4 +44,5 @@ pub use app::{
     SetupField, SetupFormState, Symbols, Theme, TuiEvent, ASCII_SYMBOLS, DEFAULT_TICK_RATE_MS,
     UNICODE_SYMBOLS,
 };
+pub use input::{handle_setup_key, SetupAction};
 pub use terminal::{install_panic_hook, Tui};
