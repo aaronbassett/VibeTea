@@ -115,14 +115,23 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| home_dir.join(DEFAULT_CLAUDE_DIR));
 
-        // Optional: VIBETEA_BUFFER_SIZE (default: 1000)
+        // Optional: VIBETEA_BUFFER_SIZE (default: 1000, must be > 0)
         let buffer_size = match env::var("VIBETEA_BUFFER_SIZE") {
-            Ok(val) => val
-                .parse::<usize>()
-                .map_err(|_| ConfigError::InvalidValue {
-                    key: "VIBETEA_BUFFER_SIZE".to_string(),
-                    message: format!("expected positive integer, got '{val}'"),
-                })?,
+            Ok(val) => {
+                let size = val
+                    .parse::<usize>()
+                    .map_err(|_| ConfigError::InvalidValue {
+                        key: "VIBETEA_BUFFER_SIZE".to_string(),
+                        message: format!("expected positive integer, got '{val}'"),
+                    })?;
+                if size == 0 {
+                    return Err(ConfigError::InvalidValue {
+                        key: "VIBETEA_BUFFER_SIZE".to_string(),
+                        message: "buffer size must be greater than 0".to_string(),
+                    });
+                }
+                size
+            }
             Err(_) => DEFAULT_BUFFER_SIZE,
         };
 
@@ -259,6 +268,25 @@ mod tests {
             assert!(matches!(
                 err,
                 ConfigError::InvalidValue { ref key, .. } if key == "VIBETEA_BUFFER_SIZE"
+            ));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_zero_buffer_size_rejected() {
+        with_clean_env(|| {
+            env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
+            env::set_var("VIBETEA_BUFFER_SIZE", "0");
+
+            let result = Config::from_env();
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::InvalidValue { ref key, ref message }
+                    if key == "VIBETEA_BUFFER_SIZE" && message.contains("greater than 0")
             ));
         });
     }
