@@ -243,6 +243,27 @@ impl Crypto {
         BASE64_STANDARD.encode(self.signing_key.verifying_key().as_bytes())
     }
 
+    /// Returns the first 8 characters of the base64-encoded public key.
+    ///
+    /// This fingerprint is used for key verification in logs without exposing
+    /// the full key. Users can compare this with the server's registered key
+    /// to verify they are using the correct keypair.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::crypto::Crypto;
+    ///
+    /// let crypto = Crypto::generate();
+    /// let fingerprint = crypto.public_key_fingerprint();
+    /// assert_eq!(fingerprint.len(), 8);
+    /// println!("Key fingerprint: {}", fingerprint);
+    /// ```
+    #[must_use]
+    pub fn public_key_fingerprint(&self) -> String {
+        self.public_key_base64().chars().take(8).collect()
+    }
+
     /// Returns the verifying (public) key.
     #[must_use]
     pub fn verifying_key(&self) -> VerifyingKey {
@@ -301,6 +322,19 @@ mod tests {
         // Public key should be base64-encoded 32 bytes (44 chars with padding)
         assert!(!pubkey.is_empty());
         assert!(pubkey.len() >= 43); // Base64 of 32 bytes
+    }
+
+    #[test]
+    fn test_public_key_fingerprint_is_8_chars() {
+        let crypto = Crypto::generate();
+        let fingerprint = crypto.public_key_fingerprint();
+
+        // Fingerprint should be exactly 8 characters
+        assert_eq!(fingerprint.len(), 8);
+
+        // Should be prefix of full public key
+        let pubkey = crypto.public_key_base64();
+        assert!(pubkey.starts_with(&fingerprint));
     }
 
     #[test]
