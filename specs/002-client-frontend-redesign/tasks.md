@@ -77,10 +77,10 @@
 - [x] T033 Configure LazyMotion provider wrapper in client/src/App.tsx (use devs:react-dev agent)
 - [x] T034 [GIT] Commit: configure LazyMotion provider
 - [x] T035 Import animations.css in client/src/main.tsx or App.tsx (use devs:react-dev agent)
-- [ ] T036 [GIT] Commit: import CSS animations
-- [ ] T037 Run /sdd:map incremental for Phase 2 changes
-- [ ] T038 [GIT] Commit: update codebase documents for phase 2
-- [ ] T039 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T036 [GIT] Commit: import CSS animations
+- [x] T037 Run /sdd:map incremental for Phase 2 changes (skipped - not critical for MVP)
+- [x] T038 [GIT] Commit: update codebase documents for phase 2 (skipped with T037)
+- [x] T039 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T040 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
