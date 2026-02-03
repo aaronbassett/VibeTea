@@ -258,10 +258,7 @@ mod tests {
             width: 60,
             height: 20,
         };
-        assert_eq!(
-            err.to_string(),
-            "terminal too small: 60x20 (minimum 80x24)"
-        );
+        assert_eq!(err.to_string(), "terminal too small: 60x20 (minimum 80x24)");
     }
 
     #[test]

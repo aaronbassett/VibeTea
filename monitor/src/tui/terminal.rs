@@ -44,9 +44,7 @@ use std::panic;
 use crossterm::{
     cursor::{Hide, Show},
     execute,
-    terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
-    },
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
@@ -340,10 +338,7 @@ mod tests {
 
         // Simulate second restore - should be a no-op due to flag check
         let would_restore = !restored;
-        assert!(
-            !would_restore,
-            "Flag should prevent second restore attempt"
-        );
+        assert!(!would_restore, "Flag should prevent second restore attempt");
     }
 
     #[test]

@@ -97,11 +97,11 @@
 - [x] T040 Run /sdd:map incremental for Phase 2 changes
 - [x] T041 [GIT] Commit: update codebase documents for phase 2
 - [x] T042 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T043 [GIT] Commit: finalize phase 2 retro
+- [x] T043 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
-- [ ] T044 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T045 [GIT] Create/update PR to main with phase summary
+- [x] T044 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T045 [GIT] Create/update PR to main with phase summary
 - [ ] T046 [GIT] Verify all CI checks pass
 - [ ] T047 [GIT] Report PR ready status
 
