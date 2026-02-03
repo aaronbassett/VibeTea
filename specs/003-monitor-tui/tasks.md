@@ -129,8 +129,8 @@
 
 ### Setup Form Widget
 - [x] T056 [US1] Implement setup_form widget in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T057 [GIT] Commit: add setup form widget
-- [ ] T058 [US1] Add session name validation per FR-026 in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T057 [GIT] Commit: add setup form widget
+- [x] T058 [US1] Add session name validation per FR-026 in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
 - [ ] T059 [GIT] Commit: add session name validation
 
 ### Setup Input Handling

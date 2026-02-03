@@ -42,6 +42,6 @@ pub mod setup_form;
 // pub use event_stream::EventStreamWidget;
 // pub use header::HeaderWidget;
 // pub use logo::LogoWidget;
-pub use setup_form::SetupFormWidget;
+pub use setup_form::{validate_session_name, SetupFormWidget};
 // pub use size_warning::SizeWarningWidget;
 // pub use stats_footer::StatsFooterWidget;

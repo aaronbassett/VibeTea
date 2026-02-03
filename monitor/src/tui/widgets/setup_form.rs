@@ -59,6 +59,60 @@ use ratatui::{
 
 use crate::tui::app::{KeyOption, SetupField, SetupFormState, Symbols, Theme};
 
+/// Maximum allowed length for session names per FR-026.
+const MAX_SESSION_NAME_LENGTH: usize = 64;
+
+/// Validates a session name according to FR-026 requirements.
+///
+/// Returns `Ok(())` if valid, or `Err(String)` with an error message if invalid.
+///
+/// # Validation Rules
+///
+/// - Must not be empty after trimming whitespace
+/// - Must be at most 64 characters
+/// - Must contain only alphanumeric characters, hyphens (`-`), and underscores (`_`)
+///
+/// # Examples
+///
+/// ```
+/// use vibetea_monitor::tui::widgets::validate_session_name;
+///
+/// // Valid names
+/// assert!(validate_session_name("my-session").is_ok());
+/// assert!(validate_session_name("session_123").is_ok());
+/// assert!(validate_session_name("MySession").is_ok());
+///
+/// // Invalid names
+/// assert!(validate_session_name("").is_err());
+/// assert!(validate_session_name("invalid name").is_err());
+/// assert!(validate_session_name("invalid@name").is_err());
+/// ```
+pub fn validate_session_name(name: &str) -> Result<(), String> {
+    let trimmed = name.trim();
+
+    // Check for empty name
+    if trimmed.is_empty() {
+        return Err("Session name cannot be empty".to_string());
+    }
+
+    // Check length constraint
+    if trimmed.len() > MAX_SESSION_NAME_LENGTH {
+        return Err("Session name must be 64 characters or less".to_string());
+    }
+
+    // Check character validity: only alphanumeric, hyphens, and underscores
+    if !trimmed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(
+            "Session name can only contain letters, numbers, hyphens, and underscores".to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 /// Minimum width required to render the form properly.
 const MIN_FORM_WIDTH: u16 = 40;
 
@@ -725,5 +779,192 @@ mod tests {
         // Should not exceed the available area
         assert!(centered.x + centered.width <= area.width);
         assert!(centered.y + centered.height <= area.height);
+    }
+
+    // =========================================================================
+    // Session Name Validation Tests (FR-026)
+    // =========================================================================
+
+    #[test]
+    fn validate_session_name_empty_string_is_invalid() {
+        let result = super::validate_session_name("");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Session name cannot be empty");
+    }
+
+    #[test]
+    fn validate_session_name_whitespace_only_is_invalid() {
+        let result = super::validate_session_name("   ");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Session name cannot be empty");
+
+        // Test with tabs and mixed whitespace
+        let result = super::validate_session_name("\t\n  ");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Session name cannot be empty");
+    }
+
+    #[test]
+    fn validate_session_name_valid_alphanumeric_passes() {
+        assert!(super::validate_session_name("mysession").is_ok());
+        assert!(super::validate_session_name("MySession").is_ok());
+        assert!(super::validate_session_name("session123").is_ok());
+        assert!(super::validate_session_name("123session").is_ok());
+        assert!(super::validate_session_name("Session123Name").is_ok());
+    }
+
+    #[test]
+    fn validate_session_name_valid_with_hyphens_passes() {
+        assert!(super::validate_session_name("my-session").is_ok());
+        assert!(super::validate_session_name("my-long-session-name").is_ok());
+        assert!(super::validate_session_name("session-123").is_ok());
+        assert!(super::validate_session_name("-leading-hyphen").is_ok());
+        assert!(super::validate_session_name("trailing-hyphen-").is_ok());
+    }
+
+    #[test]
+    fn validate_session_name_valid_with_underscores_passes() {
+        assert!(super::validate_session_name("my_session").is_ok());
+        assert!(super::validate_session_name("my_long_session_name").is_ok());
+        assert!(super::validate_session_name("session_123").is_ok());
+        assert!(super::validate_session_name("_leading_underscore").is_ok());
+        assert!(super::validate_session_name("trailing_underscore_").is_ok());
+    }
+
+    #[test]
+    fn validate_session_name_valid_mixed_separators_passes() {
+        assert!(super::validate_session_name("my-session_name").is_ok());
+        assert!(super::validate_session_name("session_123-test").is_ok());
+        assert!(super::validate_session_name("a-b_c-d_e").is_ok());
+    }
+
+    #[test]
+    fn validate_session_name_exactly_64_chars_passes() {
+        // Create a string of exactly 64 characters
+        let name = "a".repeat(64);
+        assert_eq!(name.len(), 64);
+        assert!(super::validate_session_name(&name).is_ok());
+
+        // Also test with mixed valid characters (exactly 64 chars)
+        let mixed = "abcdefgh-ijklmnop_qrstuvwx-yz012345_67890ABC-DEFGHIJ_KLMNOPQRSTU";
+        assert_eq!(mixed.len(), 64);
+        assert!(super::validate_session_name(mixed).is_ok());
+    }
+
+    #[test]
+    fn validate_session_name_65_chars_fails() {
+        // Create a string of 65 characters
+        let name = "a".repeat(65);
+        assert_eq!(name.len(), 65);
+        let result = super::validate_session_name(&name);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Session name must be 64 characters or less"
+        );
+    }
+
+    #[test]
+    fn validate_session_name_very_long_fails() {
+        let name = "a".repeat(1000);
+        let result = super::validate_session_name(&name);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Session name must be 64 characters or less"
+        );
+    }
+
+    #[test]
+    fn validate_session_name_with_spaces_fails() {
+        let result = super::validate_session_name("my session");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Session name can only contain letters, numbers, hyphens, and underscores"
+        );
+
+        // Space at beginning (after trim, still has internal space)
+        let result = super::validate_session_name("my session name");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_session_name_with_special_chars_fails() {
+        // Test various special characters
+        let invalid_chars = [
+            "@", "#", "$", "%", "^", "&", "*", "(", ")", "+", "=", "[", "]", "{", "}", "|", "\\",
+            "/", "?", "<", ">", ",", ".", "!", "~", "`", "'", "\"", ":", ";",
+        ];
+
+        for ch in invalid_chars {
+            let name = format!("session{ch}name");
+            let result = super::validate_session_name(&name);
+            assert!(
+                result.is_err(),
+                "Should reject name containing '{ch}': {name}"
+            );
+            assert_eq!(
+                result.unwrap_err(),
+                "Session name can only contain letters, numbers, hyphens, and underscores"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_session_name_unicode_fails() {
+        // Non-ASCII letters
+        let result = super::validate_session_name("sessiön");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Session name can only contain letters, numbers, hyphens, and underscores"
+        );
+
+        // Emojis
+        let result = super::validate_session_name("session🎉");
+        assert!(result.is_err());
+
+        // Chinese characters
+        let result = super::validate_session_name("会话");
+        assert!(result.is_err());
+
+        // Cyrillic
+        let result = super::validate_session_name("сессия");
+        assert!(result.is_err());
+
+        // Japanese
+        let result = super::validate_session_name("セッション");
+        assert!(result.is_err());
+
+        // Arabic
+        let result = super::validate_session_name("جلسة");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_session_name_trims_whitespace() {
+        // Leading and trailing whitespace should be trimmed before validation
+        assert!(super::validate_session_name("  mysession  ").is_ok());
+        assert!(super::validate_session_name("\tmysession\n").is_ok());
+
+        // But internal spaces after trimming are still invalid
+        let result = super::validate_session_name("  my session  ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_session_name_single_char_passes() {
+        assert!(super::validate_session_name("a").is_ok());
+        assert!(super::validate_session_name("Z").is_ok());
+        assert!(super::validate_session_name("0").is_ok());
+        assert!(super::validate_session_name("-").is_ok());
+        assert!(super::validate_session_name("_").is_ok());
+    }
+
+    #[test]
+    fn validate_session_name_numbers_only_passes() {
+        assert!(super::validate_session_name("123456").is_ok());
+        assert!(super::validate_session_name("0").is_ok());
     }
 }
