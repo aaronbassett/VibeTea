@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use clap::{Parser, Subcommand};
 use directories::BaseDirs;
 use tokio::signal;
 use tokio::sync::mpsc;
@@ -39,27 +40,63 @@ const DEFAULT_KEY_DIR: &str = ".vibetea";
 /// Graceful shutdown timeout.
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
-/// CLI command.
-#[derive(Debug)]
+/// VibeTea Monitor - Claude Code session watcher.
+///
+/// Watches Claude Code session files and forwards privacy-filtered
+/// events to the VibeTea server for real-time dashboard updates.
+#[derive(Parser, Debug)]
+#[command(name = "vibetea-monitor")]
+#[command(author, version, about, long_about = None)]
+#[command(after_help = "\
+ENVIRONMENT VARIABLES:
+    VIBETEA_SERVER_URL         Server URL (required for 'run')
+    VIBETEA_SOURCE_ID          Monitor identifier (default: hostname)
+    VIBETEA_KEY_PATH           Key directory (default: ~/.vibetea)
+    VIBETEA_CLAUDE_DIR         Claude directory (default: ~/.claude)
+    VIBETEA_BUFFER_SIZE        Event buffer size (default: 1000)
+    VIBETEA_BASENAME_ALLOWLIST Comma-separated file extensions to include
+
+EXAMPLES:
+    # Generate a new keypair
+    vibetea-monitor init
+
+    # Force overwrite existing keys
+    vibetea-monitor init --force
+
+    # Start the monitor
+    export VIBETEA_SERVER_URL=https://vibetea.fly.dev
+    vibetea-monitor run
+")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+/// CLI subcommands.
+#[derive(Subcommand, Debug)]
 enum Command {
-    /// Initialize keypair.
+    /// Generate Ed25519 keypair for server authentication.
+    ///
+    /// Creates a new keypair in ~/.vibetea (or VIBETEA_KEY_PATH).
+    /// The public key must be registered with the server.
     Init {
-        /// Force overwrite existing keys.
+        /// Force overwrite existing keys without confirmation.
+        #[arg(short, long)]
         force: bool,
     },
-    /// Run the monitor.
+
+    /// Start the monitor daemon.
+    ///
+    /// Watches Claude Code session files and forwards events to the server.
+    /// Requires VIBETEA_SERVER_URL environment variable.
     Run,
-    /// Show help.
-    Help,
-    /// Show version.
-    Version,
 }
 
 fn main() -> Result<()> {
-    // Parse command line arguments
-    let command = parse_args()?;
+    // Parse command line arguments using clap
+    let cli = Cli::parse();
 
-    match command {
+    match cli.command {
         Command::Init { force } => run_init(force),
         Command::Run => {
             // Initialize async runtime for the run command
@@ -70,82 +107,7 @@ fn main() -> Result<()> {
 
             runtime.block_on(run_monitor())
         }
-        Command::Help => {
-            print_help();
-            Ok(())
-        }
-        Command::Version => {
-            print_version();
-            Ok(())
-        }
     }
-}
-
-/// Parses command line arguments into a Command.
-fn parse_args() -> Result<Command> {
-    let args: Vec<String> = std::env::args().collect();
-
-    if args.len() < 2 {
-        return Ok(Command::Help);
-    }
-
-    match args[1].as_str() {
-        "init" => {
-            let force = args.iter().any(|a| a == "--force" || a == "-f");
-            Ok(Command::Init { force })
-        }
-        "run" => Ok(Command::Run),
-        "help" | "--help" | "-h" => Ok(Command::Help),
-        "version" | "--version" | "-V" => Ok(Command::Version),
-        unknown => {
-            eprintln!("Unknown command: {}", unknown);
-            print_help();
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Prints the help message.
-fn print_help() {
-    println!(
-        r#"VibeTea Monitor - Claude Code session watcher
-
-USAGE:
-    vibetea-monitor <COMMAND>
-
-COMMANDS:
-    init    Generate Ed25519 keypair for server authentication
-            Options:
-              --force, -f    Overwrite existing keys
-
-    run     Start the monitor daemon
-
-    help    Show this help message
-
-    version Show version information
-
-ENVIRONMENT VARIABLES:
-    VIBETEA_SERVER_URL       Server URL (required for 'run')
-    VIBETEA_SOURCE_ID        Monitor identifier (default: hostname)
-    VIBETEA_KEY_PATH         Key directory (default: ~/.vibetea)
-    VIBETEA_CLAUDE_DIR       Claude directory (default: ~/.claude)
-    VIBETEA_BUFFER_SIZE      Event buffer size (default: 1000)
-    VIBETEA_BASENAME_ALLOWLIST   Comma-separated file extensions to include
-
-EXAMPLES:
-    # Generate a new keypair
-    vibetea-monitor init
-
-    # Start the monitor
-    export VIBETEA_SERVER_URL=https://vibetea.fly.dev
-    vibetea-monitor run
-"#
-    );
-}
-
-/// Prints version information.
-fn print_version() {
-    println!("vibetea-monitor {}", env!("CARGO_PKG_VERSION"));
 }
 
 /// Runs the init command to generate a new keypair.
