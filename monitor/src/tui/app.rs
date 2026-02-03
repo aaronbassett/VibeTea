@@ -2373,7 +2373,8 @@ mod tests {
     #[test]
     fn setup_field_is_clone() {
         let field = SetupField::Submit;
-        let cloned = field.clone();
+        // Clone is implemented (even though Copy is too), test it compiles
+        let cloned: SetupField = Clone::clone(&field);
         assert_eq!(field, cloned);
     }
 
@@ -2452,7 +2453,8 @@ mod tests {
     #[test]
     fn key_option_is_clone() {
         let option = KeyOption::GenerateNew;
-        let cloned = option.clone();
+        // Clone is implemented (even though Copy is too), test it compiles
+        let cloned: KeyOption = Clone::clone(&option);
         assert_eq!(option, cloned);
     }
 
