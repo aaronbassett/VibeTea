@@ -49,3 +49,4 @@ futures-util = "0.3"
 [dev-dependencies]
 tokio-test.workspace = true
 reqwest.workspace = true
+serial_test = "3.2"

@@ -38,7 +38,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Bytes,
-    extract::{Query, State, WebSocketUpgrade},
+    extract::{DefaultBodyLimit, Query, State, WebSocketUpgrade},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -67,6 +67,9 @@ const HEADER_SIGNATURE: &str = "X-Signature";
 
 /// Header name for rate limit retry delay.
 const HEADER_RETRY_AFTER: &str = "Retry-After";
+
+/// Maximum body size for event ingestion (1 MB).
+const MAX_BODY_SIZE: usize = 1024 * 1024;
 
 // ============================================================================
 // Application State
@@ -176,6 +179,7 @@ impl std::fmt::Debug for AppState {
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/events", post(post_events))
+        .layer(DefaultBodyLimit::max(MAX_BODY_SIZE))
         .route("/ws", get(get_ws))
         .route("/health", get(get_health))
         .with_state(state)
@@ -339,6 +343,26 @@ async fn post_events(State(state): State<AppState>, headers: HeaderMap, body: By
 
     let events = events_payload.into_events();
     let event_count = events.len();
+
+    // Validate that all events have matching source
+    for event in &events {
+        if event.source != source_id {
+            warn!(
+                authenticated_source = %source_id,
+                event_source = %event.source,
+                event_id = %event.id,
+                "Event source mismatch"
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(
+                    ErrorResponse::new("event source does not match authenticated source")
+                        .with_code("source_mismatch"),
+                ),
+            )
+                .into_response();
+        }
+    }
 
     // Broadcast events
     for event in events {
@@ -1000,6 +1024,133 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert!(response.headers().contains_key(HEADER_RETRY_AFTER));
+    }
+
+    // ========================================================================
+    // Source validation tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn post_events_rejects_source_mismatch() {
+        let state = AppState::new(test_config_no_auth());
+        let app = create_router(state);
+
+        // Create event with source "wrong-source" but send with header "test-source"
+        let mut event = create_test_event();
+        event.source = "wrong-source".to_string();
+        let body = serde_json::to_string(&event).unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/events")
+                    .header("Content-Type", "application/json")
+                    .header(HEADER_SOURCE_ID, "test-source")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error["code"], "source_mismatch");
+    }
+
+    #[tokio::test]
+    async fn post_events_rejects_mixed_source_batch() {
+        let state = AppState::new(test_config_no_auth());
+        let app = create_router(state);
+
+        // Create batch where first event matches but second doesn't
+        let mut event1 = create_test_event();
+        event1.source = "test-source".to_string();
+        let mut event2 = create_test_event();
+        event2.source = "other-source".to_string();
+
+        let events = vec![event1, event2];
+        let body = serde_json::to_string(&events).unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/events")
+                    .header("Content-Type", "application/json")
+                    .header(HEADER_SOURCE_ID, "test-source")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let error: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(error["code"], "source_mismatch");
+    }
+
+    #[tokio::test]
+    async fn post_events_accepts_matching_source() {
+        let state = AppState::new(test_config_no_auth());
+        let mut receiver = state.broadcaster.subscribe();
+        let app = create_router(state);
+
+        let mut event = create_test_event();
+        event.source = "matching-source".to_string();
+        let body = serde_json::to_string(&event).unwrap();
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/events")
+                    .header("Content-Type", "application/json")
+                    .header(HEADER_SOURCE_ID, "matching-source")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert!(receiver.try_recv().is_ok());
+    }
+
+    // ========================================================================
+    // Body size limit tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn post_events_rejects_oversized_request() {
+        let state = AppState::new(test_config_no_auth());
+        let app = create_router(state);
+
+        // Create a body larger than MAX_BODY_SIZE (1 MB)
+        let oversized_body = "x".repeat(1024 * 1024 + 1);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/events")
+                    .header("Content-Type", "application/json")
+                    .header(HEADER_SOURCE_ID, "test-source")
+                    .body(Body::from(oversized_body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 
     // ========================================================================
