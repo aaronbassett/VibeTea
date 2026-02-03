@@ -17,6 +17,7 @@ import { useCallback, useMemo } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 
 import { useEventStore } from '../hooks/useEventStore';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 import { formatDuration, formatRelativeTime } from '../utils/formatting';
 import { SPRING_CONFIGS } from '../constants/design-tokens';
 
@@ -90,6 +91,8 @@ interface SessionCardProps {
   readonly onClick?: (sessionId: string) => void;
   /** Whether this session is currently selected for filtering */
   readonly isSelected?: boolean;
+  /** Whether the user prefers reduced motion */
+  readonly prefersReducedMotion?: boolean;
 }
 
 /**
@@ -316,12 +319,14 @@ function SessionCard({
   recentEventCount,
   onClick,
   isSelected = false,
+  prefersReducedMotion = false,
 }: SessionCardProps) {
   const isActive = session.status === 'active';
   const isEnded = session.status === 'ended';
   const isDimmed = !isActive && !isSelected;
 
   // Animated glow class for active sessions
+  // CSS handles prefers-reduced-motion fallback in animations.css
   const glowClass = isActive ? 'session-card-glow-active' : '';
 
   // Calculate display values
@@ -363,6 +368,28 @@ function SessionCard({
       ? 'cursor-pointer hover:bg-gray-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset'
       : '';
 
+  // Disable spring animations for reduced motion
+  const animationProps = prefersReducedMotion
+    ? { initial: false, animate: false, exit: undefined, layout: false }
+    : {
+        variants: cardVariants,
+        initial: 'initial' as const,
+        animate: 'animate' as const,
+        exit: 'exit' as const,
+        layout: true,
+      };
+
+  // Disable hover effects for reduced motion
+  const hoverProps = prefersReducedMotion
+    ? undefined
+    : onClick !== undefined
+      ? {
+          scale: 1.02,
+          boxShadow: '0 0 12px 2px rgba(217, 119, 87, 0.3)',
+          transition: SPRING_CONFIGS.gentle,
+        }
+      : undefined;
+
   return (
     <m.div
       role="listitem"
@@ -372,20 +399,8 @@ function SessionCard({
       className={`border rounded-lg p-4 transition-colors ${selectedClass} ${opacityClass} ${hoverClass} ${glowClass}`}
       onClick={onClick !== undefined ? handleClick : undefined}
       onKeyDown={onClick !== undefined ? handleKeyDown : undefined}
-      variants={cardVariants}
-      initial="initial"
-      animate="animate"
-      exit="exit"
-      layout
-      whileHover={
-        onClick !== undefined
-          ? {
-              scale: 1.02,
-              boxShadow: '0 0 12px 2px rgba(217, 119, 87, 0.3)',
-              transition: SPRING_CONFIGS.gentle,
-            }
-          : undefined
-      }
+      {...animationProps}
+      whileHover={hoverProps}
     >
       {/* Header row: Project name and status badge */}
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -494,6 +509,9 @@ export function SessionOverview({
   onSessionClick,
   selectedSessionId,
 }: SessionOverviewProps) {
+  // Detect user's reduced motion preference
+  const prefersReducedMotion = useReducedMotion();
+
   // Subscribe to sessions from the store
   const sessions = useEventStore((state) => state.sessions);
   const events = useEventStore((state) => state.events);
@@ -553,6 +571,7 @@ export function SessionOverview({
                   onSessionClick !== undefined ? handleSessionClick : undefined
                 }
                 isSelected={selectedSessionId === session.sessionId}
+                prefersReducedMotion={prefersReducedMotion}
               />
             ))}
           </AnimatePresence>
