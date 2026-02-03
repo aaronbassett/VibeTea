@@ -1406,13 +1406,6 @@ mod tests {
         assert!(dashboard_debug.contains("Dashboard"));
     }
 
-    #[test]
-    fn screen_is_clone() {
-        let screen = Screen::Dashboard;
-        let cloned = screen.clone();
-        assert_eq!(screen, cloned);
-    }
-
     // =============================================================================
     // Placeholder Type Tests
     // =============================================================================
@@ -1633,10 +1626,10 @@ mod tests {
     }
 
     #[test]
-    fn symbols_is_clone() {
+    fn ascii_symbols_is_copy() {
         let symbols = ASCII_SYMBOLS;
-        let cloned = symbols.clone();
-        assert_eq!(cloned.arrow, "->");
+        let copied = symbols; // Copy, not clone
+        assert_eq!(copied.arrow, "->");
     }
 
     #[test]

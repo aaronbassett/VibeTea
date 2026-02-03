@@ -231,7 +231,7 @@ mod tests {
 
     #[test]
     fn tui_error_terminal_init_display() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "raw mode failed");
+        let io_err = std::io::Error::other("raw mode failed");
         let err = TuiError::TerminalInit(io_err);
         assert_eq!(
             err.to_string(),
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn tui_error_render_display() {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "write failed");
+        let io_err = std::io::Error::other("write failed");
         let err = TuiError::Render(io_err);
         assert_eq!(err.to_string(), "render error: write failed");
     }
@@ -272,7 +272,7 @@ mod tests {
     fn tui_error_source_chain() {
         use std::error::Error;
 
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, "raw mode failed");
+        let io_err = std::io::Error::other("raw mode failed");
         let err = TuiError::TerminalInit(io_err);
 
         let source = err.source();
