@@ -58,9 +58,9 @@
 **CRITICAL**: No user story work can begin until this phase is complete
 
 ### Phase Start
-- [ ] T016 [GIT] Verify working tree is clean before starting Phase 2
-- [ ] T017 [GIT] Pull and rebase on origin/main if needed
-- [ ] T018 Create retro/P2.md for this phase
+- [x] T016 [GIT] Verify working tree is clean before starting Phase 2
+- [x] T017 [GIT] Pull and rebase on origin/main if needed
+- [x] T018 Create retro/P2.md for this phase
 
 ### Terminal Infrastructure
 - [ ] T019 [GIT] Commit: initialize phase 2 retro
