@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { AnimatedBackground } from './components/animated/AnimatedBackground';
 import { ASCIIHeader } from './components/animated/ASCIIHeader';
+import { AnimationErrorBoundary } from './components/animated/ErrorBoundary';
 import { SpringContainer } from './components/animated/SpringContainer';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { EventStream } from './components/EventStream';
@@ -112,14 +113,22 @@ export default function App() {
     return (
       <LazyMotion features={domAnimation}>
         <div className="min-h-screen bg-[#131313] text-[#f5f5f5] flex flex-col items-center justify-center p-8 relative">
-          {/* Animated background layer */}
-          <AnimatedBackground showGrid showParticles />
+          {/* Animated background layer with error boundary */}
+          <AnimationErrorBoundary>
+            <AnimatedBackground showGrid showParticles />
+          </AnimationErrorBoundary>
 
           {/* Content layer */}
           <div className="max-w-md w-full space-y-8 relative z-10">
-            {/* ASCII Header with spring entrance */}
+            {/* ASCII Header with spring entrance and error boundary */}
             <div className="text-center">
-              <ASCIIHeader />
+              <AnimationErrorBoundary
+                fallback={
+                  <h1 className="text-3xl font-bold text-[#f5f5f5]">VibeTea</h1>
+                }
+              >
+                <ASCIIHeader />
+              </AnimationErrorBoundary>
               <SpringContainer springType="gentle" delay={0.2}>
                 <p className="text-[#a0a0a0] mt-4">
                   Enter your authentication token to connect to the event
