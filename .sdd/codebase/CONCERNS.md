@@ -4,156 +4,134 @@
 > **Generated**: 2026-02-03
 > **Last Updated**: 2026-02-03
 
+## Security Concerns
+
+### High Priority
+
+| ID | Area | Description | Risk Level | Mitigation |
+|----|------|-------------|------------|------------|
+| SEC-001 | WebSocket authentication | Single static token for all clients allows no per-client revocation or auditing | High | Plan token rotation mechanism or client certificates |
+| SEC-002 | Token management | Subscriber token hardcoded in environment variable with no expiration or rotation | High | Implement periodic token rotation and audit logging |
+| SEC-003 | CORS policy | All origins allowed, no CORS validation in place | Medium | Add configurable CORS origin whitelist |
+| SEC-004 | Signature header validation | X-Signature header parsed as-is with minimal format validation | Low | Already mitigated by base64 decoding and cryptographic verification |
+
+### Medium Priority
+
+| ID | Area | Description | Risk Level | Mitigation |
+|----|------|-------------|------------|------------|
+| SEC-005 | Private key environment variable | `VIBETEA_PRIVATE_KEY` env var alternative not documented; unclear if used in production | Medium | Document usage pattern; prefer file-based keys |
+| SEC-006 | Rate limiting overhead | Per-source token bucket tracking could consume memory with many unique sources | Medium | Implement stale entry cleanup (partially done); add configurable limits |
+| SEC-007 | Event persistence | Events are in-memory only; no persistence means events lost on restart | Medium | Document as design decision; recommend replay mechanism at application level |
+
 ## Technical Debt
 
 ### High Priority
 
-Items that should be addressed soon:
-
 | ID | Area | Description | Impact | Effort |
 |----|------|-------------|--------|--------|
-| TD-001 | `server/src/routes.rs` | No HTTPS enforcement at application level | Security risk | High |
-| TD-002 | `server/src/` | No request/response size validation for WebSocket messages | DoS risk | Medium |
-| TD-003 | `monitor/src/crypto.rs` | Private key file stored unencrypted on disk | Data compromise risk | High |
+| TD-001 | Cleanup task | Rate limiter cleanup task in main.rs never terminates; cleanup_handle is dropped without cancellation | Cleanup runs until server shutdown | Low |
+| TD-002 | Error handling | Some auth errors (InvalidPublicKey) could reveal server configuration details in logs | Debugging difficulty | Low |
 
 ### Medium Priority
 
-Items to address when working in the area:
-
 | ID | Area | Description | Impact | Effort |
 |----|------|-------------|--------|--------|
-| TD-010 | `server/src/` | No logging of successful authentications (only failures) | Audit visibility | Low |
-| TD-011 | `server/src/rate_limit.rs` | Rate limiter in-memory only; no persistence across restarts | State loss | Medium |
-| TD-012 | `server/src/` | WebSocket frame fragmentation handling is implicit (rely on axum) | Reliability | Medium |
-| TD-013 | `server/src/auth.rs` | No key rotation mechanism documented | Operational complexity | Medium |
+| TD-003 | Configuration validation | VIBETEA_PUBLIC_KEYS parsing doesn't validate that decoded base64 is exactly 32 bytes | Confusing error messages at runtime | Low |
+| TD-004 | Type safety | EventPayload uses untagged enum which could be fragile with certain JSON structures | API contract ambiguity | Medium |
+| TD-005 | Logging | Some debug/trace logs are verbose and could impact performance under load | Performance in high-traffic scenarios | Low |
 
 ### Low Priority
 
-Nice to have improvements:
-
 | ID | Area | Description | Impact | Effort |
 |----|------|-------------|--------|--------|
-| TD-020 | `server/src/` | HTTP/2 upgrade could improve performance | Performance | Medium |
-| TD-021 | `monitor/src/` | No key backup/recovery mechanism documented | Operational risk | Low |
-| TD-022 | `server/src/routes.rs` | Error responses could be more granular for debugging | Developer experience | Low |
-
-## Security Concerns
-
-Security-related issues requiring attention:
-
-| ID | Area | Description | Risk Level | Mitigation |
-|----|------|-------------|------------|------------|
-| SEC-001 | `server/src/config.rs` | `VIBETEA_UNSAFE_NO_AUTH` mode disables all authentication | High | Only use in development; never in production |
-| SEC-002 | `monitor/src/crypto.rs` | Private keys stored as plaintext bytes on disk | High | Encrypt keys at rest; restrict filesystem access to mode 0600 |
-| SEC-003 | `server/src/` | No TLS enforcement at application level | High | Enforce HTTPS via reverse proxy; use HSTS headers |
-| SEC-004 | `server/src/routes.rs` | Event source validation happens after deserialization | Medium | Validate earlier if possible; document order of checks |
-| SEC-005 | `server/src/` | No metrics/monitoring for suspicious patterns | Medium | Add rate limit bypass detection; log authentication failures centrally |
-| SEC-006 | `server/src/` | Constant-time comparison only for WebSocket token | Medium | Extend to all sensitive string comparisons |
-| SEC-007 | `server/src/rate_limit.rs` | DoS vector: unlimited unique source IDs can exhaust memory | Medium | Add per-endpoint limit on unique source ID count |
+| TD-006 | Documentation | VIBETEA_PRIVATE_KEY environment variable mentioned in crypto.rs but not in main config docs | Developer confusion | Low |
+| TD-007 | Error response codes | Health endpoint always returns 200 even during degradation; no status codes for partial failure | Monitoring complexity | Low |
 
 ## Known Bugs
 
-Active bugs that haven't been fixed:
-
-| ID | Description | Workaround | Severity |
-|----|-------------|------------|----------|
-| BUG-001 | WebSocket clients can receive events from unsubscribed sources if filter is not applied | Always specify `source` parameter in WebSocket query | Low |
-| BUG-002 | Rate limiter NaN handling: saturating_mul used but edge case with very high rates possible | Keep rates < 1e10 tokens/second | Low |
-
-## Performance Concerns
-
-Known performance issues:
-
-| ID | Area | Description | Impact | Mitigation |
-|----|------|-------------|--------|------------|
-| PERF-001 | `server/src/rate_limit.rs` | HashMap lookup for each request (O(1) amortized but non-zero overhead) | Latency increase | Acceptable for typical workloads |
-| PERF-002 | `server/src/routes.rs` | JSON deserialization on every request | CPU usage | Consider msgpack if bandwidth is concern |
-| PERF-003 | `monitor/src/crypto.rs` | File I/O for key loading on each signing operation | Monitor startup latency | Load keys once at startup |
+| ID | Description | Workaround | Severity | Status |
+|----|-------------|------------|----------|--------|
+| BUG-001 | EnvGuard in tests modifies global env var state; tests must use `#[serial]` to avoid race conditions | Use `#[serial]` decorator on all env-var-touching tests | Medium | Mitigated in code |
+| BUG-002 | WebSocket client lagging causes skipped events (lagged count logged but events discarded) | No workaround; clients must reconnect to resume from current position | Medium | Documented in trace log |
 
 ## Fragile Areas
 
-Code areas that are brittle or risky to modify:
-
 | Area | Why Fragile | Precautions |
 |------|-------------|-------------|
-| `server/src/auth.rs` | Cryptographic signature verification is security-critical | Add tests for every code path; never skip RFC 8032 strict verification |
-| `server/src/config.rs` | Configuration parsing affects entire server security posture | Test with invalid inputs; document parsing rules |
-| `server/src/routes.rs` | Source validation happens in multiple places; easy to miss one | Centralize source validation logic; add integration tests |
-| `monitor/src/crypto.rs` | Signing is security-critical; keys must not leak | Never log keys; use constant-time operations only |
+| `server/src/auth.rs` | Critical security-sensitive code; base64/length validation is subtle | Extensive test coverage (43 tests); use RFC 8032 strict verification |
+| `server/src/routes.rs` | High complexity with multiple auth paths and error cases | Test all auth combinations; validate error responses |
+| `monitor/src/crypto.rs` | Cryptographic key handling; file permissions matter | Tests verify file permissions on Unix; regenerate if compromised |
+| `server/src/config.rs` | Configuration parsing with environment variables; tests required `#[serial]` | Never modify without running full test suite with `--test-threads=1` |
 
 ## Deprecated Code
 
-Code marked for removal:
-
 | Area | Deprecation Reason | Removal Target | Replacement |
 |------|-------------------|----------------|-------------|
-| None currently | N/A | N/A | N/A |
+| None identified | - | - | - |
 
 ## TODO Items
 
-Active TODO comments in codebase:
-
 | Location | TODO | Priority |
 |----------|------|----------|
-| `server/src/config.rs:96` | Review VIBETEA_UNSAFE_NO_AUTH warning message | Low |
-| `server/src/main.rs:214` | Consider adding graceful shutdown timeout metrics | Low |
+| `monitor/tests/privacy_test.rs:319` | TODO regex in test assertion for security match | Medium |
+| None other than above | - | - |
 
-## External Dependencies at Risk
+## Dependency Concerns
 
-Dependencies that may need attention:
+### At-Risk Dependencies
 
 | Package | Concern | Action Needed |
 |---------|---------|---------------|
-| `ed25519_dalek` | Cryptographic library requires correct version (check for updates) | Monitor for security advisories |
-| `tokio` | Heavy dependency; ensure async patterns are correct | Monitor for performance regressions |
-| `axum` | HTTP framework; ensure HTTPS enforcement at proxy | Verify proxy configuration in deployment |
+| `ed25519_dalek` | Cryptographic library; monitor for security advisories | Subscribe to GitHub security alerts |
+| `tokio` | Runtime; heavy async dependency with many transitive deps | Keep updated; monitor for CVEs |
+| `base64` | Decoding; generally stable but validate error handling | No immediate action needed |
+
+## Performance Concerns
+
+| ID | Area | Description | Impact | Mitigation |
+|----|------|-------------|--------|-----------|
+| PERF-001 | Rate limiter memory | Hash map of source_id -> TokenBucket grows unbounded until cleanup | Memory leak over time | Cleanup task removes stale entries (60s timeout) |
+| PERF-002 | Event broadcast | Broadcaster uses bounded channel; lagging subscribers lose events | Client experience degrades | Expected behavior; clients reconnect |
+| PERF-003 | JSON serialization | Every event serialized per WebSocket subscriber | CPU under high load | No mitigation; consider compression |
 
 ## Monitoring Gaps
 
-Areas lacking proper observability:
-
 | Area | Missing | Impact |
 |------|---------|--------|
-| `server/src/` | Per-endpoint latency metrics | Can't detect performance degradation |
-| `server/src/auth.rs` | Signature verification success/failure ratio | Can't detect attack patterns |
-| `server/src/rate_limit.rs` | Memory usage of rate limiter state | Can't predict capacity exhaustion |
-| `monitor/` | Event submission success/failure metrics | Can't detect monitor connectivity issues |
+| Private key usage | No metrics on whether file vs env var is used | Can't audit key source at runtime |
+| Rate limiter state | No metrics on bucket count or token refill rates | Hard to debug rate limiting issues |
+| Authentication success rate | No metrics on auth successes vs failures | Can't detect brute force attempts |
+| WebSocket health | No metrics on connection duration or message throughput | Hard to diagnose subscription issues |
 
 ## Improvement Opportunities
 
-Areas that could benefit from refactoring:
-
 | Area | Current State | Desired State | Benefit |
 |------|---------------|---------------|---------|
-| `server/src/routes.rs` | Multiple error code strings scattered | Centralized error code enum | Consistency, maintainability |
-| `server/src/` | Limited validation of configuration values | Schema validation at startup | Catch config errors earlier |
-| `server/src/auth.rs` | Signature verification is monolithic | Break into sub-functions | Easier testing, readability |
-| `server/src/` | No request tracing/correlation IDs | Add X-Request-ID support | Better debugging |
+| Token management | Static string in environment | JWT or token service with expiration | Better security and client management |
+| Configuration validation | Happens at startup only | Happens at startup with detailed validation | Catch misconfigurations earlier |
+| Error logging | Mix of debug/warn levels | Structured error types with contextual data | Better observability |
+| Rate limiting | Per-source only | Support per-IP and per-endpoint limits | Finer-grained DoS protection |
+| Event filtering | Client-side by query params | Server-side filtering with ACLs | Reduced bandwidth, better security |
 
-## Potential Vulnerabilities to Review
+## Security Debt Items
 
-These are not confirmed vulnerabilities but areas that should be reviewed:
+| ID | Area | Description | Mitigation Strategy |
+|----|------|-------------|-------------|
+| DEBT-001 | WebSocket token | Same token for all clients across all time | Implement token rotation every N days or on deployment |
+| DEBT-002 | Key registration | Public keys hardcoded in environment variable | Implement key management API with dynamic updates |
+| DEBT-003 | Audit trail | Minimal logging of auth events | Add structured audit logging to database/file |
+| DEBT-004 | Client identity | WebSocket clients are anonymous beyond token | Add optional client ID/name for audit purposes |
 
-1. **Timing attacks on token comparison**: While `subtle::ConstantTimeEq` is used for WebSocket tokens, ensure all sensitive comparisons use it.
+## Potential Attack Vectors
 
-2. **Public key validation**: Public keys from `VIBETEA_PUBLIC_KEYS` are not validated to be valid Ed25519 keys at startup (only at verification time).
-
-3. **Request body size**: Maximum body size is 1 MB; consider if this is sufficient for use cases.
-
-4. **JSON parsing**: Malicious JSON with deeply nested structures could cause stack overflow; serde has protections but should be verified.
-
-5. **WebSocket upgrade**: Verify that WebSocket upgrade doesn't accept invalid protocols.
-
-6. **Rate limiter state**: HashMap can grow unbounded if many unique source IDs are used; stale entry cleanup helps but may not be sufficient under attack.
-
-## Compliance Notes
-
-- No formal security audit has been performed
-- Code follows Rust best practices and uses safe APIs
-- No hardcoded secrets found in codebase
-- Cryptographic operations use well-tested libraries (`ed25519_dalek`, `subtle`)
-- No SQL injection vectors (no SQL used)
-- No code injection vectors (no eval/exec)
+| Vector | Mitigation | Status |
+|--------|-----------|--------|
+| Signature bypass (wrong message signed) | Signature verifies full request body | Mitigated |
+| Timing attack on token comparison | Constant-time comparison with `subtle` crate | Mitigated |
+| Rate limit bypass (multiple sources) | Per-source limiting doesn't prevent N sources | Partially mitigated by total capacity |
+| WebSocket replay (reuse old token) | Static token never expires | Not mitigated |
+| Source ID spoofing | Must provide valid signature for registered source | Mitigated |
+| Base64 decoding errors | Handled with explicit error cases | Mitigated |
 
 ---
 
@@ -165,15 +143,6 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 | High | Degraded functionality, security risk | This sprint |
 | Medium | Developer experience, minor issues | Next sprint |
 | Low | Nice to have, cosmetic | Backlog |
-
----
-
-## What Does NOT Belong Here
-
-- Active implementation tasks → Project board/issues
-- Security controls (what we do right) → SECURITY.md
-- Architecture decisions → ARCHITECTURE.md
-- Code conventions → CONVENTIONS.md
 
 ---
 

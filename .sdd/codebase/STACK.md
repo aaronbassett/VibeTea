@@ -1,7 +1,7 @@
 # Technology Stack
 
-**Status**: Phase 10 Implementation - Session overview cards with activity indicators and timeout management
-**Last Updated**: 2026-02-02
+**Status**: Phase 2 Enhancement - KeySource tracking and public key fingerprinting for crypto module
+**Last Updated**: 2026-02-03
 
 ## Languages & Runtimes
 
@@ -39,6 +39,7 @@
 | subtle             | 2.6     | Constant-time comparison for cryptography | Server (auth) |
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
+| clap               | 4.5     | CLI argument parsing with derive macros | Monitor |
 
 ### TypeScript/JavaScript (Client)
 
@@ -73,6 +74,8 @@
 |--------------|---------|---------|
 | tokio-test   | 0.4     | Tokio testing utilities |
 | tempfile     | 3.15    | Temporary file/directory management for tests |
+| serial_test  | 3.2     | Serial test execution for environment variable tests |
+| wiremock     | 0.6     | HTTP mocking for integration tests |
 
 ### TypeScript Testing
 | Package                | Version  | Purpose |
@@ -105,7 +108,7 @@
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
-| CLI Support | Manual command parsing in monitor main.rs (init, run, help, version) |
+| CLI Support | clap derive macros for command parsing in monitor main.rs (init, run, help, version) |
 
 ## Communication Protocols & Formats
 
@@ -185,6 +188,19 @@
 | Server | Fly.io | Docker | Single Rust binary, minimal base image |
 | Client | CDN | Static files | Optimized builds with compression |
 | Monitor | Local | Native binary | Users download and run locally |
+
+## Phase 2 Enhancements
+
+**Monitor Crypto Module Enhancements** (`monitor/src/crypto.rs`):
+- **KeySource enum**: Tracks where private key was loaded from
+  - `EnvironmentVariable` - Key from VIBETEA_PRIVATE_KEY env var
+  - `File(PathBuf)` - Key loaded from file at specific path
+- **public_key_fingerprint()**: Returns first 8 characters of base64-encoded public key
+  - Used for key verification in logs without exposing full key
+  - Allows users to verify correct keypair with server registration
+  - Always 8 characters long, prefix of full public key base64
+- **Enhanced logging**: Can now report KeySource at startup (INFO level)
+- **Backward compatible**: KeySource is for tracking only, doesn't affect signing/verification
 
 ## Phase 4 Additions
 

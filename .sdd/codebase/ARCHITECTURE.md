@@ -152,6 +152,8 @@ Claude Code → Monitor → Server → Client:
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
 | `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
+| `KeySource` | Tracks key origin for logging | EnvironmentVariable, File(PathBuf) |
+| `Crypto` | Ed25519 key operations | generate(), load(), save(), sign(), public_key_fingerprint() |
 
 ## Authentication & Authorization
 
@@ -166,6 +168,7 @@ Claude Code → Monitor → Server → Client:
   5. Invalid signatures rejected with 401 Unauthorized
 - **Security**: Uses `ed25519_dalek::VerifyingKey::verify_strict()` (RFC 8032 compliant)
 - **Timing Attack Prevention**: `subtle::ConstantTimeEq` for signature comparison
+- **Key Tracking**: `KeySource` enum tracks whether keys loaded from file or environment variable (logged at startup for verification)
 
 ### Client Authentication (Consumer)
 
@@ -202,6 +205,7 @@ Claude Code → Monitor → Server → Client:
 | **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown |
 | **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
+| **Crypto Keys** | Loaded once at startup | KeySource tracked for logging, indicates origin (env var or file) |
 
 ## Cross-Cutting Concerns
 
@@ -213,6 +217,7 @@ Claude Code → Monitor → Server → Client:
 | **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
+| **Key Management** | Ed25519 key generation, storage, signing | `monitor/src/crypto.rs` (with KeySource tracking) |
 
 ## Design Decisions
 

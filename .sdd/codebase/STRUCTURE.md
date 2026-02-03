@@ -95,7 +95,7 @@ VibeTea/
 | `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` | `FileWatcher`, `WatchEvent` |
 | `parser.rs` | Parse JSONL, extract Session/Activity/Tool events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
-| `crypto.rs` | Ed25519 keypair (generate, load, save) | `Crypto` |
+| `crypto.rs` | Ed25519 keypair (generate, load, save, sign, fingerprint) | `Crypto`, `KeySource`, `CryptoError` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
 | `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType` |
 | `error.rs` | Error types | `MonitorError`, custom errors |

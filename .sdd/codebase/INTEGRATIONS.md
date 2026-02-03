@@ -1,7 +1,7 @@
 # External Integrations
 
-**Status**: Phase 10 Implementation - Session overview with activity indicators and timeout management
-**Last Updated**: 2026-02-02
+**Status**: Phase 2 Enhancement - KeySource tracking and public key fingerprinting for crypto module
+**Last Updated**: 2026-02-03
 
 ## Summary
 
@@ -178,6 +178,32 @@ Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
    - Credentials not transmitted
 
 ## Cryptographic Authentication & Key Management
+
+### Phase 2: Enhanced Crypto Module with KeySource Tracking
+
+**Module Location**: `monitor/src/crypto.rs` (438+ lines)
+
+**KeySource Enum** (Phase 2 Addition):
+- **Purpose**: Track where the private key was loaded from for audit/logging purposes
+- **Variants**:
+  - `EnvironmentVariable` - Key loaded from `VIBETEA_PRIVATE_KEY` environment variable
+  - `File(PathBuf)` - Key loaded from file at specific path
+- **Usage**: Enables reporting key source at startup for transparency
+- **Logging**: Can be reported at INFO level to help users verify correct key usage
+
+**Public Key Fingerprinting** (Phase 2 Addition):
+- **public_key_fingerprint()**: New method returns first 8 characters of base64-encoded public key
+  - Used for key verification in logs without exposing full key
+  - Allows users to verify correct keypair with server registration
+  - Always 8 characters long, guaranteed to be unique prefix of full key
+  - Useful for quick visual verification in logs and documentation
+  - Example: Full key `dGVzdHB1YmtleTExYWJjZGVmZ2hpams=` → Fingerprint `dGVzdHB1`
+
+**Backward Compatibility**:
+- KeySource and fingerprinting are tracking/logging features only
+- Do not affect cryptographic operations (signing/verification)
+- Existing code continues to work without modification
+- New features are opt-in for enhanced observability
 
 ### Phase 6: Monitor Cryptographic Operations
 
@@ -1601,39 +1627,22 @@ None required for production (future configuration planned).
 
 ## Phase Changes Summary
 
-### Phase 10 Changes
+### Phase 2: KeySource Tracking and Public Key Fingerprinting
 
-**Client Session Timeout Hook** (`client/src/hooks/useSessionTimeouts.ts` - 48 lines):
-- Sets up periodic interval (30 seconds) to check and update session states
-- Transitions sessions: Active → Inactive (5min), Inactive/Ended → Removed (30min)
-- Integrates with Zustand store's `updateSessionStates()` action
-- Proper cleanup on unmount
+**Crypto Module Enhancements** (`monitor/src/crypto.rs`):
+- **KeySource enum**: Tracks origin of private key (EnvironmentVariable or File path)
+- **public_key_fingerprint()**: Returns first 8 characters of public key for logging/verification
+- **No cryptographic impact**: Changes are for observability and tracking only
+- **Backward compatible**: Existing code continues to work without modification
 
-**Session Overview Component** (`client/src/components/SessionOverview.tsx` - 484 lines):
-- Displays session cards with project, source, duration, activity indicator, status badge
-- Real-time activity indicators with variable pulse rates (1Hz, 2Hz, 3Hz based on event volume)
-- Status badges: Active (green), Idle (yellow), Ended (gray)
-- Session sorting: Active first, then by last event time
-- Recent event counting over 60-second window
-- Click handlers for session filtering (future feature)
-- Full accessibility support with ARIA labels and keyboard navigation
+**Use Cases**:
+- Log key source at monitor startup for transparency
+- Display fingerprint for users to verify correct key registration
+- Quick visual identification of keys in logs and documentation
+- No performance or security impact on signing/verification
 
-**Zustand Store Enhancement** (`client/src/hooks/useEventStore.ts`):
-- New constants: INACTIVE_THRESHOLD_MS, REMOVAL_THRESHOLD_MS, SESSION_CHECK_INTERVAL_MS
-- Session interface with sessionId, source, project, startedAt, lastEventAt, eventCount, status
-- New action: `updateSessionStates()` for periodic state transitions
-- Enhanced `addEvent()` to update lastEventAt and handle session creation
-- Map-based session storage keyed by sessionId
-
-**CSS Animations** (`client/src/index.css`):
-- Pulse animations already defined in Phase 9:
-  - pulse-slow: 1Hz (1 second cycle)
-  - pulse-medium: 2Hz (0.5 second cycle)
-  - pulse-fast: 3Hz (0.33 second cycle)
-- Used by ActivityIndicator component for activity level visualization
-
-**Integration Points**:
-- SessionOverview subscribes to sessions and events from store
-- useSessionTimeouts manages periodic state transitions
-- formatDuration() and formatRelativeTime() used for display formatting
-- Session status machine: Active → Inactive → Removed, with transitions on summary event
+**Example Output**:
+```
+INFO: Loaded private key from ~/.vibetea/key.priv
+INFO: Public key fingerprint: dGVzdHB1 (first 8 chars for quick verification)
+```
