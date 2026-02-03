@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 11 Implementation - Supabase persistence with PostgreSQL and Edge Functions
+**Status**: Phase 3 Implementation - Supabase Edge Functions with authentication and validation
 **Last Updated**: 2026-02-03
 
 ## Languages & Runtimes
@@ -41,6 +41,7 @@
 | subtle             | 2.6     | Constant-time comparison for cryptography | Server (auth) |
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
+| serial_test        | 3.2     | Serial test execution for environment variable tests | Server, Monitor (test-only) |
 
 ### TypeScript/JavaScript (Client & Supabase Functions)
 
@@ -56,9 +57,10 @@
 | @vitejs/plugin-react       | ^5.1.3   | React Fast Refresh for Vite |
 | @tailwindcss/vite          | ^4.1.18  | Tailwind CSS Vite plugin |
 | vite-plugin-compression2   | ^2.4.0   | Brotli compression for builds |
-| @noble/ed25519             | ^2.0.0   | Ed25519 signature verification in Edge Functions (RFC 8032 compliant) |
+| @noble/ed25519             | ^2.0.0   | Ed25519 signature verification in Edge Functions (RFC 8032 compliant, Phase 3) |
+| @supabase/supabase-js      | 2        | Supabase JavaScript client for Edge Functions (Phase 3) |
 
-### Supabase & PostgreSQL (Phase 11)
+### Supabase & PostgreSQL (Phase 3)
 
 | Component | Version | Purpose |
 |-----------|---------|---------|
@@ -87,6 +89,7 @@
 | tokio-test   | 0.4     | Tokio testing utilities |
 | tempfile     | 3.15    | Temporary file/directory management for tests |
 | serial_test  | 3.2     | Serial test execution for environment variable tests |
+| wiremock     | 0.6     | HTTP mocking for integration tests |
 
 ### TypeScript Testing
 | Package                | Version  | Purpose |
@@ -95,6 +98,14 @@
 | @testing-library/react | ^16.3.2  | React testing utilities |
 | @testing-library/jest-dom | ^6.9.1 | DOM matchers for testing |
 | jsdom                  | ^28.0.0  | DOM implementation for Node.js |
+
+### Deno Testing (Phase 3)
+| Module | Version | Purpose |
+|--------|---------|---------|
+| deno.land/std | ^0.224.0 | Standard library with assert and BDD testing utilities |
+| deno.land/std/assert | ^0.224.0 | Assertion functions for Deno tests |
+| deno.land/std/testing/bdd | ^0.224.0 | BDD-style test framework (describe, it, beforeEach, afterEach) |
+| deno.land/std/testing/asserts | ^0.224.0 | Additional assertion helpers |
 
 ## Configuration Files
 
@@ -115,7 +126,7 @@
 | Server Runtime | Rust binary (tokio async) |
 | Client Runtime | Browser (ES2020+) |
 | Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI |
-| Supabase Functions | Deno 2 JavaScript runtime |
+| Supabase Functions | Deno 2 JavaScript runtime (Phase 3) |
 | Database Runtime | PostgreSQL 17 with PostgREST API |
 | Node.js | Required for development and client build only |
 | Async Model | Tokio (Rust), Promises (TypeScript/Deno) |
@@ -133,8 +144,8 @@
 | Server → Client | WebSocket | JSON | Bearer token |
 | Client → Server | WebSocket | JSON | Bearer token |
 | Monitor → File System | Native | JSONL | N/A (local file access) |
-| Client → Supabase Functions | HTTPS POST | JSON | Bearer token (query endpoint) |
-| Monitor → Supabase Functions | HTTPS POST | JSON | Ed25519 signature (ingest endpoint) |
+| Client → Supabase Functions | HTTPS POST/GET | JSON | Bearer token (query endpoint) |
+| Monitor → Supabase Functions | HTTPS POST | JSON | Ed25519 signature (ingest endpoint, Phase 3) |
 | Supabase Functions → PostgreSQL | SQL | JSON | Service role key |
 
 ## Data Serialization
@@ -147,6 +158,7 @@
 | Claude Code Files | JSONL (JSON Lines) | Privacy-first parsing extracting only metadata |
 | Cryptographic Keys | Base64 + Raw bytes | Public keys base64 encoded, private keys raw 32-byte seeds |
 | Database Events | JSONB (PostgreSQL) | Full event payload stored as JSON in `events.payload` column |
+| Edge Function Auth | Base64 + Base64 | Ed25519 signatures and public keys encoded base64 |
 
 ## Build Output
 
@@ -155,7 +167,7 @@
 | Server | Binary | ELF (Linux) | Docker container on Fly.io |
 | Monitor | Binary | ELF/Mach-O/PE | Standalone executable for users |
 | Client | Static files | JS + CSS (Brotli compressed) | CDN (Netlify/Vercel/Cloudflare) |
-| Supabase Functions | TypeScript | Deno-compatible JavaScript | Hosted on Supabase Edge Functions |
+| Supabase Functions | TypeScript | Deno-compatible JavaScript | Hosted on Supabase Edge Functions (Phase 3) |
 
 ## Module Organization
 
@@ -201,13 +213,18 @@
 - `main.rs` - **Phase 6**: CLI entry point with init and run commands
 - `lib.rs` - Public interface
 
-### Supabase (`supabase/`)
-- `config.toml` - **Phase 11**: Local development environment configuration (PostgreSQL 17, Deno 2, API on port 54321)
-- `migrations/` - **Phase 11**: Database schema and function definitions
+### Supabase (`supabase/`, Phase 3)
+- `config.toml` - Local development environment configuration (PostgreSQL 17, Deno 2, API on port 54321)
+- `migrations/` - Database schema and function definitions
   - `20260203000000_create_events_table.sql` - Events table with JSONB payload, indexes, RLS
   - `20260203000001_create_functions.sql` - PostgreSQL functions: `bulk_insert_events()`, `get_hourly_aggregates()`
-- `functions/` - **Phase 11**: Edge Functions (Deno TypeScript)
-  - `_shared/auth.ts` - Ed25519 signature verification using @noble/ed25519, bearer token validation
+- `functions/` - Edge Functions (Deno TypeScript, Phase 3)
+  - `_shared/auth.ts` - **Phase 3**: Ed25519 signature verification using @noble/ed25519, bearer token validation, source key lookup
+  - `ingest/index.ts` - **Phase 3**: Event ingestion with request validation, batch size limits, event schema validation
+  - `ingest/index.test.ts` - **Phase 3**: Auth tests for ingest endpoint using Deno test framework
+  - `query/index.ts` - **Phase 3**: Query endpoint with parameter validation (days, source filtering)
+  - `query/index.test.ts` - **Phase 3**: Auth tests for query endpoint with EnvGuard for environment isolation
+  - `_tests/rls.test.ts` - **Phase 3**: Row-level security negative tests
 
 ## Deployment Targets
 
@@ -216,77 +233,67 @@
 | Server | Fly.io | Docker | Single Rust binary, minimal base image |
 | Client | CDN | Static files | Optimized builds with compression |
 | Monitor | Local | Native binary | Users download and run locally |
-| Supabase Functions | Supabase Hosted | Deno Container | Auto-deployed from `supabase/functions/` |
+| Supabase Functions | Supabase Hosted | Deno Container | Auto-deployed from `supabase/functions/` (Phase 3) |
 | Database | Supabase Hosted | PostgreSQL Container | Managed PostgreSQL 17 instance |
 
-## Phase 11 Additions (Supabase Persistence)
+## Phase 3 Additions (Supabase Edge Functions & Authentication)
 
-**Phase 11 Database Schema** (`supabase/migrations/20260203000000_create_events_table.sql`):
-- **events table**: Stores event persistence with columns:
-  - `id TEXT PRIMARY KEY` - Event identifier (evt_<20-char>)
-  - `source TEXT NOT NULL` - Monitor source identifier
-  - `timestamp TIMESTAMPTZ NOT NULL` - Event occurrence time
-  - `event_type TEXT NOT NULL` - Enum: session, activity, tool, agent, summary, error
-  - `payload JSONB NOT NULL` - Full event payload (privacy-filtered)
-  - `created_at TIMESTAMPTZ` - Persistence timestamp
-- **Indexes**: Time-range queries (DESC), source filtering, composite source+timestamp
-- **Row Level Security**: Enabled with deny-all (service_role only access)
-- **Capacity**: Designed for high-volume event ingestion
+**Phase 3 Edge Function Infrastructure** (`supabase/functions/`):
+- **ingest/index.ts**: Event batch ingestion endpoint with full request/response validation
+  - Accepts POST requests with up to 1000 events per batch
+  - Event schema validation: id (evt_*), source, timestamp (RFC 3339), eventType, payload
+  - Source matching validation (event.source must match X-Source-ID)
+  - CORS support with configurable methods and headers
+  - Response types: success (200) with inserted count, validation errors (400/422), auth errors (401), server errors (500)
 
-**Phase 11 PostgreSQL Functions** (`supabase/migrations/20260203000001_create_functions.sql`):
-- **bulk_insert_events(events_json JSONB)**: Atomic batch insertion with ON CONFLICT idempotency
-  - Accepts array of events as JSONB
-  - Parses JSON fields: id, source, timestamp, eventType, payload
-  - Returns count of successfully inserted events
-  - Granted to service_role only
-- **get_hourly_aggregates(days_back INT, source_filter TEXT)**: Hourly event count aggregation
-  - Retrieves hourly event counts for heatmap visualization
-  - Supports 7-day (default) or 30-day lookback
-  - Optional source filtering
-  - Returns (source, date, hour, event_count) sorted descending
-  - Granted to service_role only
+- **query/index.ts**: Historical event aggregates query endpoint
+  - Accepts GET requests with query parameters (days: 7|30, source: optional)
+  - Bearer token authentication required
+  - Returns hourly aggregates from database via `get_hourly_aggregates()` RPC
+  - Metadata response: totalCount, daysRequested, fetchedAt timestamp
 
-**Phase 11 Supabase Edge Functions** (`supabase/functions/_shared/auth.ts`):
-- **@noble/ed25519**: RFC 8032 compliant Ed25519 signature verification (version 2.0.0)
-  - Uses `ed.verifyAsync()` for async verification
-  - Validates key length (32 bytes) and signature length (64 bytes)
-  - Returns boolean verification result
-- **verifySignature()**: Base64-encoded signature verification
-  - Decodes public key and signature from base64
-  - Validates cryptographic formats
-  - Integrates with monitor's signing in `monitor/src/crypto.rs`
-- **getPublicKeyForSource()**: Source-specific public key lookup
-  - Parses `VIBETEA_PUBLIC_KEYS` environment variable
-  - Format: `source_id:public_key,source_id2:public_key2` (comma-separated)
-  - Returns public key or null if not found
-- **validateBearerToken()**: Bearer token validation for client authentication
-  - Parses `Authorization: Bearer <token>` header
-  - Constant-time string comparison (Deno limitation noted in code)
-  - Returns boolean validation result
-- **verifyIngestAuth()**: Combined Ed25519 + X-Source-ID header authentication
-  - Extracts X-Source-ID header
-  - Extracts X-Signature header
-  - Verifies signature against registered public key
-  - Returns AuthResult with isValid and optional error/sourceId
-- **verifyQueryAuth()**: Bearer token authentication for query endpoints
-  - Extracts Authorization header
-  - Validates bearer token
-  - Returns AuthResult
+- **_shared/auth.ts**: Shared authentication utilities (173 lines)
+  - `verifySignature()`: @noble/ed25519 signature verification (RFC 8032 compliant)
+  - `getPublicKeyForSource()`: Environment-based public key lookup
+  - `validateBearerToken()`: Constant-time token comparison
+  - `verifyIngestAuth()`: Combined X-Source-ID + X-Signature verification
+  - `verifyQueryAuth()`: Bearer token validation for query endpoint
+  - Key/signature format validation (32-byte keys, 64-byte signatures)
 
-**Supabase Configuration** (`supabase/config.toml`):
-- **Database**: PostgreSQL 17 on port 54322 (shadow db 54320)
-- **API**: PostgREST on port 54321, schemas: public, graphql_public
-- **Studio**: Web UI on port 54323
-- **Edge Runtime**: Deno 2, hot reload policy per_worker
-- **Auth**: Enabled with JWT (3600s expiry), email signup enabled
-- **Email**: Inbucket test server on port 54324
-- **Storage**: S3 protocol support enabled
+**Phase 3 Test Infrastructure** (Deno test framework):
+- **ingest/index.test.ts**: Authentication tests with test keypairs
+  - Ed25519 test key generation and usage
+  - Request body validation test data
+  - Source ID and signature header testing
+
+- **query/index.test.ts**: Bearer token tests with environment isolation
+  - EnvGuard RAII pattern for test environment variable management
+  - BDD-style test suite (describe/it/beforeEach/afterEach)
+  - Token validation and missing header testing
+
+- **_tests/rls.test.ts**: Row-level security policy tests
+  - Negative tests verifying RLS enforcement
+  - Unauthenticated access prevention
+  - Service role bypass verification
+
+**@noble/ed25519 Integration** (Phase 3):
+- RFC 8032 compliant Ed25519 verification
+- Async verification via `ed.verifyAsync(signature, message, publicKey)`
+- Base64 key/signature encoding for HTTP headers
+- Compatible with monitor's `ed25519-dalek` signing
+- Deno runtime support via esm.sh CDN import
+
+**Dependencies** (Phase 3 additions):
+- `@noble/ed25519@2.0.0` - RFC 8032 compliant Ed25519 (Deno via esm.sh)
+- `@supabase/supabase-js@2` - Supabase client for RPC calls in Edge Functions
+- `deno.land/std@0.224.0` - Deno standard library for testing (assert, BDD, etc.)
 
 ## Not Yet Integrated
 
-- Supabase Edge Functions deployed to production
-- Client persistence queries via Supabase API
+- Client-side Supabase edge function integration (query endpoint consumption)
+- Monitor → Supabase ingest endpoint integration (alternative to server)
 - Database connection pooling from server/monitor
 - Background job scheduling for data aggregation
 - Event archival/retention policies
 - Database backup and disaster recovery
+

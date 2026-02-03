@@ -30,6 +30,23 @@
 | Unit | Rust built-in | `#[cfg(test)]` inline | In use |
 | Integration | Rust built-in | `tests/` directory | In use (Phase 5) |
 | E2E | Not selected | TBD | Not started |
+### Deno/TypeScript (Edge Functions - Phase 3)
+
+| Type | Framework | Configuration | Status |
+|------|-----------|---------------|--------|
+| Unit | Deno built-in (`deno test`) | No config file | In use (Phase 3) |
+| Integration | Deno built-in (`deno test`) | Env vars for Supabase | In use (Phase 3) |
+| E2E | Not selected | TBD | Not started |
+
+#### Running Deno Tests
+
+| Command | Purpose |
+|---------|---------|
+| `deno test --allow-env --allow-net supabase/functions/_tests/*.test.ts` | Run all edge function tests |
+| `deno test --allow-env --allow-net supabase/functions/ingest/index.test.ts` | Run ingest function tests |
+| `deno test --allow-env --allow-net supabase/functions/query/index.test.ts` | Run query function tests |
+| `deno test --allow-env --allow-net supabase/functions/_tests/rls.test.ts` | Run RLS integration tests |
+
 
 ### Running Tests
 

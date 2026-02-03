@@ -25,6 +25,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **Privacy-First** | Events contain only structural metadata (timestamps, tool names, file basenames), never code or sensitive content |
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence at Server (fire-and-forget) |
 | **Serverless Processing** | Edge functions handle all Supabase database access via VibeTea authentication (not direct client access) |
+| **Event-Driven** | Deno edge functions respond to HTTP requests for ingestion and querying; RPC functions handle database operations |
 
 ## Core Components
 
@@ -37,8 +38,8 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Privacy-preserving JSONL parsing (extracts metadata only)
   - Cryptographic signing of events (Ed25519)
   - Event buffering and exponential backoff retry for real-time server
-  - **NEW**: Optional batch buffering and submission to Supabase edge functions (if `VIBETEA_SUPABASE_URL` configured)
-  - **NEW**: Batch retry logic with exponential backoff (1s → 2s → 4s, max 3 attempts, then drop and log)
+  - **NEW Phase 3**: Optional batch buffering and submission to Supabase edge functions (if `VIBETEA_SUPABASE_URL` configured)
+  - **NEW Phase 3**: Batch retry logic with exponential backoff (1s → 2s → 4s, max 3 attempts, then drop and log)
   - Graceful shutdown with event flushing
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events` for real-time)
@@ -72,16 +73,16 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Session state management (Active, Inactive, Ended, Removed)
   - Event filtering (by session ID, time range)
   - Real-time visualization (event list, session overview)
-  - **NEW**: Optional historic data fetching from Supabase query edge function (if `VITE_SUPABASE_URL` configured)
-  - **NEW**: Heatmap visualization combining real-time event counts with historic hourly aggregates
-  - **NEW**: Deduplication logic: real-time event counts for current hour override historic aggregates for that hour
+  - **NEW Phase 3**: Optional historic data fetching from Supabase query edge function (if `VITE_SUPABASE_URL` configured)
+  - **NEW Phase 3**: Heatmap visualization combining real-time event counts with historic hourly aggregates
+  - **NEW Phase 3**: Deduplication logic: real-time event counts for current hour override historic aggregates for that hour
 - **Dependencies**:
   - Depends on **Server** (via WebSocket connection to `/ws` for real-time)
   - Optionally depends on **Supabase** (via HTTP GET to query edge function for historic data)
   - No persistence layer (in-memory Zustand store for real-time events)
 - **Dependents**: None (consumer component)
 
-### Supabase (Persistence)
+### Supabase (Persistence) - Phase 3 Implementation
 
 - **Purpose**: Optional persistence layer providing event durability and historic data for heatmap visualization
 - **Location**: `supabase/` (migrations and edge functions)
@@ -89,9 +90,9 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - **Database**: PostgreSQL events table with RLS (Row Level Security) policies denying all direct access
   - **Migrations**: `supabase/migrations/20260203000000_create_events_table.sql` - Creates events table with indexes
   - **Migrations**: `supabase/migrations/20260203000001_create_functions.sql` - Creates bulk insert and aggregation functions
-  - **Ingest Edge Function** (future): Validates Ed25519 signatures, inserts events via `bulk_insert_events()` function
-  - **Query Edge Function** (future): Validates bearer tokens, returns hourly aggregates via `get_hourly_aggregates()` function
-  - **Shared Auth** (`supabase/functions/_shared/auth.ts`): Ed25519 signature verification and bearer token validation
+  - **Ingest Edge Function** (Phase 3 - IMPLEMENTED): `supabase/functions/ingest/index.ts` - Validates Ed25519 signatures, inserts events via `bulk_insert_events()` function
+  - **Query Edge Function** (Phase 3 - IMPLEMENTED): `supabase/functions/query/index.ts` - Validates bearer tokens, returns hourly aggregates via `get_hourly_aggregates()` function
+  - **Shared Auth** (Phase 3 - IMPLEMENTED): `supabase/functions/_shared/auth.ts` - Ed25519 signature verification and bearer token validation
 - **Dependencies**:
   - Receives events from **Monitor** (via HTTP POST to ingest edge function)
   - Receives queries from **Client** (via HTTP GET to query edge function)
@@ -115,32 +116,34 @@ Claude Code → Monitor → Server → Client (in-memory broadcast):
 10. Zustand store adds event (FIFO eviction at 1000 limit)
 11. React renders updated event list, session overview, real-time heatmap
 
-### NEW: Persistence Flow (Monitor to Supabase)
+### Phase 3: Persistence Flow (Monitor to Supabase Edge Function)
 
 Monitor → Supabase ingest edge function → PostgreSQL (batched, asynchronous to real-time):
 1. Monitor accumulates events in batch buffer
 2. **When batch interval elapses (default 60s) OR batch size reaches 1000, whichever first**:
    - Sender signs batch with Ed25519, creates JSON array
-   - POST to edge function with X-Source-ID and X-Signature headers
-3. Edge function validates signature (using shared auth utility)
-4. Edge function calls `bulk_insert_events(JSONB)` PL/pgSQL function
-5. Function inserts events with `ON CONFLICT DO NOTHING` (idempotency)
-6. Returns inserted count
-7. Monitor updates batch state and continues
-8. On failure: exponential backoff (1s, 2s, 4s), max 3 retries, then drop and log
+   - POST to `/functions/v1/ingest` with X-Source-ID and X-Signature headers
+3. Edge function (`supabase/functions/ingest/index.ts`) validates signature (using shared auth utility)
+4. Edge function validates event schema (id, source, timestamp, eventType, payload)
+5. Edge function calls `bulk_insert_events(JSONB)` PL/pgSQL function with validated events
+6. Function inserts events with `ON CONFLICT DO NOTHING` (idempotency)
+7. Returns inserted count (separately tracks duplicates)
+8. Monitor updates batch state and continues
+9. On failure: exponential backoff (1s, 2s, 4s), max 3 retries, then drop and log
 
-### NEW: Historic Data Flow (Supabase to Client)
+### Phase 3: Historic Data Flow (Supabase Edge Function to Client)
 
 Client → Supabase query edge function → PostgreSQL (periodic fetches):
 1. Client initializes with `VITE_SUPABASE_URL` configured
-2. On component mount, fetches historic heatmap data
-3. GET /query with Authorization: Bearer token header
-4. Edge function validates bearer token (constant-time comparison)
-5. Edge function calls `get_hourly_aggregates(days_back, source_filter)`
-6. Function returns `{source, date, hour, event_count}` rows grouped by hour
-7. Client receives hourly aggregates and stores in Zustand
-8. Heatmap renders: real-time counts for current hour override historic counts for that hour
-9. On fetch failure/timeout (5 seconds): shows "Unable to load historic data" with retry button
+2. On component mount or "refresh" click, fetches historic heatmap data
+3. GET `/functions/v1/query` with Authorization: Bearer token header
+4. Edge function (`supabase/functions/query/index.ts`) validates bearer token (constant-time comparison)
+5. Edge function parses query parameters: `days` (7 or 30, default 7), optional `source` filter
+6. Edge function calls `get_hourly_aggregates(days_back, source_filter)` RPC
+7. Function returns `{source, date, hour, event_count}` rows grouped by hour, ordered by date DESC, hour DESC
+8. Client receives hourly aggregates and stores in Zustand
+9. Heatmap renders: real-time counts for current hour override historic counts for that hour
+10. On fetch failure/timeout (5 seconds): shows "Unable to load historic data" with retry button
 
 ### Detailed Request/Response Cycle
 
@@ -181,23 +184,29 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **When 60 seconds elapses OR 1000 events accumulated**:
   - Batch serialized as JSONB array
   - Ed25519 signature computed over JSON batch
-  - POST to Supabase ingest edge function with X-Source-ID and X-Signature
+  - POST to `/functions/v1/ingest` with X-Source-ID and X-Signature
 
-#### 7. Event Persistence (Supabase Edge Function):
-- Extract X-Source-ID and X-Signature from request
+#### 7. Event Persistence (Phase 3 - Supabase Edge Function):
+- Edge function (`supabase/functions/ingest/index.ts`) handles POST request
+- Extract X-Source-ID and X-Signature from request headers
 - Load public key for source from env (`VIBETEA_PUBLIC_KEYS`)
-- Verify Ed25519 signature (using `verifyAsync()` from @noble/ed25519)
-- Parse JSONB array from request body
-- Call `bulk_insert_events(JSONB)` with parsed array
+- Verify Ed25519 signature (using `verifyAsync()` from @noble/ed25519 in `_shared/auth.ts`)
+- Parse and validate JSONB array from request body
+- Validate each event: id pattern (evt_XXXXX), timestamp (RFC 3339), eventType (one of 6 types), source match
+- Call `bulk_insert_events(JSONB)` with validated array
 - Function inserts each event with ON CONFLICT DO NOTHING
-- Return inserted_count
+- Return inserted_count separately from duplicates skipped
+- Edge function returns success with counts or 400/401/422 error
 
-#### 8. Historic Data Fetch (Client):
-- On component mount or "refresh" click
-- GET /query with Authorization: Bearer token
-- Edge function validates token against `VIBETEA_SUBSCRIBER_TOKEN`
-- Call `get_hourly_aggregates(days_back=7 or 30, source_filter=null)`
-- Return hourly event counts grouped by (source, date, hour)
+#### 8. Historic Data Fetch (Phase 3 - Client via Edge Function):
+- On component mount (Heatmap) or manual refresh
+- GET `/functions/v1/query` with:
+  - Authorization: Bearer token header
+  - Query params: `days=7` or `days=30` (optional), `source=...` (optional)
+- Edge function (`supabase/functions/query/index.ts`) validates bearer token
+- Parses and validates query parameters
+- Call `get_hourly_aggregates(days_back, source_filter)` RPC
+- Returns hourly event counts `{source, date, hour, event_count}` with metadata (totalCount, daysRequested, fetchedAt)
 - Client merges with real-time data and renders heatmap
 
 #### 9. Visualization (Client):
@@ -213,30 +222,34 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **Monitor** | Observe local activity, preserve privacy, authenticate, batch for persistence | FileSystem, HTTP client, Crypto | Server internals, other Monitors, Supabase direct (only via edge functions) |
 | **Server** | Route, authenticate, broadcast, rate limit (real-time only) | All Monitors' public keys, event config, rate limiter state, broadcast channel | File system, Supabase database, Client implementation, persistence state |
 | **Client** | Display, interact, filter, manage WebSocket, fetch historic data | Server WebSocket, Supabase edge functions, localStorage (token), Zustand state | Server internals, other Clients' state, file system, Supabase database direct |
-| **Supabase** | Persist events, aggregate historic data, authenticate edge function access | PostgreSQL database, environment secrets | Monitor/Client implementation, real-time Server |
+| **Supabase Edge Functions** | Validate auth, transform request, call database RPCs | Environment secrets (VIBETEA_PUBLIC_KEYS, VIBETEA_SUBSCRIBER_TOKEN), Supabase client | Monitor/Client implementation, direct database access (via RPC only) |
+| **PostgreSQL** | Persist events, aggregate historic data, enforce RLS | RPC function calls from edge functions | Direct queries (RLS denies all) |
 
 ## Dependency Rules
 
 - **Monitor → Server**: Continuous via HTTP POST (real-time path)
-- **Monitor → Supabase**: Periodic via HTTP POST (persistence path, async to real-time)
+- **Monitor → Supabase**: Periodic via HTTP POST to edge functions (persistence path, async to real-time)
 - **Server → Monitor**: None (server doesn't initiate contact)
 - **Server → Supabase**: None (Server has no persistence concern)
 - **Client → Server**: Initiated WebSocket, bidirectional (Client sends WebSocket close, Server sends events)
-- **Client → Supabase**: Periodic HTTP GET for historic data (independent of Server)
-- **Supabase → Monitor/Client**: None (pull only via edge functions)
+- **Client → Supabase**: Periodic HTTP GET to edge functions for historic data (independent of Server)
+- **Supabase Edge Functions → Monitor/Client**: None (pull only via edge functions)
+- **Supabase Edge Functions → Database**: Via RPC functions (SECURITY DEFINER for service role escalation)
 
 ## Key Interfaces & Contracts
 
 | Interface | Purpose | Implementations |
 |-----------|---------|-----------------|
-| `Event` | Core event struct with type + payload | JSON serialization via `serde` |
+| `Event` | Core event struct with type + payload | JSON serialization via `serde` (Rust), TypeScript interfaces (Client) |
 | `EventPayload` | Tagged union of event variants | Session, Activity, Tool, Agent, Summary, Error |
 | `EventType` | Enum discriminator | 6 variants (Session, Activity, Tool, Agent, Summary, Error) |
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
 | `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
-| **NEW**: `HourlyAggregate` | Historic data format | {source, date, hour, event_count} |
-| **NEW**: `AuthResult` | Edge function auth result | {isValid, error?, sourceId?} |
+| **Phase 3**: `HourlyAggregate` | Historic data format | {source, date, hour, event_count} |
+| **Phase 3**: `AuthResult` | Edge function auth result | {isValid, error?, sourceId?} |
+| **Phase 3**: `IngestResponse` | Edge function ingest success | {inserted: number, message: string} |
+| **Phase 3**: `QueryResponse` | Edge function query success | {aggregates: HourlyAggregate[], meta: QueryMeta} |
 
 ## Authentication & Authorization
 
@@ -252,16 +265,16 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **Security**: Uses `ed25519_dalek::VerifyingKey::verify_strict()` (RFC 8032 compliant)
 - **Timing Attack Prevention**: `subtle::ConstantTimeEq` for signature comparison
 
-### Monitor Authentication (Source) - Persistence Path (NEW)
+### Monitor Authentication (Source) - Persistence Path (Phase 3)
 
 - **Mechanism**: Same Ed25519 signature verification used for real-time
 - **Flow**:
   1. Monitor reads private key (initialized via `vibetea-monitor init`)
   2. On batch ready, signs batch JSON with private key
-  3. POST to Supabase ingest edge function with X-Source-ID and X-Signature headers
-  4. Edge function uses same public key lookup and verification as Server
-- **Security**: Uses `@noble/ed25519` for RFC 8032 compliant verification
-- **Timing Attack Prevention**: Constant-time comparison in edge function (note: token comparison uses `===` due to Deno limitations)
+  3. POST to `/functions/v1/ingest` with X-Source-ID and X-Signature headers
+  4. Edge function uses public key lookup and verification from `_shared/auth.ts`
+- **Security**: Uses `@noble/ed25519` for RFC 8032 compliant verification in `verifyAsync()`
+- **Timing Attack Prevention**: Constant-time comparison in edge function (uses `verifyAsync()` from noble library)
 
 ### Client Authentication (Consumer) - Real-Time Path
 
@@ -273,15 +286,15 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
   4. Invalid/missing tokens rejected with 401 Unauthorized
 - **Storage**: Client stores token in localStorage under `vibetea_token` key
 
-### Client Authentication (Consumer) - Persistence Path (NEW)
+### Client Authentication (Consumer) - Persistence Path (Phase 3)
 
 - **Mechanism**: Same bearer token as real-time, via HTTP Authorization header
 - **Flow**:
   1. Client reads token from localStorage (`vibetea_token`)
-  2. GET /query edge function with `Authorization: Bearer <token>` header
-  3. Edge function validates token using `validateBearerToken()`
+  2. GET `/functions/v1/query` with `Authorization: Bearer <token>` header
+  3. Edge function validates token using `validateBearerToken()` from `_shared/auth.ts`
   4. Invalid/missing tokens rejected with 401 Unauthorized
-- **Timing Attack Prevention**: Constant-time comparison recommended (implementation in edge function)
+- **Timing Attack Prevention**: Constant-time comparison in edge function using check for token equality before slicing
 
 ## State Management
 
@@ -301,15 +314,15 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **Sessions** | Zustand store (Map<sessionId, Session>) | Keyed by UUID, state machines (Active → Inactive → Ended → Removed) |
 | **Filters** | Zustand store | Session ID filter, time range filter |
 | **Authentication Token** | localStorage | Persisted across page reloads |
-| **NEW**: **Historic Heatmap Data** | Zustand store (HourlyAggregate[]) | Fetched from Supabase, merged with real-time counts |
-| **NEW**: **Heatmap Loading State** | Zustand store | Loading, loaded, error (non-blocking) |
+| **Phase 3**: **Historic Heatmap Data** | Zustand store (HourlyAggregate[]) | Fetched from Supabase edge function, merged with real-time counts |
+| **Phase 3**: **Heatmap Loading State** | Zustand store | Loading, loaded, error (non-blocking) |
 
 ### Monitor State
 | State Type | Location | Pattern |
 |------------|----------|---------|
 | **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown (real-time) |
-| **NEW**: **Batch Buffer** | `VecDeque<Event>` (max 1000) | Separate from real-time buffer, batched on interval or size limit |
-| **NEW**: **Batch State** | Sender internal | Tracks last batch send time, retry count per batch |
+| **Phase 3**: **Batch Buffer** | `VecDeque<Event>` (max 1000) | Separate from real-time buffer, batched on interval or size limit |
+| **Phase 3**: **Batch State** | Sender internal | Tracks last batch send time, retry count per batch |
 | **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation (real-time) |
 
@@ -322,9 +335,10 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **Rate Limiting** | Per-source counter with TTL | `server/src/rate_limit.rs` |
 | **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
-| **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs` (real-time), NEW: batch retry in monitor |
-| **NEW**: **Persistence** | Optional, async to real-time | Monitor: batch buffering and submission, Client: independent query fetches |
-| **NEW**: **Batch Retry** | Exponential backoff (1s, 2s, 4s), max 3 attempts | Monitor sender module (persistence path) |
+| **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs` (real-time), batch retry (Phase 3) |
+| **Phase 3**: **Persistence** | Optional, async to real-time | Monitor: batch buffering and submission, Client: independent query fetches |
+| **Phase 3**: **Batch Retry** | Exponential backoff (1s, 2s, 4s), max 3 attempts | Monitor sender module (persistence path) |
+| **Phase 3**: **Edge Function Auth** | Ed25519 + bearer tokens | `supabase/functions/_shared/auth.ts` |
 
 ## Design Decisions
 
@@ -354,6 +368,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **RLS enforcement**: Database tables have implicit deny-all policies without edge function access
 - **Reduces client library size**: Clients don't need Supabase SDK, just HTTP
 - **Simplifies deployment**: Database credentials never exposed to Monitors or Clients
+- **Deno runtime isolation**: Edge functions run in isolated Deno runtime, sandboxed from Rust components
 
 ### Why No Persistence in Server?
 
@@ -367,7 +382,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **Consistency**: Same key pair used for real-time Server auth and persistence edge function auth
 - **Widely supported**: NIST-standardized modern elliptic curve
 - **Signature verification only**: Public key crypto prevents Monitors impersonating each other
-- **Timing-safe implementation**: `subtle::ConstantTimeEq` prevents timing attacks (Server), @noble/ed25519 for edge functions
+- **Timing-safe implementation**: `subtle::ConstantTimeEq` prevents timing attacks (Server), @noble/ed25519 for edge functions (RFC 8032 compliant)
 
 ### Why WebSocket for Real-Time?
 
@@ -375,6 +390,14 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **Connection persistence**: Single connection replaces request/response overhead
 - **Native browser support**: No additional libraries needed for basic connectivity
 - **Standard protocol**: Works with existing proxies and load balancers
+
+### Why Separate Ingest and Query Edge Functions?
+
+- **Single Responsibility**: Ingest handles writes, Query handles reads
+- **Independent scaling**: Can scale edge functions based on workload characteristics
+- **Clear contracts**: Each function has focused input/output validation
+- **Easier testing**: Smaller, more testable functions
+- **Different auth mechanisms**: Ingest uses Ed25519 (like Monitor), Query uses bearer tokens (like Client)
 
 ---
 

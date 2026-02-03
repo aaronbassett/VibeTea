@@ -54,7 +54,7 @@ VibeTea/
 │   │   │   ├── useWebSocket.ts       # WebSocket connection management
 │   │   │   ├── useEventStore.ts      # Zustand store (state + selectors)
 │   │   │   ├── useSessionTimeouts.ts # Session state machine (Active → Inactive → Ended)
-│   │   │   └── useSupabaseHistory.ts # NEW: Historic data fetching from Supabase edge function
+│   │   │   └── useSupabaseHistory.ts # Phase 3: Historic data fetching from Supabase edge function
 │   │   ├── types/
 │   │   │   └── events.ts             # TypeScript event interfaces
 │   │   ├── utils/
@@ -69,17 +69,19 @@ VibeTea/
 │   ├── package.json
 │   └── tsconfig.json
 │
-├── supabase/                   # NEW: Supabase configuration and migrations
-│   ├── migrations/             # NEW: Database migration scripts
+├── supabase/                   # Phase 3: Supabase configuration and migrations
+│   ├── migrations/             # Phase 3: Database migration scripts
 │   │   ├── 20260203000000_create_events_table.sql    # Events table + RLS + indexes
 │   │   └── 20260203000001_create_functions.sql       # bulk_insert_events + get_hourly_aggregates
-│   ├── functions/              # NEW: Edge functions
+│   ├── functions/              # Phase 3: Edge functions
 │   │   ├── _shared/
-│   │   │   └── auth.ts         # NEW: Shared auth utilities (Ed25519 verification, token validation)
-│   │   ├── ingest/             # NEW: Batch event ingest (to be created)
-│   │   │   └── index.ts        # NEW: Receives batched events from Monitor
-│   │   └── query/              # NEW: Historic data query (to be created)
-│   │       └── index.ts        # NEW: Returns hourly aggregates to Client
+│   │   │   └── auth.ts         # Phase 3: Shared auth utilities (Ed25519 verification, token validation)
+│   │   ├── ingest/             # Phase 3: Batch event ingest (IMPLEMENTED)
+│   │   │   ├── index.ts        # Phase 3: Receives batched events from Monitor, validates, inserts
+│   │   │   └── index.test.ts   # Phase 3: Tests for ingest edge function
+│   │   └── query/              # Phase 3: Historic data query (IMPLEMENTED)
+│   │       ├── index.ts        # Phase 3: Returns hourly aggregates to Client
+│   │       └── index.test.ts   # Phase 3: Tests for query edge function
 │   ├── .env.local.example      # Supabase environment template
 │   ├── config.toml             # Supabase local development config
 │   └── .gitignore
@@ -143,35 +145,37 @@ VibeTea/
 | `hooks/useWebSocket.ts` | WebSocket lifecycle, reconnection with backoff | `useWebSocket()` hook |
 | `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters | `useEventStore()` hook |
 | `hooks/useSessionTimeouts.ts` | Session state machine (Active → Inactive → Ended) | `useSessionTimeouts()` hook |
-| `hooks/useSupabaseHistory.ts` | NEW: Fetch historic data from edge function | `useSupabaseHistory()` hook |
+| `hooks/useSupabaseHistory.ts` | Phase 3: Fetch historic data from edge function | `useSupabaseHistory()` hook |
 | `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session`, `HourlyAggregate` |
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
 
-### `supabase/migrations/` - Database Schema (NEW)
+### `supabase/migrations/` - Database Schema (Phase 3 - IMPLEMENTED)
 
 | File | Purpose | Responsibilities |
 |------|---------|------------------|
 | `20260203000000_create_events_table.sql` | Main events table | Create `public.events` table with id, source, timestamp, event_type, payload, created_at columns; create indexes on timestamp, source, (source + timestamp); enable RLS with implicit deny-all |
 | `20260203000001_create_functions.sql` | Database functions | Create `bulk_insert_events(JSONB)` function for batch insertion with ON CONFLICT DO NOTHING; create `get_hourly_aggregates(days_back, source_filter)` for hourly aggregates; grant EXECUTE to service_role only |
 
-### `supabase/functions/_shared/` - Edge Function Utilities (NEW)
+### `supabase/functions/_shared/` - Edge Function Utilities (Phase 3 - IMPLEMENTED)
 
 | File | Purpose | Exports |
 |------|---------|---------|
 | `auth.ts` | Shared authentication for all edge functions | `verifySignature()`, `getPublicKeyForSource()`, `validateBearerToken()`, `verifyIngestAuth()`, `verifyQueryAuth()`, `AuthResult` interface |
 
-### `supabase/functions/ingest/` - Ingest Edge Function (NEW, To Be Created)
+### `supabase/functions/ingest/` - Ingest Edge Function (Phase 3 - IMPLEMENTED)
 
 | File | Purpose | Contract |
 |------|---------|----------|
-| `index.ts` | Receive batched events from Monitor | **Request**: POST with `X-Source-ID`, `X-Signature` headers, JSONB array body; **Response**: `{inserted_count: number}` or 401 on auth failure |
+| `index.ts` | Phase 3: Receive batched events from Monitor | **Request**: POST with `X-Source-ID`, `X-Signature` headers, JSON array body; **Response**: `{inserted: number, message: string}` or error response |
+| `index.test.ts` | Phase 3: Test ingest edge function | Tests signature verification, event validation, schema enforcement |
 
-### `supabase/functions/query/` - Query Edge Function (NEW, To Be Created)
+### `supabase/functions/query/` - Query Edge Function (Phase 3 - IMPLEMENTED)
 
 | File | Purpose | Contract |
 |------|---------|----------|
-| `index.ts` | Return hourly aggregates to Client | **Request**: GET with `Authorization: Bearer token` header, optional query params `days_back` and `source_filter`; **Response**: `{source, date, hour, event_count}[]` or 401 on auth failure |
+| `index.ts` | Phase 3: Return hourly aggregates to Client | **Request**: GET with `Authorization: Bearer token` header, optional query params `days` (7\|30) and `source`; **Response**: `{aggregates: HourlyAggregate[], meta: QueryMeta}` or error response |
+| `index.test.ts` | Phase 3: Test query edge function | Tests bearer token validation, parameter parsing, RPC calls |
 
 ## Module Boundaries
 
@@ -224,7 +228,7 @@ server/src/main.rs
 
 React SPA with these responsibilities:
 1. **Connect** to server via WebSocket (real-time)
-2. **Fetch** historic data from Supabase edge function (if enabled)
+2. **Fetch** historic data from Supabase edge function (if enabled, Phase 3)
 3. **Manage** application state (Zustand)
 4. **Display** events, sessions, heatmap (merged real-time + historic)
 5. **Filter** by session/time range
@@ -238,7 +242,7 @@ client/src/App.tsx (root)
 │   ├── useWebSocket.ts (WebSocket, reconnect)
 │   ├── useEventStore.ts (Zustand state)
 │   ├── useSessionTimeouts.ts (session state machine)
-│   └── useSupabaseHistory.ts (NEW: historic data fetching)
+│   └── useSupabaseHistory.ts (Phase 3: historic data fetching)
 ├── components/
 │   ├── TokenForm.tsx (auth)
 │   ├── ConnectionStatus.tsx (status badge)
@@ -248,7 +252,7 @@ client/src/App.tsx (root)
 └── types/events.ts (TypeScript interfaces)
 ```
 
-### Supabase Module
+### Supabase Module (Phase 3 - IMPLEMENTED)
 
 Database and edge functions with these responsibilities:
 1. **Store** events persistently in PostgreSQL
@@ -267,8 +271,12 @@ supabase/
 │   └── 20260203000001_create_functions.sql
 └── functions/
     ├── _shared/auth.ts (shared utilities)
-    ├── ingest/index.ts (validate Monitor auth, bulk insert)
-    └── query/index.ts (validate Client auth, return aggregates)
+    ├── ingest/
+    │   ├── index.ts (validate Monitor auth, bulk insert)
+    │   └── index.test.ts (Phase 3)
+    └── query/
+        ├── index.ts (validate Client auth, return aggregates)
+        └── index.test.ts (Phase 3)
 ```
 
 ## Where to Add New Code
@@ -280,9 +288,10 @@ supabase/
 | **New Server endpoint** | `server/src/routes.rs` (add route handler) | `POST /events/:id/ack` |
 | **New Server middleware** | `server/src/routes.rs` or `server/src/` (new module) | `server/src/middleware.rs` |
 | **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
-| **NEW**: **New DB table** | `supabase/migrations/TIMESTAMP_description.sql` | `supabase/migrations/20260210000000_create_sessions.sql` |
-| **NEW**: **New edge function** | `supabase/functions/{name}/index.ts` (+ shared auth import) | `supabase/functions/export/index.ts` |
-| **NEW**: **New database function** | `supabase/migrations/` (SQL function in new migration) | `get_event_details()` |
+| **Phase 3**: **New DB table** | `supabase/migrations/TIMESTAMP_description.sql` | `supabase/migrations/20260210000000_create_sessions.sql` |
+| **Phase 3**: **New edge function** | `supabase/functions/{name}/index.ts` (+ shared auth import) | `supabase/functions/export/index.ts` |
+| **Phase 3**: **New database function** | `supabase/migrations/` (SQL function in new migration) | `get_event_details()` |
+| **Phase 3**: **New edge function test** | `supabase/functions/{name}/index.test.ts` | `supabase/functions/export/index.test.ts` |
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
 | **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
@@ -337,23 +346,28 @@ import type { Session, HourlyAggregate } from '../types/events';
 - Utils: camelCase (e.g., `formatting.ts`)
 - Types: camelCase (e.g., `events.ts`)
 
-### Supabase Edge Functions (TypeScript)
+### Supabase Edge Functions (TypeScript) (Phase 3 - IMPLEMENTED)
 
 **Convention**: Import from shared auth utilities and external ES modules via `esm.sh` or direct imports.
 
 ```typescript
 // In supabase/functions/ingest/index.ts
-import { verifyIngestAuth } from '../_shared/auth.ts';
-import * as ed from "https://esm.sh/@noble/ed25519@2.0.0";
+import { verifyIngestAuth, type AuthResult } from "../_shared/auth.ts";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 // In supabase/functions/query/index.ts
-import { verifyQueryAuth } from '../_shared/auth.ts';
+import { verifyQueryAuth, type AuthResult } from "../_shared/auth.ts";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+// In supabase/functions/_shared/auth.ts
+import * as ed from "https://esm.sh/@noble/ed25519@2.0.0";
 ```
 
 **Conventions**:
 - Function directories match Supabase naming (lowercase with underscores)
 - Shared utilities in `_shared/` (Supabase convention)
 - External imports via ES modules (Deno runtime)
+- Phase 3: Shared auth module exports `verifyIngestAuth()`, `verifyQueryAuth()` for use in ingest/query functions
 
 ## Entry Points
 
@@ -362,7 +376,7 @@ import { verifyQueryAuth } from '../_shared/auth.ts';
 | **Monitor** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- run` |
 | **Server** | `server/src/main.rs` | `cargo run -p vibetea-server` |
 | **Client** | `client/src/main.tsx` | `npm run dev` (from `client/`) |
-| **NEW**: **Supabase** | `supabase/config.toml` | `supabase start` |
+| **Phase 3**: **Supabase** | `supabase/config.toml` | `supabase start` |
 
 ## Generated/Auto-Configured Files
 
@@ -409,6 +423,7 @@ Files that are auto-generated or should not be manually edited:
 | Index names | `idx_{table}_{columns}` | `idx_events_timestamp`, `idx_events_source` |
 | Function names | `snake_case`, lowercase | `bulk_insert_events()`, `get_hourly_aggregates()` |
 | Edge function directories | `snake_case`, lowercase | `ingest`, `query`, `_shared` |
+| Phase 3: Edge function files | `index.ts` for function, `index.test.ts` for tests | `supabase/functions/ingest/index.ts` |
 
 ## Dependency Boundaries (Import Rules)
 
@@ -435,11 +450,11 @@ Files that are auto-generated or should not be manually edited:
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket), supabase SDK (only HTTP to edge functions)
 ```
 
-### Supabase Edge Functions
+### Supabase Edge Functions (Phase 3 - IMPLEMENTED)
 
 ```
-✓ CAN import:     _shared/auth.ts, @noble/ed25519, esm.sh modules, Deno stdlib
-✓ CAN import:     POST/GET handlers, database query logic
+✓ CAN import:     _shared/auth.ts, @noble/ed25519, @supabase/supabase-js, esm.sh modules, Deno stdlib
+✓ CAN import:     POST/GET handlers, database query logic, @noble/ed25519 for signature verification
 ✗ CANNOT import:  monitor code, server code, client code, node modules (Deno runtime)
 ```
 
@@ -452,9 +467,9 @@ Files that are auto-generated or should not be manually edited:
 | `VIBETEA_SERVER_URL` | Real-time server endpoint | `http://localhost:8080` | Yes |
 | `VIBETEA_SOURCE_ID` | Monitor identifier for signatures | `monitor-1` | Yes |
 | `VIBETEA_PRIVATE_KEY` | Ed25519 private key (base64) | `base64-encoded-32-bytes` | Yes |
-| `VIBETEA_SUPABASE_URL` | Supabase project URL (optional persistence) | `https://xxxx.supabase.co` | No |
-| `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | Batch submission interval (default: 60) | `60` | No |
-| `VIBETEA_SUPABASE_RETRY_LIMIT` | Max retry attempts for batch submission (default: 3) | `3` | No |
+| `VIBETEA_SUPABASE_URL` | Supabase project URL (optional persistence, Phase 3) | `https://xxxx.supabase.co` | No |
+| `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | Batch submission interval (default: 60, Phase 3) | `60` | No |
+| `VIBETEA_SUPABASE_RETRY_LIMIT` | Max retry attempts for batch submission (default: 3, Phase 3) | `3` | No |
 
 ### Server (`server/src/config.rs`)
 
@@ -473,15 +488,15 @@ Files that are auto-generated or should not be manually edited:
 | Variable | Purpose | Example | Required |
 |----------|---------|---------|----------|
 | `VITE_SERVER_URL` | Real-time server WebSocket endpoint | `ws://localhost:8080` | Yes |
-| `VITE_SUPABASE_URL` | Supabase project URL (optional historic data) | `https://xxxx.supabase.co` | No |
-| `VITE_SUPABASE_QUERY_FUNCTION_NAME` | Edge function name for historic data (default: `query`) | `query` | No |
+| `VITE_SUPABASE_URL` | Supabase project URL (optional historic data, Phase 3) | `https://xxxx.supabase.co` | No |
+| `VITE_SUPABASE_QUERY_FUNCTION_NAME` | Edge function name for historic data (default: `query`, Phase 3) | `query` | No |
 
-### Supabase (`.env.local` in `supabase/` directory)
+### Supabase (`.env.local` in `supabase/` directory) (Phase 3 - IMPLEMENTED)
 
 | Variable | Purpose | Example | Required |
 |----------|---------|---------|----------|
 | `VIBETEA_PUBLIC_KEYS` | Monitor public keys (same as Server) | `monitor1:base64key1` | Yes |
-| `VIBETEA_SUBSCRIBER_TOKEN` | WebSocket auth token (same as Server) | `secret-token` | Yes |
+| `VIBETEA_SUBSCRIBER_TOKEN` | WebSocket auth token (same as Server, used for query endpoint) | `secret-token` | Yes |
 
 ---
 

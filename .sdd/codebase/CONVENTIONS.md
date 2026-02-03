@@ -52,15 +52,18 @@
 | Function parameters | snake_case | `days_back INTEGER`, `source_filter TEXT` |
 | Return table columns | snake_case | `date DATE`, `hour INTEGER`, `event_count BIGINT` |
 
-#### Deno/TypeScript (Edge Functions)
+#### Deno/TypeScript (Edge Functions - Phase 3)
 
 | Rule | Convention | Example |
 |------|------------|---------|
 | Indentation | 2 spaces | Standard TypeScript |
-| Module imports | Use ESM with `.ts` extensions | `import * as ed from "https://esm.sh/..."` |
+| Module imports | Use ESM with URL imports | `import * as ed from "https://esm.sh/@noble/ed25519@2.0.0"` |
 | Error handling | Try-catch with null returns | Return `false`/`null` on error |
 | Env vars | Use `Deno.env.get()` | `Deno.env.get("VIBETEA_PUBLIC_KEYS")` |
 | Logging | `console.error()` for failures | `console.error("Signature verification error:", error)` |
+| URL imports | Pin exact versions | `@noble/ed25519@2.0.0` not `@2` |
+| JSDoc comments | Document all public functions | Include parameter types and return values |
+| Readonly types | Use `readonly` in interfaces | `readonly isValid: boolean` |
 
 ## Naming Conventions
 
@@ -127,7 +130,7 @@
 | Functions | snake_case | `bulk_insert_events()`, `get_hourly_aggregates()` |
 | Constraints | Type prefix or descriptive | `CHECK (event_type IN (...))` |
 
-### Deno/TypeScript (Edge Functions)
+### Deno/TypeScript (Edge Functions - Phase 3)
 
 #### Identifiers
 
@@ -135,8 +138,13 @@
 |------|------------|---------|
 | Functions | camelCase | `verifySignature()`, `getPublicKeyForSource()`, `validateBearerToken()` |
 | Exports | camelCase for functions | `export async function verifyIngestAuth()` |
-| Interfaces | PascalCase | `AuthResult` |
-| Error types | String-based or inline | Error messages in `error` field |
+| Interfaces | PascalCase | `AuthResult`, `ErrorResponse`, `IngestResponse` |
+| Error types | String-based or inline | Error messages in `error` field of `AuthResult` |
+| Type unions | PascalCase, describe with `|` | `EventType` union of valid event types |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_BATCH_SIZE`, `EVENT_ID_PATTERN`, `RFC3339_PATTERN` |
+| Environment variables | SCREAMING_SNAKE_CASE | `VIBETEA_PUBLIC_KEYS`, `SUPABASE_URL`, `VIBETEA_SUBSCRIBER_TOKEN` |
+| HTTP endpoints | Lowercase with hyphens | `/ingest`, `/query`, `/health` |
+| Request handlers | Handler function name | `handleRequest()`, `function handler()` |
 
 ## Error Handling
 
@@ -175,13 +183,15 @@ Client error handling uses:
 | File watching errors | String-based variants | `MonitorError::Watch(String)` |
 | JSONL parsing errors | String-based variants | `MonitorError::Parse(String)` |
 
-#### Deno/TypeScript (Edge Functions)
+#### Deno/TypeScript (Edge Functions - Phase 3)
 
 | Scenario | Pattern | Example Location |
 |----------|---------|------------------|
 | Signature verification | Return `AuthResult` with error field | `supabase/functions/_shared/auth.ts` defines `AuthResult` |
 | Missing headers | Return `AuthResult` with descriptive error | `verifyIngestAuth()` returns `{ isValid: false, error: "Missing X-Source-ID header" }` |
 | Invalid tokens | Return `AuthResult` with specific error message | `verifyQueryAuth()` returns `{ isValid: false, error: "Invalid or missing bearer token" }` |
+| JSON parsing errors | Return error response with specific code | `ingest` returns `{ error: "invalid_request", message: "Request body is not valid JSON" }` |
+| Validation errors | Return response with 400/422 status based on error type | Event validation returns 400 for format errors, 422 for invalid event type |
 | Logging errors | Use `console.error()` with context | `console.error("Signature verification error:", error)` |
 
 ### Error Response Format
@@ -198,7 +208,7 @@ Client error handling uses:
 }
 ```
 
-#### Deno/Edge Functions (AuthResult pattern)
+#### Deno/Edge Functions (AuthResult pattern - Phase 3)
 
 ```typescript
 interface AuthResult {
@@ -212,6 +222,21 @@ interface AuthResult {
 
 // Failure case
 { isValid: false, error: "Missing X-Source-ID header" }
+```
+
+#### Deno/Edge Functions (HTTP error response - Phase 3)
+
+```typescript
+interface ErrorResponse {
+  readonly error: string;
+  readonly message: string;
+}
+
+// Example response
+{
+  error: "invalid_event",
+  message: "Event at index 0 has invalid id format 'bad-id'"
+}
 ```
 
 #### Rust Error Messages
@@ -410,7 +435,7 @@ Naming conventions:
 4. **Field types**: Use simple types (string, number) for JSON compatibility
 5. **Documentation**: Include JSDoc with usage context and field descriptions
 
-### Deno Edge Function Authentication Pattern
+### Deno Edge Function Authentication Pattern (Phase 3)
 
 Secure authentication for Supabase Edge Functions:
 
@@ -487,6 +512,86 @@ Key patterns:
 4. **Error messages**: Return descriptive errors for debugging without exposing implementation details
 5. **Async function pattern**: Use `async` for Ed25519 verification with `@noble/ed25519`
 6. **Environment variables**: Use `Deno.env.get()` for runtime configuration
+7. **Readonly types**: Use `readonly` for immutable data structures in interfaces
+8. **Return types**: Use union types or explicit result types (avoid throwing exceptions in auth)
+
+### Deno Edge Function Validation Pattern (Phase 3)
+
+Event validation using type discriminators and pattern matching:
+
+**From `supabase/functions/ingest/index.ts`**:
+
+```typescript
+/**
+ * Result of validating an event
+ */
+type EventValidationResult =
+  | { readonly isValid: true; readonly event: Event }
+  | { readonly isValid: false; readonly error: string; readonly errorCode: string };
+
+/**
+ * Validate a single event against the Event schema
+ */
+function validateEvent(value: unknown, index: number): EventValidationResult {
+  if (typeof value !== "object" || value === null) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} must be an object`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  const obj = value as Record<string, unknown>;
+
+  // Validate id: string, pattern ^evt_[a-z0-9]{20}$
+  if (typeof obj.id !== "string") {
+    return {
+      isValid: false,
+      error: `Event at index ${index} missing required field 'id'`,
+      errorCode: "invalid_event",
+    };
+  }
+  if (!EVENT_ID_PATTERN.test(obj.id)) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} has invalid id format '${obj.id}'`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  // Validate source: string, non-empty
+  if (typeof obj.source !== "string" || obj.source.length === 0) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} has invalid source`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  // ... additional field validations
+
+  return {
+    isValid: true,
+    event: {
+      id: obj.id,
+      source: obj.source,
+      timestamp: obj.timestamp,
+      eventType: obj.eventType as EventType,
+      payload: obj.payload as Record<string, unknown>,
+    },
+  };
+}
+```
+
+Key patterns:
+1. **Discriminated unions**: Use `{ isValid: true; event }` vs `{ isValid: false; error }` for type narrowing
+2. **Early returns**: Return immediately on first validation error (fail-fast)
+3. **Index tracking**: Include array index in error messages for debugging
+4. **Error codes**: Return both human-readable message and machine-readable error code
+5. **Type validation**: Check `typeof` before accessing properties
+6. **Regex patterns**: Define patterns as constants at module level
+7. **Field validation**: Validate each field independently with clear error messages
+8. **Type casting**: Use `as` type assertions after validation confirms type safety
 
 ### Database Function Pattern (SQL)
 
@@ -1194,1183 +1299,7 @@ Key conventions for CSS Grid heatmaps:
 
 ### Session Overview Pattern (TypeScript - Phase 10)
 
-Component for displaying active AI assistant sessions with real-time activity indicators:
-
-**From `SessionOverview.tsx`** (Phase 10):
-
-```typescript
-/**
- * Session overview component displaying AI assistant sessions.
- *
- * Shows session cards with project information, duration, activity indicators,
- * and status badges. Supports filtering events by clicking on a session card.
- *
- * Features:
- * - Real-time activity indicators with pulse animation based on event volume
- * - Session status badges (Active, Idle, Ended)
- * - Session duration tracking
- * - Dimmed styling for inactive/ended sessions
- * - Accessible with proper ARIA labels and keyboard navigation
- */
-export function SessionOverview({
-  className = '',
-  onSessionClick,
-}: SessionOverviewProps) {
-  // Subscribe to sessions from the store
-  const sessions = useEventStore((state) => state.sessions);
-  const events = useEventStore((state) => state.events);
-
-  // Convert sessions Map to sorted array
-  const sortedSessions = useMemo(() => {
-    const sessionArray = Array.from(sessions.values());
-    return sortSessions(sessionArray);
-  }, [sessions]);
-
-  // Calculate recent event counts for each session
-  const recentEventCounts = useMemo(
-    () => countRecentEventsBySession(events, RECENT_EVENT_WINDOW_MS),
-    [events]
-  );
-
-  // Handle session card click
-  const handleSessionClick = useCallback(
-    (sessionId: string) => {
-      onSessionClick?.(sessionId);
-    },
-    [onSessionClick]
-  );
-
-  // Check if there are any sessions
-  const hasSessions = sortedSessions.length > 0;
-
-  return (
-    <div
-      className={`bg-gray-900 text-gray-100 ${className}`}
-      role="region"
-      aria-label="Session overview"
-    >
-      {/* Component content */}
-    </div>
-  );
-}
-```
-
-**Pure Event Counting Pattern**:
-
-```typescript
-/**
- * Count recent events per session within the specified time window.
- *
- * Uses the most recent event's timestamp as the reference point to maintain
- * pure render behavior. This provides a stable approximation of "recent"
- * events since the store updates frequently with new events.
- *
- * @param events - Array of events to analyze (newest first)
- * @param windowMs - Time window in milliseconds
- * @returns Map of session IDs to event counts
- */
-function countRecentEventsBySession(
-  events: readonly VibeteaEvent[],
-  windowMs: number
-): Map<string, number> {
-  const counts = new Map<string, number>();
-
-  // Use the most recent event's timestamp as reference (events are sorted newest first)
-  if (events.length === 0) {
-    return counts;
-  }
-
-  const mostRecentEvent = events[0];
-  if (mostRecentEvent === undefined) {
-    return counts;
-  }
-
-  const referenceTime = new Date(mostRecentEvent.timestamp).getTime();
-
-  for (const event of events) {
-    const eventTime = new Date(event.timestamp).getTime();
-    const age = referenceTime - eventTime;
-
-    if (age <= windowMs && age >= 0) {
-      const sessionId = event.payload.sessionId;
-      const currentCount = counts.get(sessionId) ?? 0;
-      counts.set(sessionId, currentCount + 1);
-    }
-  }
-
-  return counts;
-}
-```
-
-**Activity Level and Pulse Animation Pattern**:
-
-```typescript
-/**
- * Pulse animation classes for different activity levels
- */
-const PULSE_ANIMATIONS = {
-  none: '',
-  low: 'animate-pulse-slow', // 1Hz
-  medium: 'animate-pulse-medium', // 2Hz
-  high: 'animate-pulse-fast', // 3Hz
-} as const;
-
-/**
- * Determine the activity level based on recent event count.
- *
- * @param recentEventCount - Number of events in the last 60 seconds
- * @param isActive - Whether the session is currently active
- * @returns Activity level for pulse animation
- */
-function getActivityLevel(
-  recentEventCount: number,
-  isActive: boolean
-): ActivityLevel {
-  // No pulse for inactive sessions or no recent events
-  if (!isActive || recentEventCount === 0) {
-    return 'none';
-  }
-
-  // 1-5 events: 1Hz pulse (slow)
-  if (recentEventCount <= LOW_ACTIVITY_THRESHOLD) {
-    return 'low';
-  }
-
-  // 6-15 events: 2Hz pulse (medium)
-  if (recentEventCount <= MEDIUM_ACTIVITY_THRESHOLD) {
-    return 'medium';
-  }
-
-  // 16+ events: 3Hz pulse (fast)
-  return 'high';
-}
-```
-
-**Session State Machine Pattern**:
-
-```typescript
-/**
- * Sort sessions: active first, then by lastEventAt descending.
- *
- * @param sessions - Array of sessions to sort
- * @returns Sorted array of sessions
- */
-function sortSessions(sessions: readonly Session[]): Session[] {
-  return [...sessions].sort((a, b) => {
-    // Active sessions come first
-    if (a.status === 'active' && b.status !== 'active') return -1;
-    if (a.status !== 'active' && b.status === 'active') return 1;
-
-    // Then inactive before ended
-    if (a.status === 'inactive' && b.status === 'ended') return -1;
-    if (a.status === 'ended' && b.status === 'inactive') return 1;
-
-    // Within same status, sort by lastEventAt descending (most recent first)
-    return b.lastEventAt.getTime() - a.lastEventAt.getTime();
-  });
-}
-```
-
-Key conventions for session overview:
-1. **Activity indicators**: Map event count to pulse frequency (1-5 events = 1Hz, 6-15 = 2Hz, 16+ = 3Hz)
-2. **Pure event counting**: Use most recent event timestamp as reference for stable calculations
-3. **Session sorting**: Active first, then by most recent activity
-4. **Status badges**: Color-coded badges for Active (green), Idle (yellow), Ended (gray)
-5. **Dimmed styling**: Reduce opacity for inactive/ended sessions
-6. **CSS animations**: Define pulse animations in CSS with different frequencies
-7. **Memoization**: Use useMemo to avoid recalculating counts on every render
-8. **Keyboard accessibility**: Support Enter/Space for card activation
-
-### Session Timeouts Hook Pattern (TypeScript - Phase 10)
-
-Hook for managing periodic session state transitions:
-
-**From `useSessionTimeouts.ts`** (Phase 10):
-
-```typescript
-/**
- * Hook for managing session timeout logic.
- *
- * Sets up a periodic interval that checks and updates session states
- * based on time thresholds:
- * - Active -> Inactive: After 5 minutes without events
- * - Inactive/Ended -> Removed: After 30 minutes without events
- *
- * This hook should be called once at the app root level (App.tsx).
- */
-export function useSessionTimeouts(): void {
-  const updateSessionStates = useEventStore(
-    (state) => state.updateSessionStates
-  );
-
-  useEffect(() => {
-    // Set up periodic check for session state transitions
-    const intervalId = setInterval(() => {
-      updateSessionStates();
-    }, SESSION_CHECK_INTERVAL_MS);
-
-    // Clean up interval on unmount
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [updateSessionStates]);
-}
-```
-
-Key conventions:
-1. **No return value**: Hook returns void since it only manages side effects
-2. **Store subscription**: Get the action directly from Zustand
-3. **Cleanup on unmount**: Always clear the interval in cleanup function
-4. **Root-level call**: Called once in App.tsx for app-wide session management
-5. **Time thresholds**: Configurable via store constants (`INACTIVE_THRESHOLD_MS`, `REMOVAL_THRESHOLD_MS`)
-
-### Exponential Backoff Pattern (TypeScript - Phase 7)
-
-Implement reconnection delays with jitter:
-
-**From `useWebSocket.ts`** (Phase 7):
-
-```typescript
-/**
- * Calculate reconnection delay with exponential backoff and jitter.
- *
- * @param attempt - Current reconnection attempt number (0-indexed)
- * @returns Delay in milliseconds with jitter applied
- */
-function calculateBackoff(attempt: number): number {
-  // Exponential backoff: initial * 2^attempt, capped at max
-  const exponentialDelay = Math.min(
-    INITIAL_BACKOFF_MS * Math.pow(2, attempt),
-    MAX_BACKOFF_MS
-  );
-
-  // Apply jitter: ±25% randomization
-  const jitter = 1 + (Math.random() * 2 - 1) * JITTER_FACTOR;
-
-  return Math.round(exponentialDelay * jitter);
-}
-```
-
-Constants match Rust implementation:
-- `INITIAL_BACKOFF_MS = 1000` (1 second)
-- `MAX_BACKOFF_MS = 60000` (60 seconds)
-- `JITTER_FACTOR = 0.25` (±25% randomization)
-
-### Configuration Pattern (Rust)
-
-Config loads from environment variables with sensible defaults:
-
-**Server Example** (`server/src/config.rs`):
-
-```rust
-pub struct Config {
-    pub public_keys: HashMap<String, String>,
-    pub subscriber_token: Option<String>,
-    pub port: u16,
-    pub unsafe_no_auth: bool,
-}
-
-impl Config {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        let port = parse_port()?;
-        let public_keys = parse_public_keys()?;
-        let subscriber_token = env::var("VIBETEA_SUBSCRIBER_TOKEN").ok();
-        let unsafe_no_auth = parse_bool_env("VIBETEA_UNSAFE_NO_AUTH");
-
-        let config = Self { public_keys, subscriber_token, port, unsafe_no_auth };
-        config.validate()?;
-        Ok(config)
-    }
-}
-```
-
-**Monitor Example** (`monitor/src/config.rs`):
-
-```rust
-pub struct Config {
-    pub server_url: String,
-    pub source_id: String,
-    pub key_path: PathBuf,
-    pub claude_dir: PathBuf,
-    pub buffer_size: usize,
-    pub basename_allowlist: Option<Vec<String>>,
-}
-
-impl Config {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        let server_url = env::var("VIBETEA_SERVER_URL")
-            .map_err(|_| ConfigError::MissingEnvVar("VIBETEA_SERVER_URL".into()))?;
-        // ... parse other vars with defaults
-    }
-}
-```
-
-### Error Handling Pattern (Rust)
-
-Create typed error enums with helper constructors:
-
-```rust
-impl ServerError {
-    pub fn auth(message: impl Into<String>) -> Self {
-        Self::Auth(message.into())
-    }
-
-    pub fn validation(message: impl Into<String>) -> Self {
-        Self::Validation(message.into())
-    }
-
-    pub fn rate_limit(source: impl Into<String>, retry_after: u64) -> Self {
-        Self::RateLimit {
-            source: source.into(),
-            retry_after,
-        }
-    }
-
-    pub fn is_client_error(&self) -> bool {
-        matches!(
-            self,
-            Self::Auth(_) | Self::Validation(_) | Self::RateLimit { .. }
-        )
-    }
-}
-```
-
-### Privacy Pipeline Pattern (Rust - Phase 5)
-
-The privacy module (`monitor/src/privacy.rs`) implements a privacy-by-design approach using composable pipeline components:
-
-```rust
-// Configuration object controlling privacy behavior
-pub struct PrivacyConfig {
-    basename_allowlist: Option<HashSet<String>>,
-}
-
-impl PrivacyConfig {
-    pub fn from_env() -> Self {
-        // Reads VIBETEA_BASENAME_ALLOWLIST environment variable
-        // Format: ".rs,.ts,.md" (comma-separated extensions)
-    }
-
-    pub fn is_extension_allowed(&self, basename: &str) -> bool {
-        // Returns true if extension is in allowlist or no allowlist is set
-    }
-}
-
-// Pipeline struct encapsulating privacy transformations
-pub struct PrivacyPipeline {
-    config: PrivacyConfig,
-}
-
-impl PrivacyPipeline {
-    pub fn process(&self, payload: EventPayload) -> EventPayload {
-        // Applies privacy transformations:
-        // 1. Strips context from sensitive tools (Bash, Grep, Glob, WebSearch, WebFetch)
-        // 2. Extracts basenames from file paths for safe tools (Read, Write, Edit)
-        // 3. Applies allowlist filtering based on file extensions
-        // 4. Neutralizes summary text to "Session ended"
-        // 5. Passes through Session, Activity, Agent, Error payloads unchanged
-    }
-}
-
-// Utility function for basename extraction
-pub fn extract_basename(path: &str) -> Option<String> {
-    // Safely extracts filename from any path format
-    // Returns None for invalid paths (empty, root, trailing separators)
-}
-```
-
-Key conventions in privacy module:
-- **Immutable operations**: Privacy pipeline creates new payloads rather than modifying in-place
-- **Graceful degradation**: Invalid paths return `None` rather than panicking
-- **Configuration flexibility**: Uses environment variables for runtime control
-- **Comprehensive documentation**: Every public item has detailed doc comments with examples
-- **Privacy-first defaults**: Default config allows all extensions (no data loss), allowlist can be set to restrict
-
-### Cryptographic Operations Pattern (Rust - Phase 6)
-
-The crypto module (`monitor/src/crypto.rs`) handles Ed25519 keypair generation, storage, and event signing:
-
-```rust
-// Handles Ed25519 cryptographic operations
-pub struct Crypto {
-    signing_key: SigningKey,
-}
-
-impl Crypto {
-    // Generates a new Ed25519 keypair using OS RNG
-    pub fn generate() -> Self { ... }
-
-    // Loads an existing keypair from directory
-    pub fn load(dir: &Path) -> Result<Self, CryptoError> { ... }
-
-    // Saves keypair with secure file permissions (0600 for private key)
-    pub fn save(&self, dir: &Path) -> Result<(), CryptoError> { ... }
-
-    // Checks if keypair already exists
-    pub fn exists(dir: &Path) -> bool { ... }
-
-    // Signs a message and returns base64-encoded signature
-    pub fn sign(&self, message: &[u8]) -> String { ... }
-
-    // Signs and returns raw 64-byte signature
-    pub fn sign_raw(&self, message: &[u8]) -> [u8; 64] { ... }
-}
-```
-
-Key conventions in crypto module:
-- **Key storage**: Private key stored as raw 32-byte seed in `key.priv`, public key as base64 in `key.pub`
-- **File permissions**: Unix permissions set to 0600 (private key) and 0644 (public key)
-- **Deterministic signing**: Ed25519 produces consistent signatures for same message
-- **Error clarity**: Specific error types for I/O, invalid keys, base64 issues
-
-### HTTP Sender Pattern (Rust - Phase 6)
-
-The sender module (`monitor/src/sender.rs`) handles sending events to the server with buffering and retry logic:
-
-```rust
-// Configuration for the sender
-pub struct SenderConfig {
-    pub server_url: String,
-    pub source_id: String,
-    pub buffer_size: usize,  // Default: 1000
-}
-
-// HTTP event sender with buffering and retry logic
-pub struct Sender {
-    config: SenderConfig,
-    crypto: Crypto,
-    client: Client,
-    buffer: VecDeque<Event>,
-    current_retry_delay: Duration,
-}
-
-impl Sender {
-    // Creates new sender with connection pooling via reqwest
-    pub fn new(config: SenderConfig, crypto: Crypto) -> Self { ... }
-
-    // Queues an event for buffering (evicts oldest if full)
-    pub fn queue(&mut self, event: Event) -> usize { ... }
-
-    // Sends a single event immediately without buffering
-    pub async fn send(&mut self, event: Event) -> Result<(), SenderError> { ... }
-
-    // Flushes all buffered events in a single batch
-    pub async fn flush(&mut self) -> Result<(), SenderError> { ... }
-
-    // Gracefully shuts down, attempting to flush remaining events
-    pub async fn shutdown(&mut self, timeout: Duration) -> usize { ... }
-}
-```
-
-Key conventions in sender module:
-- **Buffering strategy**: FIFO queue with configurable size (default 1000 events)
-- **Exponential backoff retry**: 1s initial delay → 60s max, with ±25% jitter
-- **Rate limit handling**: Parses Retry-After header from 429 responses
-- **Authentication**: Signs events using crypto module (Ed25519)
-- **Structured logging**: Uses `tracing` crate for info/warn/debug/error logging
-
-### CLI Pattern (Rust - Phase 6)
-
-The main binary (`monitor/src/main.rs`) implements a simple command-line interface with async runtime management:
-
-#### Command Enum and Parsing
-
-```rust
-#[derive(Debug)]
-enum Command {
-    Init { force: bool },
-    Run,
-    Help,
-    Version,
-}
-
-fn parse_args() -> Result<Command> {
-    // Manual argument parsing for: init, run, help, version
-    // Supports: --force/-f for init, --help/-h, --version/-V
-}
-```
-
-#### Async Runtime Initialization
-
-The CLI uses explicit Tokio runtime creation for async commands:
-
-```rust
-fn main() -> Result<()> {
-    let command = parse_args()?;
-
-    match command {
-        Command::Run => {
-            // Initialize multi-threaded async runtime only for async commands
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .context("Failed to create tokio runtime")?;
-
-            // Block on async function using the runtime
-            runtime.block_on(run_monitor())
-        }
-        // Sync commands run directly
-        Command::Init { force } => run_init(force),
-        // ...
-    }
-}
-```
-
-#### Signal Handling
-
-Graceful shutdown using `tokio::signal`:
-
-```rust
-async fn wait_for_shutdown() {
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to install SIGTERM handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    // Wait for either signal
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-}
-```
-
-#### Logging Initialization
-
-Configure structured logging with environment variable control:
-
-```rust
-fn init_logging() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(true)
-        .with_level(true)
-        .init();
-}
-```
-
-Key conventions in CLI:
-- **Simple argument parsing**: No external CLI library, manual matching of command names
-- **Error handling**: Uses `anyhow::Result` for ergonomic error propagation
-- **Async runtime**: Explicit multi-threaded Tokio runtime created only when needed
-- **Signal handling**: Handles both Ctrl+C (SIGINT) and SIGTERM, with platform-specific handling
-- **Graceful shutdown**: Attempts to flush unsent events before exiting
-- **Logging**: Uses `tracing` with environment-driven verbosity control
-- **Help/version**: Standard `--help` and `--version` flags supported
-
-## Import Ordering
-
-### TypeScript
-
-Standard import order (enforced conceptually, no linter config):
-
-1. React and external packages (`react`, `react-dom`, `zustand`, `@tanstack/react-virtual`)
-2. Internal modules (`./types/`, `./hooks/`, `./utils/`)
-3. Relative imports (`./App`, `../sibling`)
-4. Type imports (`import type { ... }`)
-
-Example from `useWebSocket.ts` (Phase 7):
-
-```typescript
-import { useCallback, useEffect, useRef } from 'react';
-
-import type { VibeteaEvent } from '../types/events';
-import { useEventStore } from './useEventStore';
-```
-
-Example from `EventStream.tsx` (Phase 8):
-
-```typescript
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
-
-import { useEventStore } from '../hooks/useEventStore';
-
-import type { EventType, VibeteaEvent } from '../types/events';
-```
-
-Example from `SessionOverview.tsx` (Phase 10):
-
-```typescript
-import type React from 'react';
-import { useCallback, useMemo } from 'react';
-
-import { useEventStore } from '../hooks/useEventStore';
-import { formatDuration, formatRelativeTime } from '../utils/formatting';
-
-import type { Session, SessionStatus, VibeteaEvent } from '../types/events';
-```
-
-Example from `utils/formatting.ts` (Phase 8):
-
-```typescript
-// No imports - pure utility functions with no external dependencies
-```
-
-### Rust
-
-Standard ordering:
-
-1. `use` statements for external crates
-2. `use` statements for internal modules
-3. `use` statements for types and traits
-
-Example from `server/src/error.rs`:
-
-```rust
-use std::error::Error;
-use std::fmt;
-
-use thiserror::Error as ThisError;
-```
-
-Example from `monitor/src/crypto.rs` (Phase 6):
-
-```rust
-use std::fs::{self, File};
-use std::io::{Read, Write};
-use std::path::Path;
-
-use base64::prelude::*;
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use rand::Rng;
-use thiserror::Error;
-```
-
-Example from `monitor/src/main.rs` (Phase 6):
-
-```rust
-use std::io::{self, Write};
-use std::path::PathBuf;
-use std::time::Duration;
-
-use anyhow::{Context, Result};
-use directories::BaseDirs;
-use tokio::signal;
-use tracing::{error, info};
-use tracing_subscriber::EnvFilter;
-
-use vibetea_monitor::config::Config;
-use vibetea_monitor::crypto::Crypto;
-use vibetea_monitor::sender::{Sender, SenderConfig};
-```
-
-### Deno/TypeScript (Edge Functions)
-
-Standard ordering for Supabase Edge Functions:
-
-1. External module imports (ESM imports from deno.land or esm.sh)
-2. Internal type/interface definitions
-3. Function definitions
-
-Example from `supabase/functions/_shared/auth.ts`:
-
-```typescript
-import * as ed from "https://esm.sh/@noble/ed25519@2.0.0";
-
-/**
- * Result of authentication verification
- */
-export interface AuthResult {
-  readonly isValid: boolean;
-  readonly error?: string;
-  readonly sourceId?: string;
-}
-
-export async function verifySignature(...) { ... }
-```
-
-## Comments & Documentation
-
-### TypeScript
-
-| Type | When to Use | Format |
-|------|-------------|--------|
-| JSDoc | Public functions, hooks, interfaces | `/** ... */` |
-| Inline | Complex logic or non-obvious code | `// Explanation` |
-| Section dividers | Logically group related code | `// -------` comment blocks |
-| TODO | Planned work | `// TODO: description` |
-| FIXME | Known issues | `// FIXME: description` |
-
-Example from `useWebSocket.ts` (Phase 7):
-
-```typescript
-/**
- * WebSocket connection hook for VibeTea client.
- *
- * Provides WebSocket connection management with automatic reconnection
- * using exponential backoff. Integrates with useEventStore for event dispatch.
- */
-
-/**
- * Calculate reconnection delay with exponential backoff and jitter.
- *
- * @param attempt - Current reconnection attempt number (0-indexed)
- * @returns Delay in milliseconds with jitter applied
- */
-function calculateBackoff(attempt: number): number {
-  // Exponential backoff: initial * 2^attempt, capped at max
-  const exponentialDelay = Math.min(
-    INITIAL_BACKOFF_MS * Math.pow(2, attempt),
-    MAX_BACKOFF_MS
-  );
-
-  // Apply jitter: ±25% randomization
-  const jitter = 1 + (Math.random() * 2 - 1) * JITTER_FACTOR;
-
-  return Math.round(exponentialDelay * jitter);
-}
-```
-
-Example from `EventStream.tsx` (Phase 8):
-
-```typescript
-/**
- * Virtual scrolling event stream component.
- *
- * Displays VibeTea events with efficient rendering using @tanstack/react-virtual,
- * supporting 1000+ events with auto-scroll behavior and jump-to-latest functionality.
- */
-
-/**
- * Format RFC 3339 timestamp for display.
- *
- * @param timestamp - RFC 3339 formatted timestamp string
- * @returns Formatted time string (HH:MM:SS)
- */
-function formatTimestamp(timestamp: string): string {
-  // Implementation
-}
-
-/**
- * Get a brief description of the event payload.
- *
- * @param event - The VibeTea event
- * @returns A human-readable description
- */
-function getEventDescription(event: VibeteaEvent): string {
-  // Implementation
-}
-
-// -------
-// Section comment for grouped constants
-// -------
-
-const EVENT_TYPE_ICONS: Record<EventType, string> = {
-  tool: '\u{1F527}', // 🔧
-  activity: '\u{1F4AC}', // 💬
-  // ...
-};
-```
-
-Example from `SessionOverview.tsx` (Phase 10):
-
-```typescript
-/**
- * Session overview component displaying active AI assistant sessions.
- *
- * Shows session cards with project information, duration, activity indicators,
- * and status badges. Supports filtering events by clicking on a session card.
- *
- * Features:
- * - Real-time activity indicators with pulse animation based on event volume
- * - Session status badges (Active, Idle, Ended)
- * - Session duration tracking
- * - Dimmed styling for inactive/ended sessions
- * - Accessible with proper ARIA labels and keyboard navigation
- */
-
-/**
- * Count recent events per session within the specified time window.
- *
- * Uses the most recent event's timestamp as the reference point to maintain
- * pure render behavior.
- *
- * @param events - Array of events to analyze (newest first)
- * @param windowMs - Time window in milliseconds
- * @returns Map of session IDs to event counts
- */
-function countRecentEventsBySession(
-  events: readonly VibeteaEvent[],
-  windowMs: number
-): Map<string, number> {
-  // Implementation
-}
-```
-
-Example from `utils/formatting.ts` (Phase 8):
-
-```typescript
-/**
- * Formats an RFC 3339 timestamp for display as time only (HH:MM:SS).
- *
- * Uses the local timezone for display.
- *
- * @param timestamp - RFC 3339 formatted timestamp string (e.g., "2026-02-02T14:30:00Z")
- * @returns Formatted time string (e.g., "14:30:00") or fallback for invalid input
- *
- * @example
- * formatTimestamp("2026-02-02T14:30:00Z") // "14:30:00" (in UTC timezone)
- * formatTimestamp("invalid") // "--:--:--"
- */
-export function formatTimestamp(timestamp: string): string {
-  // Implementation
-}
-```
-
-Example from `useEventStore.ts`:
-
-```typescript
-/**
- * Zustand store for managing WebSocket event state.
- *
- * Provides centralized state management for the VibeTea event stream,
- * with selective subscriptions to prevent unnecessary re-renders
- * during high-frequency event updates.
- */
-```
-
-Example from `types/events.ts`:
-
-```typescript
-/**
- * Type guard to check if an event is a session event.
- */
-export function isSessionEvent(
-  event: VibeteaEvent
-): event is VibeteaEvent<'session'> {
-  return event.type === 'session';
-}
-
-/**
- * Valid event type values for runtime validation.
- */
-const VALID_EVENT_TYPES = [
-  'session',
-  'activity',
-  'tool',
-  'agent',
-  'summary',
-  'error',
-] as const;
-```
-
-### Rust
-
-| Type | When to Use | Format |
-|------|-------------|--------|
-| Doc comments | All public items | `/// ...` or `//! ...` |
-| Line comments | Internal logic | `// explanation` |
-| Example blocks | Complex public APIs | `/// # Examples` section |
-| Panics section | Functions that can panic | `/// # Panics` section |
-| Errors section | Fallible functions | `/// # Errors` section |
-| Section markers | Organize related tests | `// =========` multi-line headers |
-
-Example from `server/src/config.rs`:
-
-```rust
-/// Server configuration parsed from environment variables.
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Map of source_id to base64-encoded Ed25519 public key.
-    pub public_keys: HashMap<String, String>,
-
-    /// Authentication token for subscriber clients.
-    pub subscriber_token: Option<String>,
-
-    /// HTTP server port.
-    pub port: u16,
-}
-
-impl Config {
-    /// Parse configuration from environment variables.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ConfigError` if:
-    /// - Required environment variables are missing
-    /// - Environment variables have invalid format
-    /// - Port number is not a valid u16
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use vibetea_server::config::Config;
-    ///
-    /// let config = Config::from_env().expect("Failed to load config");
-    /// println!("Server will listen on port {}", config.port);
-    /// ```
-    pub fn from_env() -> Result<Self, ConfigError> {
-        // ...
-    }
-}
-```
-
-Example from `monitor/src/crypto.rs` (Phase 6):
-
-```rust
-//! Cryptographic operations for VibeTea Monitor.
-//!
-//! This module handles Ed25519 keypair generation, storage, and event signing.
-//! Keys are stored in the VibeTea directory (`~/.vibetea/` by default):
-//!
-//! - `key.priv`: Raw 32-byte Ed25519 seed (file mode 0600)
-//! - `key.pub`: Base64-encoded public key (file mode 0644)
-
-/// Handles Ed25519 cryptographic operations.
-///
-/// This struct manages an Ed25519 signing key and provides methods for
-/// generating, loading, saving keys, and signing messages.
-#[derive(Debug)]
-pub struct Crypto {
-    signing_key: SigningKey,
-}
-
-impl Crypto {
-    /// Generates a new Ed25519 keypair using the operating system's
-    /// cryptographically secure random number generator.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use vibetea_monitor::crypto::Crypto;
-    ///
-    /// let crypto = Crypto::generate();
-    /// let pubkey = crypto.public_key_base64();
-    /// assert!(!pubkey.is_empty());
-    /// ```
-    #[must_use]
-    pub fn generate() -> Self { ... }
-}
-```
-
-Example from `monitor/src/sender.rs` (Phase 6):
-
-```rust
-//! HTTP sender for VibeTea Monitor.
-//!
-//! This module handles sending events to the VibeTea server with:
-//!
-//! - Connection pooling via reqwest
-//! - Event buffering (1000 events max, FIFO eviction)
-//! - Exponential backoff retry (1s → 60s max, ±25% jitter)
-//! - Rate limit handling (429 with Retry-After header)
-
-/// HTTP event sender with buffering and retry logic.
-pub struct Sender {
-    config: SenderConfig,
-    crypto: Crypto,
-    client: Client,
-    buffer: VecDeque<Event>,
-    current_retry_delay: Duration,
-}
-
-impl Sender {
-    /// Creates a new sender with the given configuration and cryptographic context.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Sender configuration
-    /// * `crypto` - Cryptographic context for signing events
-    #[must_use]
-    pub fn new(config: SenderConfig, crypto: Crypto) -> Self { ... }
-}
-```
-
-Example from `monitor/src/main.rs` (Phase 6):
-
-```rust
-//! VibeTea Monitor - Claude Code session watcher.
-//!
-//! This binary watches Claude Code session files and forwards privacy-filtered
-//! events to the VibeTea server.
-//!
-//! # Commands
-//!
-//! - `vibetea-monitor init`: Generate Ed25519 keypair for server authentication
-//! - `vibetea-monitor run`: Start the monitor daemon
-//!
-//! # Environment Variables
-//!
-//! See the [`config`] module for available configuration options.
-
-/// CLI command.
-#[derive(Debug)]
-enum Command {
-    /// Initialize keypair.
-    Init { force: bool },
-    /// Run the monitor.
-    Run,
-    /// Show help.
-    Help,
-    /// Show version.
-    Version,
-}
-```
-
-Example from `monitor/src/privacy.rs` (Phase 5):
-
-```rust
-//! Privacy pipeline for VibeTea Monitor.
-//!
-//! This module ensures no sensitive data (source code, file contents, full paths,
-//! prompts, commands) is ever transmitted to the server.
-//!
-//! # Privacy Guarantees
-//!
-//! The privacy pipeline provides the following guarantees:
-//! - **Path-to-basename conversion**: Full paths like `/home/user/src/auth.ts` → `auth.ts`
-//! - **Content stripping**: File contents and code never transmitted
-//! - **Sensitive tool masking**: Bash, Grep, Glob, WebSearch, WebFetch context always stripped
-//! - **Extension allowlist filtering**: Optional filtering by file extension
-
-/// Tools whose context should always be stripped for privacy.
-///
-/// These tools may contain sensitive information:
-/// - `Bash`: Contains shell commands which may include secrets, passwords, or API keys
-/// - `Grep`: Contains search patterns which may reveal what the user is looking for
-/// - `Glob`: Contains file patterns which may reveal project structure
-/// - `WebSearch`: Contains search queries which may reveal user intent
-/// - `WebFetch`: Contains URLs which may contain sensitive information
-const SENSITIVE_TOOLS: &[&str] = &["Bash", "Grep", "Glob", "WebSearch", "WebFetch"];
-```
-
-### Deno/TypeScript (Edge Functions)
-
-| Type | When to Use | Format |
-|------|-------------|--------|
-| JSDoc | Public functions, interfaces | `/** ... */` |
-| Inline | Complex logic | `// Explanation` |
-| Note | Important implementation details | `// Note: ...` |
-
-Example from `supabase/functions/_shared/auth.ts`:
-
-```typescript
-/**
- * Shared authentication utilities for VibeTea Edge Functions
- *
- * Uses @noble/ed25519 for Ed25519 signature verification (RFC 8032 compliant)
- */
-
-/**
- * Decode a base64 string to Uint8Array
- */
-function base64Decode(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
-/**
- * Verify an Ed25519 signature
- *
- * @param publicKeyBase64 - Base64-encoded public key (32 bytes)
- * @param signatureBase64 - Base64-encoded signature (64 bytes)
- * @param message - The message that was signed (as Uint8Array)
- * @returns Promise<boolean> - True if signature is valid
- */
-export async function verifySignature(
-  publicKeyBase64: string,
-  signatureBase64: string,
-  message: Uint8Array
-): Promise<boolean> {
-  try {
-    const publicKey = base64Decode(publicKeyBase64);
-    const signature = base64Decode(signatureBase64);
-
-    // Validate key/signature lengths
-    if (publicKey.length !== 32) {
-      console.error(`Invalid public key length: ${publicKey.length}, expected 32`);
-      return false;
-    }
-    if (signature.length !== 64) {
-      console.error(`Invalid signature length: ${signature.length}, expected 64`);
-      return false;
-    }
-
-    return await ed.verifyAsync(signature, message, publicKey);
-  } catch (error) {
-    console.error("Signature verification error:", error);
-    return false;
-  }
-}
-
-/**
- * Get public key for a source from environment configuration
- *
- * VIBETEA_PUBLIC_KEYS format: source_id:base64_public_key,source_id2:base64_public_key2
- *
- * @param sourceId - The source identifier from X-Source-ID header
- * @returns The base64-encoded public key, or null if not found
- */
-export function getPublicKeyForSource(sourceId: string): string | null {
-  const publicKeys = Deno.env.get("VIBETEA_PUBLIC_KEYS");
-  if (!publicKeys) {
-    console.error("VIBETEA_PUBLIC_KEYS environment variable not set");
-    return null;
-  }
-
-  // Parse format: source_id:public_key,source_id2:public_key2
-  const pairs = publicKeys.split(",");
-  for (const pair of pairs) {
-    const [id, key] = pair.trim().split(":");
-    if (id === sourceId && key) {
-      return key;
-    }
-  }
-
-  console.error(`No public key found for source: ${sourceId}`);
-  return null;
-}
-
-/**
- * Validate a bearer token against the configured subscriber token
- *
- * @param authHeader - The Authorization header value (e.g., "Bearer token123")
- * @returns boolean - True if token is valid
- */
-export function validateBearerToken(authHeader: string | null): boolean {
-  if (!authHeader) {
-    return false;
-  }
-
-  const expectedToken = Deno.env.get("VIBETEA_SUBSCRIBER_TOKEN");
-  if (!expectedToken) {
-    console.error("VIBETEA_SUBSCRIBER_TOKEN environment variable not set");
-    return false;
-  }
-
-  const prefix = "Bearer ";
-  if (!authHeader.startsWith(prefix)) {
-    return false;
-  }
-
-  const token = authHeader.slice(prefix.length);
-
-  // Constant-time comparison to prevent timing attacks
-  // Note: In Deno, we use a simple comparison since the token is not cryptographically sensitive
-  // For production, consider using a constant-time comparison library
-  return token === expectedToken;
-}
-```
+Component for displaying active AI assistant sessions with real-time activity indicators.
 
 ## Git Conventions
 
@@ -2387,6 +1316,13 @@ Format: `type(scope): description`
 | refactor | Code restructure | `refactor(config): simplify validation` |
 | test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
+
+Examples with Phase 3 (Supabase Edge Functions):
+- `feat(edge-functions): add ingest endpoint with Ed25519 signature auth`
+- `feat(edge-functions): add query endpoint with bearer token auth`
+- `feat(auth): implement shared auth utilities for edge functions`
+- `test(edge-functions): add RLS integration tests for events table`
+- `test(auth): add ingest and query authentication unit tests`
 
 Examples with Phase 11:
 - `feat(types): add HourlyAggregate type for heatmap data`
@@ -2427,7 +1363,6 @@ Example: `feat/001-event-types`
 - Test strategies → TESTING.md
 - Security practices → SECURITY.md
 - Architecture patterns → ARCHITECTURE.md
-- Technology choices → STACK.md
 
 ---
 

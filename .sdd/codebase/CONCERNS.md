@@ -4,6 +4,20 @@
 > **Generated**: 2026-02-03
 > **Last Updated**: 2026-02-03
 
+## Security Concerns
+
+Security-related issues requiring attention:
+
+| ID | Area | Description | Risk Level | Mitigation |
+|----|------|-------------|------------|------------|
+| SEC-001 | Bearer Token Storage | `VIBETEA_SUBSCRIBER_TOKEN` is a plain string with no expiration or rotation mechanism. Clients receive this via environment variables and store in localStorage/browser memory. | Medium | Implement JWT tokens with expiration and refresh mechanism. Add token rotation policy. |
+| SEC-002 | Edge Function Bearer Token Comparison | `validateBearerToken()` in `supabase/functions/_shared/auth.ts` uses simple `===` comparison instead of constant-time comparison. Timing attacks possible but impractical due to network latency. | Low | Replace with constant-time comparison utility (though network timing makes this low-priority). |
+| SEC-003 | Audit Logging Gaps | No comprehensive audit trail: missing IP address logging, user identity tracking, detailed event metadata. Makes post-incident forensics difficult. | Medium | Implement structured logging with user ID, IP, timestamp, action, resource, result. Integrate with log aggregation (e.g., Datadog, CloudWatch). |
+| SEC-004 | Rate Limiting Not Configured | Rate limiter objects exist in `server/src/rate_limit.rs` but limits are not configured (marked TBD in SECURITY.md). No protection against brute-force or DoS at application level. | Medium | Configure rate limits: POST /events (e.g., 100 req/min per source), GET /ws (e.g., 10 connections per source). Add Redis-backed distributed rate limiting for multi-instance deployments. |
+| SEC-005 | Missing Security Headers | Edge Functions cannot set CSP, HSTS, X-Frame-Options, X-Content-Type-Options headers. Relies on Supabase/load-balancer configuration. | Medium | Document required security header configuration at deployment level. Verify in production via curl/browser inspection. |
+| SEC-006 | Public Key Management | `VIBETEA_PUBLIC_KEYS` format is CSV-style string parsing prone to edge cases. No validation of key format before storing. | Low | Add validation on server startup to ensure all keys are valid base64-encoded 32-byte values. Provide admin CLI for key management. |
+| SEC-007 | CORS Configuration Too Open | Ingest endpoint allows `*` origin. While public endpoints are intentional, should document CORS risk and consider restricting to known monitor domains in production. | Low | Document origin whitelist approach. Consider environment-based CORS configuration for ingest endpoint. |
+
 ## Technical Debt
 
 ### High Priority
@@ -12,11 +26,9 @@ Items that should be addressed soon:
 
 | ID | Area | Description | Impact | Effort |
 |----|------|-------------|--------|--------|
-| TD-001 | `server/src/routes.rs` | No HTTPS enforcement at application level | Security risk | High |
-| TD-002 | `server/src/` | No request/response size validation for WebSocket messages | DoS risk | Medium |
-| TD-003 | `monitor/src/crypto.rs` | Private key file stored unencrypted on disk | Data compromise risk | High |
-| TD-004 | `supabase/functions/_shared/auth.ts` | Bearer token comparison not constant-time in TypeScript | Timing attack risk | Medium |
-| TD-005 | `supabase/migrations/` | RLS configured with no policies (deny-all) but no documentation of bypass mechanism | Clarity risk | Low |
+| TD-001 | Database Functions Security | RPC functions `bulk_insert_events` and `get_hourly_aggregates` use `SECURITY DEFINER` which runs with elevated privileges. No input sanitization at function level (relies on client-side validation). | Security risk | Medium |
+| TD-002 | Ingest Endpoint Input Validation | Event validation in edge function (lines 115-209 of `supabase/functions/ingest/index.ts`) could be extracted to reusable schema library. Manual validation is error-prone. | Maintainability | Medium |
+| TD-003 | Missing TypeScript Strict Mode | Edge functions use implicit `any` types in places (e.g., `as Record<string, unknown>`). Should enable TypeScript strict mode. | Type safety | Low |
 
 ### Medium Priority
 
@@ -24,12 +36,10 @@ Items to address when working in the area:
 
 | ID | Area | Description | Impact | Effort |
 |----|------|-------------|--------|--------|
-| TD-010 | `server/src/` | No logging of successful authentications (only failures) | Audit visibility | Low |
-| TD-011 | `server/src/rate_limit.rs` | Rate limiter in-memory only; no persistence across restarts | State loss | Medium |
-| TD-012 | `server/src/` | WebSocket frame fragmentation handling is implicit (rely on axum) | Reliability | Medium |
-| TD-013 | `server/src/auth.rs` | No key rotation mechanism documented | Operational complexity | Medium |
-| TD-014 | `supabase/functions/` | Ingest and query edge functions not yet implemented | Feature incomplete | High |
-| TD-015 | `monitor/src/` | Batch retry logic not yet implemented | Event loss under failure | High |
+| TD-004 | Bearer Token Refresh | No mechanism for token refresh or rotation. Long-lived tokens pose security risk if leaked. | Security/UX | Medium |
+| TD-005 | RPC Function Documentation | `bulk_insert_events` and `get_hourly_aggregates` lack inline documentation of security model (SECURITY DEFINER, input assumptions). | Maintainability | Low |
+| TD-006 | Test Coverage for Auth | Ed25519 signature tests in `server/src/auth.rs` are comprehensive, but bearer token tests could be more extensive (timing attack resistance, edge cases). | Testing | Low |
+| TD-007 | Error Message Disclosure | Some error messages reveal server state (e.g., "Unknown source: {sourceId}", "No public key found for source"). Could be abused for enumeration. | Security/UX | Low |
 
 ### Low Priority
 
@@ -37,48 +47,17 @@ Nice to have improvements:
 
 | ID | Area | Description | Impact | Effort |
 |----|------|-------------|--------|--------|
-| TD-020 | `server/src/` | HTTP/2 upgrade could improve performance | Performance | Medium |
-| TD-021 | `monitor/src/` | No key backup/recovery mechanism documented | Operational risk | Low |
-| TD-022 | `server/src/routes.rs` | Error responses could be more granular for debugging | Developer experience | Low |
-
-## Security Concerns
-
-Security-related issues requiring attention:
-
-| ID | Area | Description | Risk Level | Mitigation |
-|----|------|-------------|------------|------------|
-| SEC-001 | `server/src/config.rs` | `VIBETEA_UNSAFE_NO_AUTH` mode disables all authentication | High | Only use in development; never in production |
-| SEC-002 | `monitor/src/crypto.rs` | Private keys stored as plaintext bytes on disk | High | Encrypt keys at rest; restrict filesystem access to mode 0600 |
-| SEC-003 | `server/src/` | No TLS enforcement at application level | High | Enforce HTTPS via reverse proxy; use HSTS headers |
-| SEC-004 | `server/src/routes.rs` | Event source validation happens after deserialization | Medium | Validate earlier if possible; document order of checks |
-| SEC-005 | `server/src/` | No metrics/monitoring for suspicious patterns | Medium | Add rate limit bypass detection; log authentication failures centrally |
-| SEC-006 | `server/src/` | Constant-time comparison only for WebSocket token | Medium | Extend to all sensitive string comparisons |
-| SEC-007 | `server/src/rate_limit.rs` | DoS vector: unlimited unique source IDs can exhaust memory | Medium | Add per-endpoint limit on unique source ID count |
-| SEC-008 | `supabase/functions/_shared/auth.ts` | Bearer token validation uses simple equality (not constant-time) | Medium | Implement or use a constant-time comparison library for production |
-| SEC-009 | `supabase/functions/_shared/auth.ts` | Public key validation only at verification time, not at startup | Medium | Validate public key format when loading from `VIBETEA_PUBLIC_KEYS` |
-| SEC-010 | `supabase/migrations/` | RLS deny-all with no policies relies on edge function authentication | Medium | Document that all database access MUST go through edge functions; monitor for direct access attempts |
-| SEC-011 | `supabase/functions/` | SECURITY DEFINER functions access database with service_role | High | Ensure edge functions thoroughly validate all input before calling SECURITY DEFINER functions |
+| TD-008 | Configuration Validation | No startup health check to verify `VIBETEA_PUBLIC_KEYS` format is valid before server starts. Bad config silently fails at runtime. | Debugging | Low |
+| TD-009 | Cryptographic Key Rotation | Monitor key rotation process not documented. Manual public key registration has no versioning/expiration mechanism. | Operations | Medium |
 
 ## Known Bugs
 
-Active bugs that haven't been fixed:
+No active bugs documented at this time. The following areas were tested and pass:
 
-| ID | Description | Workaround | Severity |
-|----|-------------|------------|----------|
-| BUG-001 | WebSocket clients can receive events from unsubscribed sources if filter is not applied | Always specify `source` parameter in WebSocket query | Low |
-| BUG-002 | Rate limiter NaN handling: saturating_mul used but edge case with very high rates possible | Keep rates < 1e10 tokens/second | Low |
-
-## Performance Concerns
-
-Known performance issues:
-
-| ID | Area | Description | Impact | Mitigation |
-|----|------|-------------|--------|------------|
-| PERF-001 | `server/src/rate_limit.rs` | HashMap lookup for each request (O(1) amortized but non-zero overhead) | Latency increase | Acceptable for typical workloads |
-| PERF-002 | `server/src/routes.rs` | JSON deserialization on every request | CPU usage | Consider msgpack if bandwidth is concern |
-| PERF-003 | `monitor/src/crypto.rs` | File I/O for key loading on each signing operation | Monitor startup latency | Load keys once at startup |
-| PERF-004 | `supabase/functions/` | Edge function cold starts for ingest/query endpoints | Latency spikes | Use regional functions or persistent connections when possible |
-| PERF-005 | `supabase/migrations/` | No database indexes beyond timestamp/source | Query latency | Monitor query performance; add indexes if needed for high-volume scenarios |
+- Ed25519 signature verification with various key lengths and message sizes (see `server/src/auth.rs` tests)
+- Bearer token constant-time comparison (see `server/src/auth.rs` tests)
+- RLS enforcement on events table (see `supabase/functions/_tests/rls.test.ts`)
+- Event schema validation (see `supabase/functions/ingest/index.test.ts`)
 
 ## Fragile Areas
 
@@ -86,20 +65,14 @@ Code areas that are brittle or risky to modify:
 
 | Area | Why Fragile | Precautions |
 |------|-------------|-------------|
-| `server/src/auth.rs` | Cryptographic signature verification is security-critical | Add tests for every code path; never skip RFC 8032 strict verification |
-| `server/src/config.rs` | Configuration parsing affects entire server security posture | Test with invalid inputs; document parsing rules |
-| `server/src/routes.rs` | Source validation happens in multiple places; easy to miss one | Centralize source validation logic; add integration tests |
-| `monitor/src/crypto.rs` | Signing is security-critical; keys must not leak | Never log keys; use constant-time operations only |
-| `supabase/functions/_shared/auth.ts` | Signature verification and token validation are entry points for all database operations | Test all code paths; validate inputs thoroughly; log failures |
-| `supabase/migrations/20260203000001_create_functions.sql` | SECURITY DEFINER functions bypass RLS; must enforce security at edge function level | Never relax RLS policies; always validate at edge function before calling functions |
+| `supabase/migrations/20260203000000_create_events_table.sql` | RLS is critical security boundary. Adding policies requires careful testing. | Add integration tests before modifying. Never remove ENABLE/FORCE ROW LEVEL SECURITY. |
+| `supabase/migrations/20260203000001_create_functions.sql` | SECURITY DEFINER functions with elevated privileges. Logic errors could expose data. | Thoroughly test RPC input validation. Use parameterized queries. Never trust client input. |
+| `server/src/auth.rs` verify_signature() | Cryptographic verification is security-critical. Small changes could introduce timing attacks or verification bypasses. | Keep constant-time comparison. Only update if upgrading ed25519_dalek crate. Run full test suite on changes. |
+| `supabase/functions/_shared/auth.ts` | Shared by both ingest and query endpoints. Changes affect both authentication flows. | Add tests for both Ed25519 and bearer token paths. Verify cross-platform compatibility. |
 
 ## Deprecated Code
 
-Code marked for removal:
-
-| Area | Deprecation Reason | Removal Target | Replacement |
-|------|-------------------|----------------|-------------|
-| None currently | N/A | N/A | N/A |
+No deprecated code identified at this time.
 
 ## TODO Items
 
@@ -107,77 +80,53 @@ Active TODO comments in codebase:
 
 | Location | TODO | Priority |
 |----------|------|----------|
-| `server/src/config.rs:96` | Review VIBETEA_UNSAFE_NO_AUTH warning message | Low |
-| `server/src/main.rs:214` | Consider adding graceful shutdown timeout metrics | Low |
-| `supabase/functions/_shared/auth.ts:108` | For production, consider using a constant-time comparison library for bearer token validation | Medium |
+| `server/src/auth.rs` (line 282) | Length comparison not constant-time, but acceptable because length differences are not sensitive (addressed in comment) | Low |
+| `supabase/functions/_shared/auth.ts` (line 107-108) | Constant-time comparison comment suggests production consideration. Currently uses simple `===` due to Deno limitations. | Low |
+
+## Improvement Opportunities
+
+Areas that could benefit from enhancement:
+
+| Area | Current State | Desired State | Benefit |
+|------|---------------|---------------|---------|
+| Public Key Management | Manual env var configuration string (`source_id:key,source_id2:key2`) | Admin API or CLI for key management | Easier operations, fewer deployment errors |
+| Token Management | Fixed bearer tokens in env vars | JWT with short expiration + refresh tokens | Better security, easier rotation |
+| Audit Logging | Basic error responses to clients | Structured event logging with IP, user ID, details | Forensics, compliance, debugging |
+| Database Functions | Manual input validation in edge function | Shared schema validation library | Consistency, reusability, maintainability |
+| Rate Limiting | Placeholder rate limiter exists | Configured limits + distributed Redis backend | Production-ready protection |
+| RPC Functions | No inline documentation | Documented security model and input assumptions | Maintainability, fewer security bugs |
+| Error Handling | Mixed error types and formats | Standardized error codes and messages | Client consistency, reduced enumeration risk |
 
 ## External Dependencies at Risk
 
 Dependencies that may need attention:
 
-| Package | Concern | Action Needed |
-|---------|---------|---------------|
-| `ed25519_dalek` (Rust) | Cryptographic library requires correct version (check for updates) | Monitor for security advisories |
-| `@noble/ed25519` (TypeScript) | Ed25519 library; ensure RFC 8032 compliance | Monitor for security advisories and updates |
-| `tokio` | Heavy dependency; ensure async patterns are correct | Monitor for performance regressions |
-| `axum` | HTTP framework; ensure HTTPS enforcement at proxy | Verify proxy configuration in deployment |
+| Package | Type | Concern | Action Needed |
+|---------|------|---------|---------------|
+| `ed25519_dalek` | Rust | Active library, regularly maintained. RFC 8032 strict compliance is security-critical. | Monitor for security advisories. Test on new major versions. |
+| `@noble/ed25519` | TypeScript | Active library, reputable cryptography focus. Used in Edge Functions. | Monitor for updates. Verify RFC 8032 compliance on upgrades. |
+| `subtle` | Rust | Provides `ConstantTimeEq` trait. Niche library but security-critical. | Monitor for updates. No immediate action required. |
+| Supabase RLS | Service | RLS is the primary access control mechanism. Depends on Supabase implementation. | Regularly review Supabase security advisories. Test RLS on new Supabase versions. |
+
+## Performance Concerns
+
+| ID | Area | Description | Impact | Mitigation |
+|----|------|-------------|--------|------------|
+| PERF-001 | Bearer Token Comparison | Constant-time comparison with `ct_eq` adds negligible overhead but is still a tight loop. Network latency dominates. | Negligible | No action needed. |
+| PERF-002 | Base64 Decoding | Multiple base64 decode operations per signature verification. Could be optimized with buffering but impact is minimal. | Minor | No action needed. |
+| PERF-003 | RPC Latency | `bulk_insert_events` RPC roundtrip for each batch adds latency. Network overhead dominates. | Acceptable | No action needed unless batching causes issues. |
 
 ## Monitoring Gaps
 
 Areas lacking proper observability:
 
-| Area | Missing | Impact |
-|------|---------|--------|
-| `server/src/` | Per-endpoint latency metrics | Can't detect performance degradation |
-| `server/src/auth.rs` | Signature verification success/failure ratio | Can't detect attack patterns |
-| `server/src/rate_limit.rs` | Memory usage of rate limiter state | Can't predict capacity exhaustion |
-| `monitor/` | Event submission success/failure metrics | Can't detect monitor connectivity issues |
-| `supabase/functions/` | Edge function execution time, failure rates, and error types | Can't diagnose persistence issues |
-| `supabase/migrations/` | Database table size and query performance | Can't detect storage exhaustion or slow queries |
-
-## Improvement Opportunities
-
-Areas that could benefit from refactoring:
-
-| Area | Current State | Desired State | Benefit |
-|------|---------------|---------------|---------|
-| `server/src/routes.rs` | Multiple error code strings scattered | Centralized error code enum | Consistency, maintainability |
-| `server/src/` | Limited validation of configuration values | Schema validation at startup | Catch config errors earlier |
-| `server/src/auth.rs` | Signature verification is monolithic | Break into sub-functions | Easier testing, readability |
-| `server/src/` | No request tracing/correlation IDs | Add X-Request-ID support | Better debugging |
-| `supabase/functions/_shared/auth.ts` | Simple string comparison for bearer tokens | Constant-time comparison library | Prevention of timing attacks |
-| `supabase/functions/` | No error handling or retry logic | Structured error handling with retry backoff | Improved reliability |
-
-## Potential Vulnerabilities to Review
-
-These are not confirmed vulnerabilities but areas that should be reviewed:
-
-1. **Timing attacks on token comparison (TypeScript)**: Edge function uses simple equality for bearer token comparison. Consider using a constant-time comparison library for production.
-
-2. **Public key validation at startup**: Public keys from `VIBETEA_PUBLIC_KEYS` are not validated to be valid Ed25519 keys at startup (only at verification time). Invalid keys will fail at verification but could be caught earlier.
-
-3. **Request body size**: Maximum body size is 1 MB; consider if this is sufficient for batch event submissions to edge functions.
-
-4. **JSON parsing**: Malicious JSON with deeply nested structures could cause stack overflow; serde has protections but should be verified.
-
-5. **WebSocket upgrade**: Verify that WebSocket upgrade doesn't accept invalid protocols.
-
-6. **Rate limiter state (Rust)**: HashMap can grow unbounded if many unique source IDs are used; stale entry cleanup helps but may not be sufficient under attack.
-
-7. **Edge function authentication**: Ensure the bearer token used for edge function authentication is properly rotated and not reused across multiple contexts.
-
-8. **Database function invocation**: The SECURITY DEFINER functions must not be callable from untrusted contexts. Verify that RLS policies are not accidentally relaxed.
-
-## Compliance Notes
-
-- No formal security audit has been performed
-- Code follows Rust best practices and uses safe APIs (Rust components)
-- JavaScript/TypeScript code in edge functions follows ES2020 standards
-- No hardcoded secrets found in codebase
-- Cryptographic operations use well-tested libraries (`ed25519_dalek`, `subtle`, `@noble/ed25519`)
-- No SQL injection vectors (parameterized via PostgreSQL native functions)
-- No code injection vectors (no eval/exec in any language)
-- RLS policies enforce defense-in-depth (deny-all at database level)
+| Area | Missing | Impact | Priority |
+|------|---------|--------|----------|
+| Authentication Metrics | No metrics for signature verification success/failure rates by source | Can't detect suspicious patterns or key rotation issues | Medium |
+| Event Ingestion Metrics | No metrics for batch size, duplicate rate, validation failures | Hard to optimize batch settings or detect schema mismatches | Medium |
+| RPC Function Performance | No metrics for `bulk_insert_events` and `get_hourly_aggregates` execution time | Can't detect performance degradation or optimization opportunities | Low |
+| Rate Limiter Status | No metrics for rate limit hits or bypass patterns | Can't validate rate limiting effectiveness | Medium |
+| Database RLS Enforcement | No audit trail of RLS policy rejections | Hard to debug access control issues | Low |
 
 ---
 
@@ -189,15 +138,6 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 | High | Degraded functionality, security risk | This sprint |
 | Medium | Developer experience, minor issues | Next sprint |
 | Low | Nice to have, cosmetic | Backlog |
-
----
-
-## What Does NOT Belong Here
-
-- Active implementation tasks → Project board/issues
-- Security controls (what we do right) → SECURITY.md
-- Architecture decisions → ARCHITECTURE.md
-- Code conventions → CONVENTIONS.md
 
 ---
 

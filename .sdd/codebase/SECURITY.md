@@ -6,242 +6,189 @@
 
 ## Authentication
 
-### Authentication Method
+### Authentication Methods
 
-| Method | Implementation | Configuration |
-|--------|----------------|---------------|
-| Ed25519 Signature (Rust) | ed25519_dalek with RFC 8032 strict verification | `server/src/auth.rs` |
-| Ed25519 Signature (TypeScript) | @noble/ed25519 with RFC 8032 verification | `supabase/functions/_shared/auth.ts` |
-| Bearer Token (Rust) | Constant-time comparison for WebSocket clients | `server/src/auth.rs` |
-| Bearer Token (TypeScript) | Simple string comparison for edge functions | `supabase/functions/_shared/auth.ts` |
+| Method | Implementation | Configuration | Scope |
+|--------|----------------|---------------|-------|
+| Ed25519 Signatures | `ed25519_dalek` crate with RFC 8032 strict verification | `server/src/auth.rs` | Monitor → Server API |
+| Bearer Tokens (Simple) | Constant-time comparison (`subtle::ConstantTimeEq`) | `server/src/auth.rs` | WebSocket clients |
+| Edge Function Signatures | `@noble/ed25519` (RFC 8032 compliant) | `supabase/functions/_shared/auth.ts` | Monitor → Ingest function |
+| Service Role Access | Supabase service role key | `SUPABASE_SERVICE_ROLE_KEY` | RPC functions, database access |
 
-### Token Configuration
+### Ed25519 Signature Configuration
 
 | Setting | Value | Location |
 |---------|-------|----------|
-| Token type | Bearer token for WebSocket subscriptions and edge functions | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Signature algorithm | Ed25519 (RFC 8032 compliant) | `ed25519_dalek` (Rust), `@noble/ed25519` (TypeScript) |
-| Signature encoding | Base64 standard encoding | `X-Signature` header |
-| Public key encoding | Base64 standard (32-byte keys) | `VIBETEA_PUBLIC_KEYS` env var |
-| Constant-time comparison (Rust) | `subtle::ConstantTimeEq` | `validate_token()` in `server/src/auth.rs` |
-| Bearer token format | "Bearer <token>" | `Authorization` header (edge functions) |
+| Algorithm | Ed25519 (RFC 8032) | `server/src/auth.rs` (lines 1-47) |
+| Verification Method | `VerifyingKey::verify_strict()` for strict RFC 8032 compliance | `server/src/auth.rs` (line 231) |
+| Key Format | Base64-encoded 32-byte public keys | `VIBETEA_PUBLIC_KEYS` env var |
+| Signature Format | Base64-encoded 64-byte signatures | `X-Signature` header |
+| Key Storage | Configuration file (for monitors), environment vars (for server) | `~/.vibetea/key.pub`, `VIBETEA_PUBLIC_KEYS` |
+| Private Key Permissions | 0600 (owner read/write only) | `monitor/src/crypto.rs` (line 179) |
+| Public Key Permissions | 0644 (owner read/write, others read) | `monitor/src/crypto.rs` (line 194) |
 
-### Monitor Authentication Flow
+### Bearer Token Configuration
 
-The authentication flow for event submission:
-
-1. **Real-time (Server)** - POST /events:
-   - Monitor signs request body with Ed25519 private key
-   - Sends `X-Source-ID` header with monitor identifier
-   - Sends `X-Signature` header with base64-encoded signature
-   - Server verifies signature against registered public key via `verify_signature()` in `server/src/auth.rs`
-   - Validates event source matches authenticated source ID
-
-2. **Persistence (Edge Function)** - Supabase ingest endpoint:
-   - Monitor signs JSON event batch with Ed25519 private key
-   - Sends same `X-Source-ID` and `X-Signature` headers
-   - Edge function verifies signature via `verifySignature()` in `supabase/functions/_shared/auth.ts`
-   - Calls PostgreSQL function `bulk_insert_events()` with `SECURITY DEFINER` to insert events
-
-### Edge Function Authentication Flow
-
-1. **Query (Client)** - Supabase query endpoint:
-   - Client sends `Authorization: Bearer <token>` header
-   - Edge function validates token via `validateBearerToken()` in `supabase/functions/_shared/auth.ts`
-   - Calls PostgreSQL function `get_hourly_aggregates()` with `SECURITY DEFINER` to fetch aggregates
-
-### Session Management
-
-| Setting | Value |
-|---------|-------|
-| WebSocket authentication | Query parameter token validation |
-| Token validation | Case-sensitive, constant-time comparison (Rust); simple string comparison (TypeScript edge functions) |
-| Token format | Any string (configurable via environment) |
-| Session duration | Determined by WebSocket connection lifetime |
+| Setting | Value | Location |
+|---------|-------|----------|
+| Token Type | Simple bearer token (no JWT) | `server/src/auth.rs` (lines 269-295) |
+| Comparison Method | Constant-time (`ct_eq`) to prevent timing attacks | `server/src/auth.rs` (line 290) |
+| Storage | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` | Server config |
+| Usage | WebSocket client authentication, edge function query endpoint | `supabase/functions/_shared/auth.ts` (lines 88-109) |
+| Timeout | No server-side timeout (stateless bearer token) | N/A |
 
 ## Authorization
 
 ### Authorization Model
 
-| Model | Description | Implementation |
-|-------|-------------|-----------------|
-| Source-based | Events attributed to authenticated source ID | Event source field must match X-Source-ID |
-| Token-based | WebSocket clients require valid subscriber token | Query parameter token validation |
-| Database-level | Row Level Security with service_role bypass | RLS on `public.events` table (deny all without policies) |
-| Function-level | PostgreSQL functions use SECURITY DEFINER for service_role access | `bulk_insert_events()`, `get_hourly_aggregates()` |
-| No RBAC | No role-based or attribute-based access control | All authenticated sources have equal permissions |
+| Model | Implementation | Scope |
+|-------|----------------|-------|
+| Signature-Based | Only authenticated sources (via Ed25519 keys) can ingest events | Monitor API (`server/src/auth.rs`, `supabase/functions/ingest/index.ts`) |
+| Token-Based | Bearer token grants read access to query endpoint | Client API (`supabase/functions/query/index.ts`) |
+| RLS (Row Level Security) | No policies on events table = implicit deny-all (except service_role) | `supabase/migrations/20260203000000_create_events_table.sql` |
+| Service Role Only | RPC functions `bulk_insert_events` and `get_hourly_aggregates` executable by service_role only | `supabase/migrations/20260203000001_create_functions.sql` |
 
-### Permission Enforcement Points
+### Access Control Matrix
 
-| Location | Pattern | Example |
-|----------|---------|---------|
-| Event ingestion (real-time) | Source ID validation | `post_events()` - `routes.rs:348-365` |
-| Event submission (real-time) | Signature verification | `post_events()` - `routes.rs:293-307` |
-| WebSocket connection | Token validation | `get_ws()` - `routes.rs:458-491` |
-| Database access | Row Level Security | `ALTER TABLE public.events ENABLE ROW LEVEL SECURITY` + `FORCE ROW LEVEL SECURITY` |
-| Batch insertion | Ed25519 signature verification | `verifyIngestAuth()` - `supabase/functions/_shared/auth.ts:128-156` |
-| Historic query | Bearer token validation | `verifyQueryAuth()` - `supabase/functions/_shared/auth.ts:164-172` |
-| Rate limiting | Per-source limits | `RateLimiter` - `rate_limit.rs` |
+| Access Pattern | Method | Who Can Do This | Evidence |
+|---|---|---|---|
+| Ingest events via POST /events (server) | Ed25519 signature verification | Authenticated monitors with registered public keys | `server/src/routes.rs`, `server/src/auth.rs` |
+| Ingest events via edge function | Ed25519 signature verification | Authenticated monitors with registered public keys | `supabase/functions/ingest/index.ts` (lines 261-276) |
+| Query aggregates via edge function | Bearer token validation | Clients with valid `VIBETEA_SUBSCRIBER_TOKEN` | `supabase/functions/query/index.ts` (lines 186-195) |
+| WebSocket subscription (server) | Bearer token validation (via query string) | Clients with valid token | `server/src/routes.rs` |
+| Direct database access to events table | RLS policy enforcement | service_role key only (no policies for other roles) | `supabase/migrations/20260203000000_create_events_table.sql` (lines 39-42) |
+| Call `bulk_insert_events` RPC | Explicit GRANT EXECUTE | service_role only | `supabase/migrations/20260203000001_create_functions.sql` (line 34) |
+| Call `get_hourly_aggregates` RPC | Explicit GRANT EXECUTE | service_role only | `supabase/migrations/20260203000001_create_functions.sql` (line 71) |
 
 ## Input Validation
 
 ### Validation Strategy
 
-| Layer | Method | Library |
-|-------|--------|---------|
-| API request (Rust) | JSON schema validation | `serde` with custom types |
-| Headers (Rust) | String length and content checks | Manual validation in routes |
-| Signatures (Rust) | Base64 format and cryptographic verification | `ed25519_dalek` |
-| Signatures (TypeScript) | Base64 format and cryptographic verification | `@noble/ed25519` |
-| Event payload (Rust) | Serde deserialization with typed fields | `Event` struct in `types.rs` |
-| Public keys | Length validation (32 bytes) | Manual validation in `getPublicKeyForSource()` |
+| Layer | Method | Library | Location |
+|-------|--------|---------|----------|
+| Event ID format | Regex pattern matching | Built-in | `supabase/functions/ingest/index.ts` (line 49) |
+| Event type enumeration | Whitelist matching | Built-in | `supabase/functions/ingest/index.ts` (lines 23-30, 182) |
+| Timestamp format | RFC 3339 regex validation | Built-in | `supabase/functions/ingest/index.ts` (lines 55-56, 166) |
+| Batch size limits | Runtime length check | Built-in | `supabase/functions/ingest/index.ts` (lines 297-307) |
+| JSON schema validation | Manual field validation | Built-in | `supabase/functions/ingest/index.ts` (lines 115-209) |
+| Source matching | Authenticated source vs. event source comparison | Built-in | `supabase/functions/ingest/index.ts` (lines 214-225) |
+| Query parameters (days) | Enum validation (7 or 30 only) | Built-in | `supabase/functions/query/index.ts` (lines 99-122) |
+| Base64 decoding | Try-catch with error handling | Built-in | `supabase/functions/ingest/index.ts` (lines 204-206, 218-220) |
 
 ### Sanitization
 
-| Data Type | Sanitization | Location |
-|-----------|--------------|----------|
-| JSON payloads (Rust) | Serde deserialization (type-safe) | `routes.rs:329-342` |
-| Request body (Rust) | Size limit (1 MB max) | `routes.rs:72` and `DefaultBodyLimit` |
-| Headers (Rust) | Non-empty validation | `routes.rs:263-273` (X-Source-ID), `277-290` (X-Signature) |
-| Base64 data (Rust) | Decoding validation | `auth.rs:204-206`, `218-220` |
-| Public keys (TypeScript) | Length validation (32 bytes) | `supabase/functions/_shared/auth.ts:38-45` |
-| Signatures (TypeScript) | Length validation (64 bytes) | `supabase/functions/_shared/auth.ts:42-45` |
-| Bearer tokens (TypeScript) | Prefix validation and simple comparison | `supabase/functions/_shared/auth.ts:99-110` |
+| Data Type | Sanitization Method | Location |
+|-----------|-------------------|----------|
+| Event payloads | Schema validation + JSONB type enforcement | Database constraints |
+| SQL queries | Parameterized queries via Supabase SDK RPC | `supabase/functions/ingest/index.ts` (line 333) |
+| Event source ID | Type validation (string), matched against authenticated source | `supabase/functions/ingest/index.ts` (line 320) |
+| HTTP headers | Whitelist validation (X-Source-ID, X-Signature) | `supabase/functions/ingest/index.ts` (lines 132-141) |
 
 ## Data Protection
 
-### Sensitive Data Handling
+### Event Data Handling
 
-| Data Type | Protection Method | Storage |
-|-----------|-------------------|---------|
-| Ed25519 private keys (Monitor) | Raw 32-byte seed in file (mode 0600) | `~/.vibetea/key.priv` on monitor |
-| Ed25519 public keys | Base64-encoded, registered in config | `VIBETEA_PUBLIC_KEYS` env var |
-| Subscriber token | Stored in environment variable | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Event payloads (real-time) | Not encrypted at rest | In-memory broadcasting only |
-| Event payloads (persisted) | Stored unencrypted in PostgreSQL | Accessible only via authenticated edge functions |
-| Hourly aggregates | Returned as aggregated counts, never raw events | Query edge function returns count-only data |
-| Signatures | Base64-encoded, verified against message | Not stored |
+| Aspect | Protection | Details |
+|--------|-----------|---------|
+| Privacy filtering | Pre-filtered by monitor before transmission | Event payload must contain only non-sensitive data |
+| Storage | PostgreSQL JSONB type with RLS enforcement | `supabase/migrations/20260203000000_create_events_table.sql` |
+| Access control | RLS implicit deny + RPC function execution grants | Only service_role can access via bulk_insert_events/get_hourly_aggregates |
+| Encryption in transit | HTTPS/TLS (Supabase Edge Functions, browser WebSocket) | Standard web security |
+| Encryption at rest | Supabase managed (no explicit config needed) | Supabase security model |
 
-### Cryptography
+### Secrets Management
 
-| Type | Algorithm | Key Management |
-|------|-----------|----------------|
-| Authentication (Monitor → Server) | Ed25519 (RFC 8032 strict via ed25519_dalek) | Public keys from `VIBETEA_PUBLIC_KEYS` |
-| Authentication (Monitor → Edge Function) | Ed25519 (RFC 8032 via @noble/ed25519) | Public keys from `VIBETEA_PUBLIC_KEYS` |
-| Authentication (Client → Edge Function) | Constant-time string comparison (bearer token) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Transport security | HTTPS/TLS (application-agnostic) | Configured at load balancer/reverse proxy |
+| Secret Type | Storage | Rotation | Usage |
+|-------------|---------|----------|-------|
+| Monitor Ed25519 private key | Local filesystem `~/.vibetea/key.priv` (0600) | Manual (regenerate key.priv) | Event signing |
+| Monitor Ed25519 public key | Local filesystem `~/.vibetea/key.pub`, registered with server | On key rotation | Server-side verification registration |
+| Server public keys | Environment variable `VIBETEA_PUBLIC_KEYS` (format: `source_id:base64_key,source_id2:base64_key2`) | Via deployment config update | Ed25519 verification |
+| Subscriber token | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` | Via deployment config update | Bearer token validation |
+| Supabase service role key | Environment variable `SUPABASE_SERVICE_ROLE_KEY` | Supabase managed rotation | Database/RPC access |
+| Supabase anon key | Environment variable `SUPABASE_ANON_KEY` (RLS enforced) | Supabase managed rotation | Client-side (unused for events table due to RLS) |
 
-## Database Security
+## Security Headers & CORS
 
-### Row Level Security (RLS)
+### CORS Configuration (Ingest Endpoint)
 
-| Feature | Status | Configuration |
-|---------|--------|---------------|
-| RLS enabled | Yes | `ALTER TABLE public.events ENABLE ROW LEVEL SECURITY` |
-| RLS enforced | Yes | `ALTER TABLE public.events FORCE ROW LEVEL SECURITY` |
-| Policies defined | None (implicit deny-all) | Service role bypass only |
-| Direct table access | Denied | All access via SECURITY DEFINER functions |
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Allowed Origins | `*` (open) | Public ingest endpoint for monitors |
+| Allowed Methods | POST, OPTIONS | Only required methods |
+| Allowed Headers | Content-Type, X-Source-ID, X-Signature | Custom auth headers + JSON |
+| Preflight Cache | 86400 seconds (1 day) | Standard preflight caching |
 
-### SECURITY DEFINER Functions
+### CORS Configuration (Query Endpoint)
 
-| Function | Purpose | Access | Role |
-|----------|---------|--------|------|
-| `bulk_insert_events(JSONB)` | Insert batch events atomically | GRANT EXECUTE to service_role only | service_role |
-| `get_hourly_aggregates(INTEGER, TEXT)` | Retrieve hourly aggregates for heatmap | GRANT EXECUTE to service_role only | service_role |
-
-Both functions operate with `SECURITY DEFINER` to bypass RLS when called from edge functions, which authenticate via bearer token and Ed25519 signatures before invoking.
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Allowed Origins | Server-side routing (varies by deployment) | Browser security |
+| Allowed Methods | GET | Read-only query endpoint |
+| Allowed Headers | Authorization | Bearer token header |
 
 ## Rate Limiting
 
-| Endpoint | Limit | Window | Per |
-|----------|-------|--------|-----|
-| POST /events | 100 requests/second | Rolling window | Source ID |
-| GET /ws | No limit | N/A | No rate limiting on WebSocket connections |
-| GET /health | No limit | N/A | No rate limiting on health checks |
-| Supabase ingest (edge function) | No limit (rate limited at edge function platform level) | N/A | Per request |
-| Supabase query (edge function) | No limit (rate limited at edge function platform level) | N/A | Per request |
+### Server Rate Limiting
 
-### Rate Limiter Implementation (Rust)
+| Endpoint | Limit | Window | Storage | Location |
+|----------|-------|--------|---------|----------|
+| POST /events | TBD (rate limiter exists but no config) | TBD | In-memory | `server/src/rate_limit.rs` |
+| GET /ws (WebSocket) | TBD (rate limiter exists but no config) | TBD | In-memory | `server/src/rate_limit.rs` |
 
-- **Algorithm**: Token bucket with per-source tracking
-- **Rate**: 100 tokens/second (configurable)
-- **Burst capacity**: 100 tokens (configurable)
-- **Cleanup**: Stale entries removed after 60 seconds of inactivity
-- **Memory**: In-memory HashMap with RwLock for thread safety
-- **Configuration**: `RateLimiter::new()` in `rate_limit.rs`
+### Edge Function Rate Limiting
 
-## Secrets Management
-
-### Environment Variables
-
-| Category | Variable | Required | Format |
-|----------|----------|----------|--------|
-| Public keys (Monitor) | `VIBETEA_PUBLIC_KEYS` | Yes (if auth enabled) | `source1:pubkey1,source2:pubkey2` (comma-separated) |
-| Token (all components) | `VIBETEA_SUBSCRIBER_TOKEN` | Yes (if auth enabled) | Any string value |
-| Port (Server) | `PORT` | No | Numeric, default 8080 |
-| Auth bypass (Server) | `VIBETEA_UNSAFE_NO_AUTH` | No | "true" to disable auth (dev only) |
-| Logging (Server) | `RUST_LOG` | No | Log level filter (default: info) |
-| Supabase URL (Monitor) | `VIBETEA_SUPABASE_URL` | No | Edge function base URL |
-| Supabase batch interval (Monitor) | `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | No | Numeric, default 60 |
-| Supabase retry limit (Monitor) | `VIBETEA_SUPABASE_RETRY_LIMIT` | No | Numeric, default 3 |
-| Supabase URL (Client) | `VITE_SUPABASE_URL` | No | Edge function base URL |
-
-### Secrets Storage
-
-| Environment | Method |
-|-------------|--------|
-| Development | Environment variables (set directly or via shell) |
-| CI/CD | GitHub Actions secrets or equivalent |
-| Production | Environment variable injection at deployment time |
-| Monitor keys | Stored locally in `~/.vibetea/` with 0600 permissions |
-
-## Security Headers
-
-VibeTea server does not directly manage security headers. These must be configured at the reverse proxy/load balancer level:
-
-| Header | Recommended Value | Purpose |
-|--------|-------------------|---------|
-| Content-Security-Policy | `default-src 'self'` | XSS protection |
-| X-Frame-Options | `DENY` | Clickjacking protection |
-| X-Content-Type-Options | `nosniff` | MIME sniffing protection |
-| Strict-Transport-Security | `max-age=31536000` | HTTPS enforcement |
-
-## CORS Configuration
-
-VibeTea is a WebSocket/HTTP API server designed for backend-to-backend communication. CORS configuration should be set at the reverse proxy level based on:
-
-| Setting | Recommendation |
-|---------|-----------------|
-| Allowed origins | Restrict to known monitor/client sources |
-| Allowed methods | POST (events), GET (WebSocket, health) |
-| Allowed headers | Content-Type, X-Source-ID, X-Signature, Authorization |
-| Credentials | Not applicable (token in query param or env var) |
+| Endpoint | Limit | Implementation |
+|----------|-------|----------------|
+| POST /ingest | Not implemented at function level | Supabase Edge Functions provide built-in rate limiting per project |
+| GET /query | Not implemented at function level | Supabase Edge Functions provide built-in rate limiting per project |
 
 ## Audit Logging
 
+### Event Ingestion Logging
+
 | Event | Logged Data | Location |
 |-------|-------------|----------|
-| Signature verification failure (Rust) | Source ID, error type | `routes.rs:294` (warn level) |
-| Signature verification failure (TypeScript) | Source ID, error message | `supabase/functions/_shared/auth.ts:49` (console.error) |
-| Rate limit exceeded | Source ID, retry_after | `routes.rs:314-318` (info level) |
-| Invalid event format | Source ID, parse error | `routes.rs:332` (debug level) |
-| Source mismatch | Authenticated source, event source | `routes.rs:350-355` (warn level) |
-| WebSocket connection | Filter configuration | `routes.rs:494-497` (info level) |
-| WebSocket disconnection | N/A | `routes.rs:578` (info level) |
-| Configuration errors | Error message | `main.rs:53` (error level) |
-| Server startup | Port, auth mode, public key count | `main.rs:74-79` (info level) |
-| Bearer token validation failure | Error type | `supabase/functions/_shared/auth.ts:95` (console.error) |
-| Public key lookup failure | Source ID | `supabase/functions/_shared/auth.ts:78` (console.error) |
+| Successful signature verification | source_id (via log context) | `server/src/auth.rs` implicit in route handlers |
+| Signature verification failure | error type (UnknownSource, InvalidSignature, etc.) | `server/src/auth.rs` error variants |
+| Failed authentication | Error response returned to client | `supabase/functions/ingest/index.ts` (lines 264-276) |
+| Database insert failures | RPC error logged | `supabase/functions/ingest/index.ts` (line 338) |
 
-All logging is structured JSON output via `tracing` crate (Rust) or console methods (TypeScript).
+### Query Logging
 
----
+| Event | Logged Data | Location |
+|-------|-------------|----------|
+| Bearer token validation failure | Error response returned | `supabase/functions/query/index.ts` (lines 186-195) |
+| RPC query errors | Database error details | `supabase/functions/query/index.ts` (line 153) |
 
-## What Does NOT Belong Here
+## Unsafe Mode (Development Only)
 
-- Tech debt and risks → CONCERNS.md
-- Testing strategy → TESTING.md
-- Code conventions → CONVENTIONS.md
+### VIBETEA_UNSAFE_NO_AUTH Configuration
+
+| Setting | Purpose | Impact |
+|---------|---------|--------|
+| `VIBETEA_UNSAFE_NO_AUTH=true` | Disable all signature and token verification | Allows unauthenticated access to WebSocket and POST /events endpoint |
+| Default | false (auth required) | Production-safe default |
+| Logging | Warning logged on startup | `server/src/config.rs` (line 96) |
+
+**WARNING**: This must never be enabled in production. Used for local development testing only.
+
+## Cryptographic Algorithms
+
+### Ed25519 Implementation Details
+
+| Component | Algorithm | Standard | Library |
+|-----------|-----------|----------|---------|
+| Signature verification (server) | Ed25519 verify_strict | RFC 8032 (strict) | `ed25519_dalek` v2.1.0 |
+| Signature verification (edge function) | Ed25519 verify | RFC 8032 | `@noble/ed25519` v2.0.0 |
+| Key generation (monitor) | Ed25519 from cryptographic random | RFC 8032 | `ed25519_dalek` + `rand` crate |
+| Base64 encoding | Standard base64 (RFC 4648) | RFC 4648 | `base64` crate |
+
+### Timing Attack Prevention
+
+| Operation | Protection | Location |
+|-----------|-----------|----------|
+| Bearer token comparison | `subtle::ConstantTimeEq` (constant-time byte comparison) | `server/src/auth.rs` (line 290) |
+| Signature verification | Built-in constant-time comparison in `ed25519_dalek::verify_strict()` | `server/src/auth.rs` (line 231) |
 
 ---
 
