@@ -73,8 +73,8 @@
 - [x] T029 [P] Create useAnimationThrottle hook at client/src/hooks/useAnimationThrottle.ts (use devs:react-dev agent)
 - [x] T030 [GIT] Commit: add animation utility hooks
 - [x] T031 Create AnimationErrorBoundary component at client/src/components/animated/ErrorBoundary.tsx (use devs:react-dev agent)
-- [ ] T032 [GIT] Commit: add AnimationErrorBoundary component
-- [ ] T033 Configure LazyMotion provider wrapper in client/src/App.tsx (use devs:react-dev agent)
+- [x] T032 [GIT] Commit: add AnimationErrorBoundary component
+- [x] T033 Configure LazyMotion provider wrapper in client/src/App.tsx (use devs:react-dev agent)
 - [ ] T034 [GIT] Commit: configure LazyMotion provider
 - [ ] T035 Import animations.css in client/src/main.tsx or App.tsx (use devs:react-dev agent)
 - [ ] T036 [GIT] Commit: import CSS animations
