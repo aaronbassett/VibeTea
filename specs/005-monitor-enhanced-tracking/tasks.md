@@ -29,25 +29,25 @@
 **Purpose**: Project initialization and module structure
 
 ### Phase Start
-- [ ] T001 [GIT] Verify on feature branch 005-monitor-enhanced-tracking and working tree is clean
+- [x] T001 [GIT] Verify on feature branch 005-monitor-enhanced-tracking and working tree is clean
 
 ### Implementation
-- [ ] T002 Create trackers module directory at monitor/src/trackers/
-- [ ] T003 [GIT] Commit: create trackers module directory
-- [ ] T004 [P] Create trackers/mod.rs with module exports in monitor/src/trackers/mod.rs
-- [ ] T005 [P] Add trackers module to lib.rs in monitor/src/lib.rs
-- [ ] T006 [GIT] Commit: add trackers module structure
-- [ ] T007 [P] Extend EventPayload enum with new event types in monitor/src/types.rs (use devs:rust-dev agent)
-- [ ] T008 [P] Extend server EventPayload enum to match monitor in server/src/types.rs (use devs:rust-dev agent)
-- [ ] T009 [GIT] Commit: add new event types to monitor and server
-- [ ] T010 [P] Extend client event types in client/src/types/events.ts (use devs:typescript-dev agent)
-- [ ] T011 [GIT] Commit: add new event types to client
+- [x] T002 Create trackers module directory at monitor/src/trackers/
+- [x] T003 [GIT] Commit: create trackers module directory
+- [x] T004 [P] Create trackers/mod.rs with module exports in monitor/src/trackers/mod.rs
+- [x] T005 [P] Add trackers module to lib.rs in monitor/src/lib.rs
+- [x] T006 [GIT] Commit: add trackers module structure
+- [x] T007 [P] Extend EventPayload enum with new event types in monitor/src/types.rs (use devs:rust-dev agent)
+- [x] T008 [P] Extend server EventPayload enum to match monitor in server/src/types.rs (use devs:rust-dev agent)
+- [x] T009 [GIT] Commit: add new event types to monitor and server
+- [x] T010 [P] Extend client event types in client/src/types/events.ts (use devs:typescript-dev agent)
+- [x] T011 [GIT] Commit: add new event types to client
 
 ### Phase Completion
-- [ ] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T013 [GIT] Create/update PR to main with phase summary
-- [ ] T014 [GIT] Verify all CI checks pass
-- [ ] T015 [GIT] Report PR ready status
+- [x] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T013 [GIT] Create/update PR to main with phase summary
+- [x] T014 [GIT] Verify all CI checks pass
+- [x] T015 [GIT] Report PR ready status
 
 ---
 
@@ -58,35 +58,35 @@
 **CRITICAL**: No user story work can begin until this phase is complete
 
 ### Phase Start
-- [ ] T016 [GIT] Verify working tree is clean before starting Phase 2
-- [ ] T017 [GIT] Pull and rebase on origin/main if needed
-- [ ] T018 Create retro/P2.md for this phase
+- [x] T016 [GIT] Verify working tree is clean before starting Phase 2
+- [x] T017 [GIT] Pull and rebase on origin/main if needed
+- [x] T018 Create retro/P2.md for this phase
 
 ### Implementation
-- [ ] T019 [GIT] Commit: initialize phase 2 retro
-- [ ] T020 Add debounce utility module to monitor/src/utils/debounce.rs (use devs:rust-dev agent)
-- [ ] T020A [P] Implement session state limit enforcement (max 1000 sessions) in monitor/src/config.rs (use devs:rust-dev agent)
+- [x] T019 [GIT] Commit: initialize phase 2 retro
+- [x] T020 Add debounce utility module to monitor/src/utils/debounce.rs (use devs:rust-dev agent)
+- [x] T020A [P] Implement session state limit enforcement (max 1000 sessions) in monitor/src/config.rs (use devs:rust-dev agent)
   - Add MAX_TRACKED_SESSIONS config constant (default 1000)
   - Implement LRU session eviction when limit reached
   - Add metrics tracking for session limit warnings
-- [ ] T021 [GIT] Commit: add debounce utility
-- [ ] T022 [P] Add shell-like tokenizer for skill name extraction in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
-- [ ] T023 [P] Add session filename parser utility in monitor/src/utils/session_filename.rs (use devs:rust-dev agent)
-- [ ] T024 [GIT] Commit: add tokenizer and session filename utilities
-- [ ] T025 Create utils module with mod.rs in monitor/src/utils/mod.rs
-- [ ] T026 [GIT] Commit: create utils module
-- [ ] T027 Add utils module to lib.rs in monitor/src/lib.rs
-- [ ] T028 [GIT] Commit: add utils module to lib.rs
-- [ ] T029 Run codebase mapping for Phase 2 changes (/sdd:map incremental)
-- [ ] T030 [GIT] Commit: update codebase documents for phase 2
-- [ ] T031 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T032 [GIT] Commit: finalize phase 2 retro
+- [x] T021 [GIT] Commit: add debounce utility
+- [x] T022 [P] Add shell-like tokenizer for skill name extraction in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
+- [x] T023 [P] Add session filename parser utility in monitor/src/utils/session_filename.rs (use devs:rust-dev agent)
+- [x] T024 [GIT] Commit: add tokenizer and session filename utilities
+- [x] T025 Create utils module with mod.rs in monitor/src/utils/mod.rs
+- [x] T026 [GIT] Commit: create utils module
+- [x] T027 Add utils module to lib.rs in monitor/src/lib.rs
+- [x] T028 [GIT] Commit: add utils module to lib.rs
+- [x] T029 Run codebase mapping for Phase 2 changes (/sdd:map incremental)
+- [x] T030 [GIT] Commit: update codebase documents for phase 2
+- [x] T031 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T032 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
-- [ ] T033 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T034 [GIT] Create/update PR to main with phase summary
-- [ ] T035 [GIT] Verify all CI checks pass
-- [ ] T036 [GIT] Report PR ready status
+- [x] T033 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T034 [GIT] Create/update PR to main with phase summary
+- [x] T035 [GIT] Verify all CI checks pass
+- [x] T036 [GIT] Report PR ready status
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -99,44 +99,44 @@
 **Independent Test**: Start Claude Code session, perform actions, verify monitor displays global token counts broken down by model.
 
 ### Phase Start
-- [ ] T037 [GIT] Verify working tree is clean before starting Phase 3
-- [ ] T038 [GIT] Pull and rebase on origin/main if needed
-- [ ] T039 [US1] Create retro/P3.md for this phase
+- [x] T037 [GIT] Verify working tree is clean before starting Phase 3
+- [x] T038 [GIT] Pull and rebase on origin/main if needed
+- [x] T039 [US1] Create retro/P3.md for this phase
 
 ### Tests for User Story 1
-- [ ] T040 [GIT] Commit: initialize phase 3 retro
-- [ ] T041 [P] [US1] Unit test for stats_tracker parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T042 [P] [US1] Unit test for TokenUsageEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T042A [P] [US1] Unit test for 200ms debounce timing behavior in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T040 [GIT] Commit: initialize phase 3 retro
+- [x] T041 [P] [US1] Unit test for stats_tracker parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T042 [P] [US1] Unit test for TokenUsageEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T042A [P] [US1] Unit test for 200ms debounce timing behavior in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
   - Mock file watcher events at <100ms intervals
   - Verify only 1 event emitted per 200ms window
-- [ ] T043 [GIT] Commit: add stats_tracker tests (including debounce timing)
+- [x] T043 [GIT] Commit: add stats_tracker tests (including debounce timing)
 
 ### Implementation for User Story 1
-- [ ] T044 [US1] Implement StatsCache struct for JSON parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T045 [GIT] Commit: add StatsCache struct
-- [ ] T046 [US1] Implement stats_tracker module with file watching in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T047 [GIT] Commit: implement stats_tracker file watching
-- [ ] T048 [US1] Implement TokenUsageEvent emission per model in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T049 [GIT] Commit: implement TokenUsageEvent emission
-- [ ] T050 [US1] Add 200ms debounce for stats-cache.json changes in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T051 [GIT] Commit: add debounce to stats_tracker
-- [ ] T052 [US1] Add JSON parse failure retry with 100ms delay in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T053 [GIT] Commit: add JSON parse retry logic
-- [ ] T054 [US1] Wire stats_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [ ] T055 [GIT] Commit: wire stats_tracker to watcher
-- [ ] T056 [US1] Add client store handler for token_usage events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T057 [GIT] Commit: add client token_usage handler
-- [ ] T058 [US1] Run /sdd:map incremental for Phase 3 changes
-- [ ] T059 [GIT] Commit: update codebase documents for phase 3
-- [ ] T060 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T061 [GIT] Commit: finalize phase 3 retro
+- [x] T044 [US1] Implement StatsCache struct for JSON parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T045 [GIT] Commit: add StatsCache struct
+- [x] T046 [US1] Implement stats_tracker module with file watching in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T047 [GIT] Commit: implement stats_tracker file watching
+- [x] T048 [US1] Implement TokenUsageEvent emission per model in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T049 [GIT] Commit: implement TokenUsageEvent emission
+- [x] T050 [US1] Add 200ms debounce for stats-cache.json changes in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T051 [GIT] Commit: add debounce to stats_tracker
+- [x] T052 [US1] Add JSON parse failure retry with 100ms delay in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T053 [GIT] Commit: add JSON parse retry logic
+- [x] T054 [US1] Wire stats_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [x] T055 [GIT] Commit: wire stats_tracker to watcher
+- [x] T056 [US1] Add client store handler for token_usage events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T057 [GIT] Commit: add client token_usage handler
+- [x] T058 [US1] Run /sdd:map incremental for Phase 3 changes
+- [x] T059 [GIT] Commit: update codebase documents for phase 3
+- [x] T060 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T061 [GIT] Commit: finalize phase 3 retro
 
 ### Phase Completion
-- [ ] T062 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T063 [GIT] Create/update PR to main with phase summary
-- [ ] T064 [GIT] Verify all CI checks pass
-- [ ] T065 [GIT] Report PR ready status
+- [x] T062 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T063 [GIT] Create/update PR to main with phase summary
+- [x] T064 [GIT] Verify all CI checks pass
+- [x] T065 [GIT] Report PR ready status
 
 **Checkpoint**: Token usage tracking fully functional and testable independently
 
