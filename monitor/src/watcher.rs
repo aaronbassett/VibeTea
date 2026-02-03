@@ -98,17 +98,17 @@ const PENDING_DRAIN_INTERVAL_MS: u64 = 100;
 
 /// Thread-safe storage for pending file modifications.
 ///
-/// When the internal channel is full, FileModified events are coalesced here
-/// to ensure at least one modification event per path is eventually processed.
+/// When the internal channel is full, file events are coalesced here
+/// to ensure at least one event per path is eventually processed.
 /// This prevents data loss under bursty write conditions.
 #[derive(Debug, Default)]
-struct PendingModifications {
-    /// Set of paths with pending modifications.
+struct PendingPaths {
+    /// Set of paths with pending events.
     paths: Mutex<HashSet<PathBuf>>,
 }
 
-impl PendingModifications {
-    /// Creates a new empty pending modifications store.
+impl PendingPaths {
+    /// Creates a new empty pending paths store.
     fn new() -> Self {
         Self {
             paths: Mutex::new(HashSet::new()),
@@ -131,7 +131,7 @@ impl PendingModifications {
         }
     }
 
-    /// Returns true if there are pending modifications.
+    /// Returns true if there are pending paths.
     fn has_pending(&self) -> bool {
         self.paths.lock().map(|g| !g.is_empty()).unwrap_or(false)
     }
@@ -251,25 +251,33 @@ impl FileWatcher {
         // This channel bridges the sync notify callback to our async processing task
         let (internal_tx, internal_rx) = mpsc::channel::<InternalEvent>(1000);
 
-        // Create pending modifications store for coalescing when channel is full
-        let pending_modifications = Arc::new(PendingModifications::new());
+        // Create pending paths stores for coalescing when channel is full
+        let pending_modifications = Arc::new(PendingPaths::new());
+        let pending_removals = Arc::new(PendingPaths::new());
 
         // Spawn the async processing task
         let positions_for_task = Arc::clone(&positions);
         let sender_for_task = event_sender.clone();
-        let pending_for_task = Arc::clone(&pending_modifications);
+        let pending_mods_for_task = Arc::clone(&pending_modifications);
+        let pending_rems_for_task = Arc::clone(&pending_removals);
         tokio::spawn(async move {
             process_internal_events(
                 internal_rx,
                 positions_for_task,
                 sender_for_task,
-                pending_for_task,
+                pending_mods_for_task,
+                pending_rems_for_task,
             )
             .await;
         });
 
         // Create the notify watcher with lightweight callback
-        let watcher = create_watcher(internal_tx, watch_dir.clone(), pending_modifications)?;
+        let watcher = create_watcher(
+            internal_tx,
+            watch_dir.clone(),
+            pending_modifications,
+            pending_removals,
+        )?;
 
         Ok(Self {
             watcher,
@@ -332,16 +340,17 @@ impl FileWatcher {
 /// Creates the underlying notify watcher with a lightweight callback.
 ///
 /// The callback only sends events through the internal channel; all heavy
-/// processing is done by the async task. When the channel is full, FileModified
-/// events are coalesced into the pending modifications store.
+/// processing is done by the async task. When the channel is full, file events
+/// are coalesced into the pending paths stores.
 fn create_watcher(
     internal_tx: mpsc::Sender<InternalEvent>,
     watch_dir: PathBuf,
-    pending_modifications: Arc<PendingModifications>,
+    pending_modifications: Arc<PendingPaths>,
+    pending_removals: Arc<PendingPaths>,
 ) -> Result<RecommendedWatcher> {
     let mut watcher = RecommendedWatcher::new(
         move |res: std::result::Result<Event, notify::Error>| {
-            handle_notify_event(res, &internal_tx, &pending_modifications);
+            handle_notify_event(res, &internal_tx, &pending_modifications, &pending_removals);
         },
         Config::default(),
     )?;
@@ -363,12 +372,13 @@ fn create_watcher(
 /// sends them through a channel. All file I/O and locking is done by the
 /// async processing task.
 ///
-/// When the channel is full, FileModified events are coalesced into the
-/// pending modifications store to ensure no file modifications are lost.
+/// When the channel is full, file events are coalesced into the pending paths
+/// stores to ensure no file events are permanently lost.
 fn handle_notify_event(
     res: std::result::Result<Event, notify::Error>,
     internal_tx: &mpsc::Sender<InternalEvent>,
-    pending_modifications: &PendingModifications,
+    pending_modifications: &PendingPaths,
+    pending_removals: &PendingPaths,
 ) {
     let event = match res {
         Ok(event) => event,
@@ -427,11 +437,11 @@ fn handle_notify_event(
                         pending_modifications.insert(p);
                     }
                     InternalEvent::FileRemoved(p) => {
-                        warn!(
+                        trace!(
                             path = %p.display(),
-                            "Channel full, FileRemoved event may be delayed"
+                            "Channel full, coalescing FileRemoved event"
                         );
-                        // FileRemoved can't be coalesced meaningfully - log and continue
+                        pending_removals.insert(p);
                     }
                 }
             }
@@ -445,13 +455,14 @@ fn handle_notify_event(
 /// a single managed task, avoiding the need to spawn threads or block on
 /// the runtime from the notify callback.
 ///
-/// Also periodically drains pending modifications that were coalesced when
-/// the channel was full, ensuring no file modifications are lost.
+/// Also periodically drains pending file events that were coalesced when
+/// the channel was full, ensuring no file events are permanently lost.
 async fn process_internal_events(
     mut rx: mpsc::Receiver<InternalEvent>,
     positions: Arc<RwLock<HashMap<PathBuf, u64>>>,
     sender: mpsc::Sender<WatchEvent>,
-    pending_modifications: Arc<PendingModifications>,
+    pending_modifications: Arc<PendingPaths>,
+    pending_removals: Arc<PendingPaths>,
 ) {
     let drain_interval = tokio::time::Duration::from_millis(PENDING_DRAIN_INTERVAL_MS);
 
@@ -470,8 +481,9 @@ async fn process_internal_events(
                         handle_file_removed_async(&path, &positions, &sender).await;
                     }
                     None => {
-                        // Channel closed, drain any remaining pending modifications
+                        // Channel closed, drain any remaining pending events
                         drain_pending_modifications(&pending_modifications, &positions, &sender).await;
+                        drain_pending_removals(&pending_removals, &positions, &sender).await;
                         break;
                     }
                 }
@@ -479,6 +491,10 @@ async fn process_internal_events(
             // Periodically drain pending modifications
             _ = tokio::time::sleep(drain_interval), if pending_modifications.has_pending() => {
                 drain_pending_modifications(&pending_modifications, &positions, &sender).await;
+            }
+            // Periodically drain pending removals
+            _ = tokio::time::sleep(drain_interval), if pending_removals.has_pending() => {
+                drain_pending_removals(&pending_removals, &positions, &sender).await;
             }
         }
     }
@@ -488,7 +504,7 @@ async fn process_internal_events(
 
 /// Drains pending modifications and processes them as FileModified events.
 async fn drain_pending_modifications(
-    pending: &PendingModifications,
+    pending: &PendingPaths,
     positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
     sender: &mpsc::Sender<WatchEvent>,
 ) {
@@ -500,6 +516,24 @@ async fn drain_pending_modifications(
         );
         for path in paths {
             handle_file_modified_async(&path, positions, sender).await;
+        }
+    }
+}
+
+/// Drains pending removals and processes them as FileRemoved events.
+async fn drain_pending_removals(
+    pending: &PendingPaths,
+    positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
+    sender: &mpsc::Sender<WatchEvent>,
+) {
+    let paths = pending.drain();
+    if !paths.is_empty() {
+        debug!(
+            count = paths.len(),
+            "Draining coalesced pending removals"
+        );
+        for path in paths {
+            handle_file_removed_async(&path, positions, sender).await;
         }
     }
 }
