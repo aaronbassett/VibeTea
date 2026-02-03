@@ -40,4 +40,4 @@ pub mod widgets;
 
 // Re-exports will be added as modules are implemented
 // pub use app::App;
-pub use terminal::Tui;
+pub use terminal::{install_panic_hook, Tui};

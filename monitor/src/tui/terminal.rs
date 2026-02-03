@@ -7,7 +7,10 @@
 //! # Example
 //!
 //! ```ignore
-//! use vibetea_monitor::tui::Tui;
+//! use vibetea_monitor::tui::{Tui, install_panic_hook};
+//!
+//! // Install panic hook BEFORE creating the TUI
+//! install_panic_hook();
 //!
 //! let mut tui = Tui::new()?;
 //! tui.draw(|frame| {
@@ -22,12 +25,21 @@
 //!
 //! 1. **Normal drop**: When [`Tui`] goes out of scope
 //! 2. **Explicit restore**: By calling [`Tui::restore()`]
-//! 3. **Panic hook**: Via a separate panic handler (not implemented here)
+//! 3. **Panic hook**: Via [`install_panic_hook()`] which ensures restoration
+//!    even if a panic occurs before the [`Drop`] handler runs
 //!
 //! The [`Drop`] implementation silently ignores errors during cleanup to avoid
 //! panics during stack unwinding.
+//!
+//! # Panic Safety
+//!
+//! The [`install_panic_hook()`] function should be called once at application
+//! startup, before creating any [`Tui`] instance. This ensures that if a panic
+//! occurs (even during TUI initialization), the terminal will be restored to
+//! a usable state before the panic message is displayed.
 
 use std::io::{self, Stdout};
+use std::panic;
 
 use crossterm::{
     cursor::{Hide, Show},
@@ -37,6 +49,73 @@ use crossterm::{
     },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
+
+/// Installs a panic hook that restores terminal state before displaying panic messages.
+///
+/// This function should be called **once** at application startup, **before** creating
+/// any [`Tui`] instance. It captures the existing panic hook and replaces it with a
+/// custom hook that:
+///
+/// 1. Shows the cursor
+/// 2. Leaves the alternate screen
+/// 3. Disables raw mode
+/// 4. Calls the previous panic handler to display the panic message
+///
+/// This ensures that panic messages are visible to the user and the terminal is left
+/// in a usable state, even if the panic occurs before the [`Tui`]'s [`Drop`] handler
+/// can run.
+///
+/// # Example
+///
+/// ```ignore
+/// use vibetea_monitor::tui::{install_panic_hook, Tui};
+///
+/// fn main() -> std::io::Result<()> {
+///     // Install panic hook first
+///     install_panic_hook();
+///
+///     // Now it's safe to create the TUI
+///     let mut tui = Tui::new()?;
+///
+///     // If any code panics from here on, the terminal will be restored
+///     // before the panic message is shown.
+///
+///     Ok(())
+/// }
+/// ```
+///
+/// # Notes
+///
+/// - The restoration code ignores errors because the terminal may already be in
+///   an inconsistent state when a panic occurs.
+/// - This function is idempotent in the sense that calling it multiple times will
+///   just chain the hooks, but it's intended to be called only once.
+/// - The restoration is performed synchronously before the panic message is displayed,
+///   ensuring the message is visible in the normal terminal buffer.
+pub fn install_panic_hook() {
+    // Capture the previous panic hook
+    let previous_hook = panic::take_hook();
+
+    panic::set_hook(Box::new(move |panic_info| {
+        // Restore terminal state first, ignoring any errors.
+        // The terminal may be in an inconsistent state, so we use best-effort
+        // restoration without propagating errors.
+
+        // Show cursor - ignore errors as terminal may be in bad state
+        let _ = execute!(io::stdout(), Show);
+
+        // Leave alternate screen - this brings back the normal terminal buffer
+        // so the panic message will be visible
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+
+        // Disable raw mode - this restores normal line-buffered input
+        let _ = disable_raw_mode();
+
+        // Now delegate to the previous panic handler to display the panic message.
+        // This is typically the default handler that prints to stderr.
+        previous_hook(panic_info);
+    }));
+}
 
 /// A wrapper around ratatui's Terminal that provides RAII-based cleanup.
 ///
@@ -265,5 +344,46 @@ mod tests {
             !would_restore,
             "Flag should prevent second restore attempt"
         );
+    }
+
+    #[test]
+    fn install_panic_hook_can_be_called() {
+        // This test verifies that install_panic_hook can be called without panicking.
+        // We can't easily test the actual panic behavior in a unit test, but we can
+        // verify the function doesn't crash when called.
+        //
+        // Note: This test modifies global state (the panic hook), which is why
+        // it should be run with --test-threads=1 to avoid interfering with other tests.
+        install_panic_hook();
+
+        // Verify we can install it again (chaining behavior)
+        // This shouldn't panic or cause issues
+        install_panic_hook();
+    }
+
+    #[test]
+    fn panic_hook_closure_is_send_and_sync() {
+        // Verify that the panic hook closure satisfies the required bounds.
+        // std::panic::set_hook requires the closure to be Send + Sync + 'static.
+        // This is a compile-time check.
+        fn assert_hook_bounds<F>(_: F)
+        where
+            F: Fn(&panic::PanicHookInfo<'_>) + Send + Sync + 'static,
+        {
+        }
+
+        // Create a closure similar to what install_panic_hook uses
+        let previous_hook = panic::take_hook();
+        let hook = move |panic_info: &panic::PanicHookInfo<'_>| {
+            let _ = execute!(io::stdout(), Show);
+            let _ = execute!(io::stdout(), LeaveAlternateScreen);
+            let _ = disable_raw_mode();
+            previous_hook(panic_info);
+        };
+
+        assert_hook_bounds(hook);
+
+        // Restore a default hook since we took it
+        panic::set_hook(Box::new(|_| {}));
     }
 }
