@@ -691,7 +691,7 @@ async fn rate_limiting_still_works_in_unsafe_mode() {
     );
     let app = create_router(state);
 
-    let event = create_test_event("test-monitor");
+    let event = create_test_event("rate-test-source");
     let body = serde_json::to_string(&event).unwrap();
 
     // First request should succeed
