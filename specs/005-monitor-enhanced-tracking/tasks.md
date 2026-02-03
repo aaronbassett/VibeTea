@@ -190,9 +190,9 @@
 **Independent Test**: Invoke several slash commands, verify monitor captures each with timestamp and command name.
 
 ### Phase Start
-- [ ] T089 [GIT] Verify working tree is clean before starting Phase 5
-- [ ] T090 [GIT] Pull and rebase on origin/main if needed
-- [ ] T091 [US3] Create retro/P5.md for this phase
+- [x] T089 [GIT] Verify working tree is clean before starting Phase 5
+- [x] T090 [GIT] Pull and rebase on origin/main if needed
+- [x] T091 [US3] Create retro/P5.md for this phase
 
 ### Tests for User Story 3
 - [ ] T092 [GIT] Commit: initialize phase 5 retro
