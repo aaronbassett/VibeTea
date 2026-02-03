@@ -113,7 +113,11 @@ type ActivityLevel = 'none' | 'low' | 'medium' | 'high';
 /**
  * Animation phases for session card transitions.
  */
-export type SessionAnimationPhase = 'entering' | 'idle' | 'exiting' | 'statusChange';
+export type SessionAnimationPhase =
+  | 'entering'
+  | 'idle'
+  | 'exiting'
+  | 'statusChange';
 
 /**
  * Animation states for session cards.
