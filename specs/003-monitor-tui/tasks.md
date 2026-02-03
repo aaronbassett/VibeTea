@@ -147,10 +147,10 @@
 - [x] T066 [US1] Implement complete_setup() transition in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [x] T067 [GIT] Commit: add setup to dashboard transition
 - [x] T068 [US1] Load existing keys or generate new keys on form submit in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T069 [GIT] Commit: integrate key generation in setup flow
+- [x] T069 [GIT] Commit: integrate key generation in setup flow
 
 ### Default Values
-- [ ] T070 [US1] Implement hostname detection for default session name in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T070 [US1] Implement hostname detection for default session name in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T071 [GIT] Commit: add hostname default for session name
 - [ ] T072 [US1] Auto-detect existing keys and set default key option in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T073 [GIT] Commit: auto-detect existing keys

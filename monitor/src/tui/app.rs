@@ -220,6 +220,42 @@ impl KeyOption {
     }
 }
 
+// =============================================================================
+// Hostname Detection
+// =============================================================================
+
+/// Returns the system hostname for use as the default session name.
+///
+/// This function attempts to detect the local machine's hostname using the
+/// `gethostname` crate, which provides cross-platform support for Linux,
+/// macOS, and Windows.
+///
+/// # Fallback Behavior
+///
+/// If the hostname cannot be determined (e.g., the hostname contains invalid
+/// UTF-8 characters or the system call fails), this function falls back to
+/// returning `"monitor"` as a safe default.
+///
+/// # FR-003 Compliance
+///
+/// This function implements FR-003: "Session name field MUST default to the
+/// system hostname."
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::default_session_name;
+///
+/// let name = default_session_name();
+/// // Returns the hostname or "monitor" as fallback
+/// assert!(!name.is_empty());
+/// ```
+pub fn default_session_name() -> String {
+    gethostname::gethostname()
+        .into_string()
+        .unwrap_or_else(|_| "monitor".to_string())
+}
+
 /// State for the setup form screen.
 ///
 /// Contains form field values, validation state, and focus tracking for the
@@ -244,9 +280,9 @@ impl KeyOption {
 /// ```
 /// use vibetea_monitor::tui::app::{SetupFormState, SetupField, KeyOption};
 ///
-/// // Create default state
+/// // Create default state (session_name defaults to hostname)
 /// let state = SetupFormState::default();
-/// assert!(state.session_name.is_empty());
+/// assert!(!state.session_name.is_empty()); // Hostname or "monitor" fallback
 /// assert_eq!(state.focused_field, SetupField::SessionName);
 /// assert_eq!(state.key_option, KeyOption::GenerateNew);
 ///
@@ -261,12 +297,12 @@ impl KeyOption {
 /// assert_eq!(state.session_name, "my-session");
 /// assert!(state.existing_keys_found);
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SetupFormState {
     /// Current session name input value.
     ///
-    /// Defaults to empty string initially; should be populated with hostname
-    /// during initialization (FR-003). Limited to 64 characters maximum,
+    /// Defaults to the system hostname per FR-003, with a fallback to "monitor"
+    /// if the hostname cannot be determined. Limited to 64 characters maximum,
     /// containing only alphanumeric characters, hyphens, and underscores (FR-026).
     pub session_name: String,
 
@@ -295,6 +331,33 @@ pub struct SetupFormState {
     /// Used to determine the default value for `key_option` (FR-004) and
     /// whether to show the "Use existing" option as available.
     pub existing_keys_found: bool,
+}
+
+impl Default for SetupFormState {
+    /// Creates a new [`SetupFormState`] with the session name defaulting to the
+    /// system hostname per FR-003.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{SetupFormState, SetupField, KeyOption};
+    ///
+    /// let state = SetupFormState::default();
+    /// assert!(!state.session_name.is_empty()); // Hostname or "monitor"
+    /// assert!(state.session_name_error.is_none());
+    /// assert_eq!(state.key_option, KeyOption::GenerateNew);
+    /// assert_eq!(state.focused_field, SetupField::SessionName);
+    /// assert!(!state.existing_keys_found);
+    /// ```
+    fn default() -> Self {
+        Self {
+            session_name: default_session_name(),
+            session_name_error: None,
+            key_option: KeyOption::default(),
+            focused_field: SetupField::default(),
+            existing_keys_found: false,
+        }
+    }
 }
 
 /// State for the dashboard screen.
@@ -2272,13 +2335,49 @@ mod tests {
     }
 
     // =============================================================================
+    // Hostname Detection Tests (T070)
+    // =============================================================================
+
+    #[test]
+    fn default_session_name_returns_non_empty_string() {
+        let name = default_session_name();
+        assert!(
+            !name.is_empty(),
+            "default_session_name should return a non-empty string"
+        );
+    }
+
+    #[test]
+    fn default_session_name_returns_hostname_or_fallback() {
+        let name = default_session_name();
+        // The result should be either the actual hostname or "monitor" fallback
+        // We can verify it's a reasonable value (non-empty, no null bytes)
+        assert!(
+            !name.contains('\0'),
+            "hostname should not contain null bytes"
+        );
+        assert!(name.len() <= 253, "hostname should be reasonable length"); // max DNS hostname
+    }
+
+    #[test]
+    fn default_session_name_is_consistent() {
+        // Calling it multiple times should return the same value
+        let name1 = default_session_name();
+        let name2 = default_session_name();
+        assert_eq!(name1, name2, "default_session_name should be deterministic");
+    }
+
+    // =============================================================================
     // SetupFormState Tests (T052)
     // =============================================================================
 
     #[test]
-    fn setup_form_state_default_has_empty_session_name() {
+    fn setup_form_state_default_uses_hostname() {
         let state = SetupFormState::default();
-        assert!(state.session_name.is_empty());
+        // Session name should be set to hostname (non-empty)
+        assert!(!state.session_name.is_empty());
+        // Should match what default_session_name() returns
+        assert_eq!(state.session_name, default_session_name());
     }
 
     #[test]
@@ -2358,10 +2457,12 @@ mod tests {
     #[test]
     fn setup_form_state_session_name_can_be_modified() {
         let mut state = SetupFormState::default();
-        assert!(state.session_name.is_empty());
+        let original = state.session_name.clone();
+        assert!(!original.is_empty()); // Now defaults to hostname
 
         state.session_name = "modified-session".to_string();
         assert_eq!(state.session_name, "modified-session");
+        assert_ne!(state.session_name, original);
     }
 
     #[test]
