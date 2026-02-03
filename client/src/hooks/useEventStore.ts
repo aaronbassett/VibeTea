@@ -284,10 +284,87 @@ export const useEventStore = create<EventStore>()((set) => ({
   },
 
   // Historic data actions
-  fetchHistoricData: async (_days: 7 | 30): Promise<void> => {
-    // Stub implementation - sets status to 'loading'
-    // Full implementation will be added in T107
+  fetchHistoricData: async (days: 7 | 30): Promise<void> => {
+    // Validate environment configuration
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+    if (supabaseUrl === undefined || supabaseUrl === '') {
+      set({
+        historicDataStatus: 'error',
+        historicDataError: 'Persistence not configured',
+      });
+      return;
+    }
+
+    const token = import.meta.env.VITE_SUPABASE_TOKEN as string | undefined;
+    if (token === undefined || token === '') {
+      set({
+        historicDataStatus: 'error',
+        historicDataError: 'Auth token not configured',
+      });
+      return;
+    }
+
+    // Set loading state
     set({ historicDataStatus: 'loading', historicDataError: null });
+
+    try {
+      const response = await fetch(
+        `${supabaseUrl}/functions/v1/query?days=${days}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+
+      if (!response.ok) {
+        // Parse error response to extract message
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorBody = (await response.json()) as {
+            error?: string;
+            message?: string;
+          };
+          if (errorBody.message !== undefined) {
+            errorMessage = errorBody.message;
+          } else if (errorBody.error !== undefined) {
+            errorMessage = errorBody.error;
+          }
+        } catch {
+          // If JSON parsing fails, use status text
+          errorMessage = response.statusText || `HTTP ${response.status}`;
+        }
+
+        set({
+          historicDataStatus: 'error',
+          historicDataError: errorMessage,
+        });
+        return;
+      }
+
+      const data = (await response.json()) as {
+        aggregates: HourlyAggregate[];
+        meta: { totalCount: number; daysRequested: number; fetchedAt: string };
+      };
+
+      set({
+        historicData: data.aggregates,
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    } catch (error) {
+      // Network error or other fetch failure
+      const errorMessage =
+        error instanceof Error ? error.message : 'Failed to fetch historic data';
+
+      set({
+        historicDataStatus: 'error',
+        historicDataError: errorMessage,
+      });
+    }
   },
 
   clearHistoricData: () => {
