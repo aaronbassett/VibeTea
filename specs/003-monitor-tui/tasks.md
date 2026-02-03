@@ -125,10 +125,10 @@
 - [x] T052 [P] [US1] Implement SetupFormState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [x] T053 [P] [US1] Implement SetupField enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [x] T054 [P] [US1] Implement KeyOption enum with toggle() method in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T055 [GIT] Commit: add setup form state types
+- [x] T055 [GIT] Commit: add setup form state types
 
 ### Setup Form Widget
-- [ ] T056 [US1] Implement setup_form widget in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T056 [US1] Implement setup_form widget in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
 - [ ] T057 [GIT] Commit: add setup form widget
 - [ ] T058 [US1] Add session name validation per FR-026 in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
 - [ ] T059 [GIT] Commit: add session name validation

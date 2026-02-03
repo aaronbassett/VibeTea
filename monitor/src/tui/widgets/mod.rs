@@ -33,7 +33,7 @@
 // pub mod event_stream;
 // pub mod header;
 // pub mod logo;
-// pub mod setup_form;
+pub mod setup_form;
 // pub mod size_warning;
 // pub mod stats_footer;
 
@@ -42,6 +42,6 @@
 // pub use event_stream::EventStreamWidget;
 // pub use header::HeaderWidget;
 // pub use logo::LogoWidget;
-// pub use setup_form::SetupFormWidget;
+pub use setup_form::SetupFormWidget;
 // pub use size_warning::SizeWarningWidget;
 // pub use stats_footer::StatsFooterWidget;
