@@ -1,0 +1,192 @@
+openapi: 3.1.0
+info:
+  title: VibeTea Query Edge Function
+  description: |
+    Edge function for querying historic event aggregates.
+    Validates bearer token and returns hourly event counts for heatmap visualization.
+  version: 1.0.0
+
+servers:
+  - url: https://{project}.supabase.co/functions/v1
+    description: Supabase Edge Functions
+    variables:
+      project:
+        default: your-project-ref
+        description: Supabase project reference
+
+paths:
+  /query:
+    get:
+      operationId: queryAggregates
+      summary: Get hourly event aggregates
+      description: |
+        Returns hourly event counts for the specified time period.
+        Data is aggregated by source, date, and hour (UTC).
+        Used by the client to populate historic activity heatmaps.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: days
+          in: query
+          required: false
+          description: Number of days of historic data to retrieve
+          schema:
+            type: integer
+            enum: [7, 30]
+            default: 7
+          example: 7
+        - name: source
+          in: query
+          required: false
+          description: Filter by monitor source (optional, returns all sources if omitted)
+          schema:
+            type: string
+          example: "macbook-pro-monitor"
+      responses:
+        '200':
+          description: Aggregates retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+              example:
+                aggregates:
+                  - source: "macbook-pro-monitor"
+                    date: "2026-02-03"
+                    hour: 14
+                    eventCount: 127
+                  - source: "macbook-pro-monitor"
+                    date: "2026-02-03"
+                    hour: 13
+                    eventCount: 85
+                  - source: "macbook-pro-monitor"
+                    date: "2026-02-02"
+                    hour: 16
+                    eventCount: 203
+                meta:
+                  totalCount: 3
+                  daysRequested: 7
+                  fetchedAt: "2026-02-03T14:35:00Z"
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidDays:
+                  value:
+                    error: "invalid_days"
+                    message: "days parameter must be 7 or 30"
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingToken:
+                  value:
+                    error: "missing_auth"
+                    message: "Authorization header is required"
+                invalidToken:
+                  value:
+                    error: "invalid_token"
+                    message: "Bearer token is invalid"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "internal_error"
+                message: "Database query failed"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Bearer token for client authentication.
+        Uses the same token as WebSocket authentication (VIBETEA_SUBSCRIBER_TOKEN).
+
+  schemas:
+    HourlyAggregate:
+      type: object
+      required:
+        - source
+        - date
+        - hour
+        - eventCount
+      properties:
+        source:
+          type: string
+          description: Monitor source identifier
+          example: "macbook-pro-monitor"
+        date:
+          type: string
+          format: date
+          description: Date in YYYY-MM-DD format (UTC)
+          example: "2026-02-03"
+        hour:
+          type: integer
+          minimum: 0
+          maximum: 23
+          description: Hour of day (0-23, UTC)
+          example: 14
+        eventCount:
+          type: integer
+          minimum: 0
+          description: Number of events in this hour
+          example: 127
+
+    QueryResponse:
+      type: object
+      required:
+        - aggregates
+        - meta
+      properties:
+        aggregates:
+          type: array
+          items:
+            $ref: '#/components/schemas/HourlyAggregate'
+          description: Array of hourly aggregates, sorted by date/hour descending
+        meta:
+          type: object
+          required:
+            - totalCount
+            - daysRequested
+            - fetchedAt
+          properties:
+            totalCount:
+              type: integer
+              minimum: 0
+              description: Total number of aggregate records returned
+              example: 168
+            daysRequested:
+              type: integer
+              enum: [7, 30]
+              description: Number of days requested
+              example: 7
+            fetchedAt:
+              type: string
+              format: date-time
+              description: Timestamp when the query was executed
+              example: "2026-02-03T14:35:00Z"
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+          example: "invalid_token"
+        message:
+          type: string
+          description: Human-readable error description
+          example: "Bearer token is invalid"
