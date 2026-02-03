@@ -159,13 +159,13 @@
 - [x] T074 [US1] Run /sdd:map incremental for Phase 3 changes
 - [x] T075 [GIT] Commit: update codebase documents for phase 3
 - [x] T076 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T077 [GIT] Commit: finalize phase 3 retro
+- [x] T077 [GIT] Commit: finalize phase 3 retro
 
 ### Phase Completion
-- [ ] T078 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T079 [GIT] Create/update PR to main with phase summary
-- [ ] T080 [GIT] Verify all CI checks pass
-- [ ] T081 [GIT] Report PR ready status
+- [x] T078 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T079 [GIT] Create/update PR to main with phase summary
+- [x] T080 [GIT] Verify all CI checks pass
+- [x] T081 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 1 complete - users can quick-start with defaults
 
