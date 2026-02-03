@@ -155,6 +155,7 @@ fn get_hostname() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
 
     /// Helper to run tests with isolated environment variables.
@@ -183,6 +184,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_missing_server_url() {
         with_clean_env(|| {
             let result = Config::from_env();
@@ -194,6 +196,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_minimal_config() {
         with_clean_env(|| {
             env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
@@ -214,6 +217,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_full_config() {
         with_clean_env(|| {
             env::set_var("VIBETEA_SERVER_URL", "https://vibetea.fly.dev");
@@ -242,6 +246,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_invalid_buffer_size() {
         with_clean_env(|| {
             env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
@@ -259,6 +264,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_allowlist_with_whitespace() {
         with_clean_env(|| {
             env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
@@ -278,6 +284,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_allowlist_filters_empty_entries() {
         with_clean_env(|| {
             env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");

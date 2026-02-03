@@ -202,6 +202,7 @@ fn parse_public_keys() -> Result<HashMap<String, String>, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::env;
 
     /// Helper to temporarily set environment variables for testing.
@@ -239,6 +240,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_with_unsafe_no_auth() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_UNSAFE_NO_AUTH", "true");
@@ -254,6 +256,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_with_auth_enabled() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_UNSAFE_NO_AUTH", "false");
@@ -280,6 +283,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_missing_public_keys_without_unsafe_no_auth() {
         let mut guard = EnvGuard::new();
         guard.remove("VIBETEA_UNSAFE_NO_AUTH");
@@ -293,6 +297,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_config_missing_subscriber_token_without_unsafe_no_auth() {
         let mut guard = EnvGuard::new();
         guard.remove("VIBETEA_UNSAFE_NO_AUTH");
@@ -308,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_public_keys_valid() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_PUBLIC_KEYS", "source1:key1,source2:key2");
@@ -319,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_public_keys_with_whitespace() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_PUBLIC_KEYS", " source1 : key1 , source2 : key2 ");
@@ -330,6 +337,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_public_keys_invalid_format() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_PUBLIC_KEYS", "invalid-no-colon");
@@ -343,6 +351,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_public_keys_empty_source() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_PUBLIC_KEYS", ":key1");
@@ -352,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_public_keys_empty_key() {
         let mut guard = EnvGuard::new();
         guard.set("VIBETEA_PUBLIC_KEYS", "source1:");
@@ -361,6 +371,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_bool_env_true() {
         let mut guard = EnvGuard::new();
         guard.set("TEST_BOOL", "true");
@@ -374,6 +385,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_bool_env_false() {
         let mut guard = EnvGuard::new();
         guard.set("TEST_BOOL", "false");
@@ -387,6 +399,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_port_default() {
         let mut guard = EnvGuard::new();
         guard.remove("PORT");
@@ -396,6 +409,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_port_custom() {
         let mut guard = EnvGuard::new();
         guard.set("PORT", "3000");
@@ -405,6 +419,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_port_invalid() {
         let mut guard = EnvGuard::new();
         guard.set("PORT", "not-a-number");
@@ -415,6 +430,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_parse_port_out_of_range() {
         let mut guard = EnvGuard::new();
         guard.set("PORT", "99999");
