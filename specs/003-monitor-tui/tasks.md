@@ -102,8 +102,8 @@
 ### Phase Completion
 - [x] T044 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [x] T045 [GIT] Create/update PR to main with phase summary
-- [ ] T046 [GIT] Verify all CI checks pass
-- [ ] T047 [GIT] Report PR ready status
+- [x] T046 [GIT] Verify all CI checks pass
+- [x] T047 [GIT] Report PR ready status
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
