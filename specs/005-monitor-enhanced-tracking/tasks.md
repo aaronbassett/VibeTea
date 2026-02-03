@@ -202,14 +202,14 @@
   - Test: `/commit -m "fix: update docs"` → `commit`
   - Test: `/"my skill" arg1` → `"my skill"`
   - Test: `/sdd:plan` → `sdd:plan`
-- [ ] T095 [GIT] Commit: add skill_tracker tests (including quoted command names)
+- [x] T095 [GIT] Commit: add skill_tracker tests (including quoted command names)
 
 ### Implementation for User Story 3
 - [x] T096 [US3] Implement HistoryEntry struct for JSON parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [ ] T097 [GIT] Commit: add HistoryEntry struct
-- [ ] T098 [US3] Implement skill_tracker module with file watching in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [x] T097 [GIT] Commit: add HistoryEntry struct
+- [x] T098 [US3] Implement skill_tracker module with file watching in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
 - [ ] T099 [GIT] Commit: implement skill_tracker module
-- [ ] T100 [US3] Implement skill name extraction using shell-like tokenizer in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [x] T100 [US3] Implement skill name extraction using shell-like tokenizer in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
 - [ ] T101 [GIT] Commit: implement skill name extraction
 - [ ] T102 [US3] Wire skill_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
 - [ ] T103 [GIT] Commit: wire skill_tracker to watcher

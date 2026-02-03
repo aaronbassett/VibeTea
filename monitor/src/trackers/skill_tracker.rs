@@ -1,7 +1,7 @@
 //! Skill tracker for detecting skill/slash command invocations.
 //!
-//! This module parses `history.jsonl` entries to extract [`SkillInvocationEvent`]
-//! data from Claude Code skill invocations.
+//! This module watches `~/.claude/history.jsonl` for changes and emits
+//! [`SkillInvocationEvent`]s for each new skill invocation.
 //!
 //! # History.jsonl Format
 //!
@@ -25,10 +25,34 @@
 //!
 //! # Architecture
 //!
-//! This module provides parsing functions for history.jsonl entries. The actual
-//! file watching implementation will be added in a later task (T098).
+//! The tracker uses the [`notify`] crate to watch for file changes. Since
+//! `history.jsonl` is append-only, the tracker maintains a byte offset to
+//! only read new lines (tail-like behavior). No debounce is used - events
+//! are processed immediately per the research.md specification.
 //!
 //! # Example
+//!
+//! ```no_run
+//! use tokio::sync::mpsc;
+//! use vibetea_monitor::trackers::skill_tracker::SkillTracker;
+//! use vibetea_monitor::types::SkillInvocationEvent;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let (tx, mut rx) = mpsc::channel(100);
+//!     let tracker = SkillTracker::new(tx)?;
+//!
+//!     while let Some(event) = rx.recv().await {
+//!         println!("Skill: {}, Session: {}", event.skill_name, event.session_id);
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
+//!
+//! # Parsing Functions
+//!
+//! Lower-level parsing functions are also available for testing or custom use:
 //!
 //! ```
 //! use vibetea_monitor::trackers::skill_tracker::{parse_history_entry, create_skill_invocation_event};
@@ -43,9 +67,19 @@
 //! }
 //! ```
 
+use std::io::{BufRead, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
 use chrono::{DateTime, TimeZone, Utc};
+use notify::{
+    event::ModifyKind, Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use serde::Deserialize;
 use thiserror::Error;
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::types::SkillInvocationEvent;
 use crate::utils::tokenize::extract_skill_name;
@@ -73,6 +107,33 @@ pub enum HistoryParseError {
     #[error("missing required field: sessionId")]
     MissingSessionId,
 }
+
+/// Errors that can occur during skill tracking operations.
+#[derive(Error, Debug)]
+pub enum SkillTrackerError {
+    /// Failed to initialize the file system watcher.
+    #[error("failed to create watcher: {0}")]
+    WatcherInit(#[from] notify::Error),
+
+    /// Failed to read the history file.
+    #[error("failed to read history file: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Failed to parse a history entry.
+    #[error("failed to parse history entry: {0}")]
+    Parse(#[from] HistoryParseError),
+
+    /// The Claude directory does not exist.
+    #[error("claude directory not found: {0}")]
+    ClaudeDirectoryNotFound(PathBuf),
+
+    /// Failed to send event through the channel.
+    #[error("failed to send event: channel closed")]
+    ChannelClosed,
+}
+
+/// Result type for skill tracker operations.
+pub type Result<T> = std::result::Result<T, SkillTrackerError>;
 
 /// A parsed entry from history.jsonl.
 ///
@@ -175,7 +236,7 @@ impl HistoryEntry {
 /// assert_eq!(entry.display, "/commit");
 /// assert_eq!(entry.session_id, "abc-123");
 /// ```
-pub fn parse_history_entry(line: &str) -> Result<HistoryEntry, HistoryParseError> {
+pub fn parse_history_entry(line: &str) -> std::result::Result<HistoryEntry, HistoryParseError> {
     // First parse as a generic JSON value to provide better error messages
     let value: serde_json::Value = serde_json::from_str(line)?;
 
@@ -274,6 +335,439 @@ pub fn create_skill_invocation_event(entry: &HistoryEntry) -> Option<SkillInvoca
         project: entry.project.clone(),
         timestamp,
     })
+}
+
+// ============================================================================
+// SkillTracker - File Watching Implementation
+// ============================================================================
+
+/// Configuration for the skill tracker.
+#[derive(Debug, Clone, Default)]
+pub struct SkillTrackerConfig {
+    /// Whether to emit events for existing entries on startup.
+    ///
+    /// When `true`, the tracker will emit events for all existing entries
+    /// in the history file when it starts. When `false` (the default),
+    /// only new entries appended after the tracker starts will emit events.
+    pub emit_existing_on_startup: bool,
+}
+
+/// Tracker for Claude Code's history.jsonl file.
+///
+/// Watches for file changes and emits [`SkillInvocationEvent`]s when new
+/// skill invocations are appended. Uses tail-like behavior to only read
+/// new lines, tracking the byte offset within the file.
+///
+/// # Thread Safety
+///
+/// The tracker spawns a background task for async processing of file events.
+/// Communication is done via channels for thread safety. The byte offset
+/// is stored in an atomic for lock-free reads from the watcher callback.
+#[derive(Debug)]
+pub struct SkillTracker {
+    /// The underlying file system watcher.
+    ///
+    /// Kept alive to maintain the watch subscription.
+    #[allow(dead_code)]
+    watcher: RecommendedWatcher,
+
+    /// Path to the history.jsonl file.
+    history_path: PathBuf,
+
+    /// Channel sender for emitting skill invocation events.
+    #[allow(dead_code)]
+    event_sender: mpsc::Sender<SkillInvocationEvent>,
+
+    /// Current byte offset in the file (for tail-like behavior).
+    #[allow(dead_code)]
+    offset: Arc<AtomicU64>,
+}
+
+impl SkillTracker {
+    /// Creates a new skill tracker watching the default history.jsonl location.
+    ///
+    /// The default location is `~/.claude/history.jsonl`.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_sender` - Channel for emitting [`SkillInvocationEvent`]s
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The home directory cannot be determined
+    /// - The `~/.claude` directory does not exist
+    /// - The file system watcher cannot be initialized
+    pub fn new(event_sender: mpsc::Sender<SkillInvocationEvent>) -> Result<Self> {
+        Self::with_config(event_sender, SkillTrackerConfig::default())
+    }
+
+    /// Creates a new skill tracker with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_sender` - Channel for emitting [`SkillInvocationEvent`]s
+    /// * `config` - Configuration options for the tracker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker cannot be initialized.
+    pub fn with_config(
+        event_sender: mpsc::Sender<SkillInvocationEvent>,
+        config: SkillTrackerConfig,
+    ) -> Result<Self> {
+        let claude_dir = directories::BaseDirs::new()
+            .map(|dirs| dirs.home_dir().join(".claude"))
+            .ok_or_else(|| {
+                SkillTrackerError::ClaudeDirectoryNotFound(PathBuf::from("~/.claude"))
+            })?;
+
+        Self::with_path_and_config(claude_dir.join("history.jsonl"), event_sender, config)
+    }
+
+    /// Creates a new skill tracker watching a specific history.jsonl file.
+    ///
+    /// # Arguments
+    ///
+    /// * `history_path` - Path to the history.jsonl file to watch
+    /// * `event_sender` - Channel for emitting [`SkillInvocationEvent`]s
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The parent directory of the history file does not exist
+    /// - The file system watcher cannot be initialized
+    pub fn with_path(
+        history_path: PathBuf,
+        event_sender: mpsc::Sender<SkillInvocationEvent>,
+    ) -> Result<Self> {
+        Self::with_path_and_config(history_path, event_sender, SkillTrackerConfig::default())
+    }
+
+    /// Creates a new skill tracker with a specific path and configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `history_path` - Path to the history.jsonl file to watch
+    /// * `event_sender` - Channel for emitting [`SkillInvocationEvent`]s
+    /// * `config` - Configuration options for the tracker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker cannot be initialized.
+    pub fn with_path_and_config(
+        history_path: PathBuf,
+        event_sender: mpsc::Sender<SkillInvocationEvent>,
+        config: SkillTrackerConfig,
+    ) -> Result<Self> {
+        // Verify the parent directory exists (file may not exist yet)
+        let watch_dir = history_path
+            .parent()
+            .ok_or_else(|| SkillTrackerError::ClaudeDirectoryNotFound(history_path.clone()))?;
+
+        if !watch_dir.exists() {
+            return Err(SkillTrackerError::ClaudeDirectoryNotFound(
+                watch_dir.to_path_buf(),
+            ));
+        }
+
+        info!(
+            history_path = %history_path.display(),
+            "Initializing skill tracker"
+        );
+
+        // Create atomic offset for tracking file position
+        let offset = Arc::new(AtomicU64::new(0));
+
+        // Create channel for file change notifications (unbounded effectively with large buffer)
+        let (change_tx, change_rx) = mpsc::channel::<PathBuf>(1000);
+
+        // Spawn the async processing task
+        let sender_for_task = event_sender.clone();
+        let path_for_task = history_path.clone();
+        let offset_for_task = Arc::clone(&offset);
+        tokio::spawn(async move {
+            process_file_changes(change_rx, path_for_task, sender_for_task, offset_for_task).await;
+        });
+
+        // Create the file watcher
+        let watcher = create_history_watcher(history_path.clone(), change_tx)?;
+
+        // Handle initial read if file exists
+        let initial_offset = if history_path.exists() {
+            if config.emit_existing_on_startup {
+                // Emit all existing entries
+                let sender_for_init = event_sender.clone();
+                let path_for_init = history_path.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = emit_all_entries(&path_for_init, &sender_for_init).await {
+                        warn!(
+                            path = %path_for_init.display(),
+                            error = %e,
+                            "Failed to read initial history entries"
+                        );
+                    }
+                });
+            }
+            // Start watching from end of file
+            get_file_size(&history_path).unwrap_or(0)
+        } else {
+            // File doesn't exist yet, start from beginning when it's created
+            0
+        };
+
+        offset.store(initial_offset, Ordering::SeqCst);
+        debug!(initial_offset = initial_offset, "Set initial file offset");
+
+        Ok(Self {
+            watcher,
+            history_path,
+            event_sender,
+            offset,
+        })
+    }
+
+    /// Returns the path to the history.jsonl file being watched.
+    #[must_use]
+    pub fn history_path(&self) -> &Path {
+        &self.history_path
+    }
+
+    /// Returns the current byte offset in the file.
+    #[must_use]
+    pub fn current_offset(&self) -> u64 {
+        self.offset.load(Ordering::SeqCst)
+    }
+
+    /// Manually triggers a read of new entries since the last offset.
+    ///
+    /// This is useful for forcing a refresh without waiting for file events.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or if the event channel is closed.
+    pub async fn refresh(&self) -> Result<()> {
+        let new_offset = emit_new_entries(
+            &self.history_path,
+            &self.event_sender,
+            self.offset.load(Ordering::SeqCst),
+        )
+        .await?;
+        self.offset.store(new_offset, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+/// Creates the file system watcher for the history file.
+fn create_history_watcher(
+    history_path: PathBuf,
+    change_tx: mpsc::Sender<PathBuf>,
+) -> Result<RecommendedWatcher> {
+    let watch_dir = history_path
+        .parent()
+        .ok_or_else(|| SkillTrackerError::ClaudeDirectoryNotFound(history_path.clone()))?
+        .to_path_buf();
+
+    let history_filename = history_path
+        .file_name()
+        .map(|s| s.to_os_string())
+        .unwrap_or_default();
+
+    let mut watcher = RecommendedWatcher::new(
+        move |res: std::result::Result<Event, notify::Error>| {
+            handle_notify_event(res, &history_path, &change_tx);
+        },
+        Config::default(),
+    )?;
+
+    // Watch the parent directory since the file may not exist yet
+    watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
+
+    debug!(
+        watch_dir = %watch_dir.display(),
+        filename = ?history_filename,
+        "Started watching for history.jsonl changes"
+    );
+
+    Ok(watcher)
+}
+
+/// Handles raw notify events and sends them to the processing channel.
+fn handle_notify_event(
+    res: std::result::Result<Event, notify::Error>,
+    history_path: &Path,
+    change_tx: &mpsc::Sender<PathBuf>,
+) {
+    let event = match res {
+        Ok(event) => event,
+        Err(e) => {
+            error!(error = %e, "File watcher error");
+            return;
+        }
+    };
+
+    trace!(kind = ?event.kind, paths = ?event.paths, "Received notify event");
+
+    // Check if any of the event paths match our history file
+    let matches_history = event.paths.iter().any(|p| p == history_path);
+    if !matches_history {
+        return;
+    }
+
+    // Only process relevant event kinds
+    let should_process = matches!(
+        event.kind,
+        EventKind::Create(_)
+            | EventKind::Modify(ModifyKind::Data(_))
+            | EventKind::Modify(ModifyKind::Any)
+    );
+
+    if !should_process {
+        trace!(kind = ?event.kind, "Ignoring event kind");
+        return;
+    }
+
+    debug!(
+        path = %history_path.display(),
+        kind = ?event.kind,
+        "History file changed, sending to processor"
+    );
+
+    // No debounce - send immediately (per research.md)
+    if let Err(e) = change_tx.try_send(history_path.to_path_buf()) {
+        warn!(error = %e, "Failed to send change notification: channel full or closed");
+    }
+}
+
+/// Processes file change events, reading new lines and emitting events.
+async fn process_file_changes(
+    mut rx: mpsc::Receiver<PathBuf>,
+    history_path: PathBuf,
+    sender: mpsc::Sender<SkillInvocationEvent>,
+    offset: Arc<AtomicU64>,
+) {
+    debug!("Starting history file change processor");
+
+    while let Some(path) = rx.recv().await {
+        if path != history_path {
+            continue;
+        }
+
+        debug!(path = %path.display(), "Processing history file change");
+
+        let current_offset = offset.load(Ordering::SeqCst);
+        match emit_new_entries(&path, &sender, current_offset).await {
+            Ok(new_offset) => {
+                offset.store(new_offset, Ordering::SeqCst);
+                trace!(
+                    old_offset = current_offset,
+                    new_offset = new_offset,
+                    "Updated file offset"
+                );
+            }
+            Err(e) => {
+                warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to process history file change"
+                );
+            }
+        }
+    }
+
+    debug!("History file change processor shutting down");
+}
+
+/// Emits events for all entries in the history file.
+async fn emit_all_entries(path: &Path, sender: &mpsc::Sender<SkillInvocationEvent>) -> Result<()> {
+    let content = tokio::fs::read_to_string(path).await?;
+    let entries = parse_history_entries(&content);
+
+    for entry in entries {
+        if let Some(event) = create_skill_invocation_event(&entry) {
+            trace!(
+                skill = %event.skill_name,
+                session = %event.session_id,
+                "Emitting skill invocation event (initial read)"
+            );
+            sender
+                .send(event)
+                .await
+                .map_err(|_| SkillTrackerError::ChannelClosed)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Emits events for new entries since the given offset, returning the new offset.
+async fn emit_new_entries(
+    path: &Path,
+    sender: &mpsc::Sender<SkillInvocationEvent>,
+    from_offset: u64,
+) -> Result<u64> {
+    // Open file and seek to offset
+    let file = std::fs::File::open(path)?;
+    let file_len = file.metadata()?.len();
+
+    // If file was truncated (smaller than our offset), reset to start
+    let actual_offset = if file_len < from_offset {
+        warn!(
+            path = %path.display(),
+            file_len = file_len,
+            expected_offset = from_offset,
+            "File appears truncated, resetting offset"
+        );
+        0
+    } else {
+        from_offset
+    };
+
+    // Seek to the offset and read new content
+    let mut reader = std::io::BufReader::new(file);
+    reader.seek(SeekFrom::Start(actual_offset))?;
+
+    let mut new_content = String::new();
+    let mut line = String::new();
+
+    while reader.read_line(&mut line)? > 0 {
+        new_content.push_str(&line);
+        line.clear();
+    }
+
+    let new_offset = actual_offset + new_content.len() as u64;
+
+    // Parse and emit events for new entries
+    if !new_content.is_empty() {
+        let entries = parse_history_entries(&new_content);
+        debug!(
+            entries_count = entries.len(),
+            bytes_read = new_content.len(),
+            "Read new history entries"
+        );
+
+        for entry in entries {
+            if let Some(event) = create_skill_invocation_event(&entry) {
+                trace!(
+                    skill = %event.skill_name,
+                    session = %event.session_id,
+                    "Emitting skill invocation event"
+                );
+                sender
+                    .send(event)
+                    .await
+                    .map_err(|_| SkillTrackerError::ChannelClosed)?;
+            }
+        }
+    }
+
+    Ok(new_offset)
+}
+
+/// Gets the size of a file in bytes.
+fn get_file_size(path: &Path) -> Result<u64> {
+    let metadata = std::fs::metadata(path)?;
+    Ok(metadata.len())
 }
 
 #[cfg(test)]
@@ -898,5 +1392,445 @@ also invalid
         let entry = parse_history_entry(line).unwrap();
 
         assert_eq!(entry.project, "C:\\Users\\dev\\project");
+    }
+
+    // =========================================================================
+    // SkillTrackerError Tests
+    // =========================================================================
+
+    #[test]
+    fn skill_tracker_error_display() {
+        let err = SkillTrackerError::ChannelClosed;
+        assert_eq!(err.to_string(), "failed to send event: channel closed");
+
+        let err = SkillTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test"));
+        assert_eq!(err.to_string(), "claude directory not found: /test");
+    }
+
+    #[test]
+    fn skill_tracker_error_is_debug() {
+        let err = SkillTrackerError::ChannelClosed;
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ChannelClosed"));
+
+        let err = SkillTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test"));
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ClaudeDirectoryNotFound"));
+    }
+
+    // =========================================================================
+    // SkillTrackerConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn skill_tracker_config_default() {
+        let config = SkillTrackerConfig::default();
+        assert!(!config.emit_existing_on_startup);
+    }
+
+    #[test]
+    fn skill_tracker_config_clone() {
+        let config = SkillTrackerConfig {
+            emit_existing_on_startup: true,
+        };
+        let cloned = config.clone();
+        assert!(cloned.emit_existing_on_startup);
+    }
+
+    // =========================================================================
+    // SkillTracker File Operations Tests
+    // =========================================================================
+
+    use std::io::Write;
+    use tempfile::TempDir;
+    use tokio::time::{sleep, timeout, Duration};
+
+    /// Sample history.jsonl content for testing.
+    const SAMPLE_HISTORY: &str = r#"{"display": "/commit", "timestamp": 1738567268363, "project": "/proj", "sessionId": "sess-1"}
+{"display": "/review-pr 123", "timestamp": 1738567268400, "project": "/proj", "sessionId": "sess-2"}
+{"display": "/sdd:plan", "timestamp": 1738567268500, "project": "/proj", "sessionId": "sess-3"}"#;
+
+    /// Creates a temporary directory with a history.jsonl file.
+    fn create_test_history_file(content: &str) -> (TempDir, PathBuf) {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let history_path = temp_dir.path().join("history.jsonl");
+
+        let mut file = std::fs::File::create(&history_path).expect("Failed to create history file");
+        file.write_all(content.as_bytes())
+            .expect("Failed to write history content");
+        file.flush().expect("Failed to flush");
+
+        (temp_dir, history_path)
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_missing_directory() {
+        let (tx, _rx) = mpsc::channel(100);
+        let result = SkillTracker::with_path(PathBuf::from("/nonexistent/path/history.jsonl"), tx);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SkillTrackerError::ClaudeDirectoryNotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_with_valid_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let history_path = temp_dir.path().join("history.jsonl");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let result = SkillTracker::with_path(history_path.clone(), tx);
+
+        assert!(result.is_ok(), "Should create tracker for valid directory");
+        assert_eq!(result.unwrap().history_path(), history_path);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_file_does_not_exist() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let history_path = temp_dir.path().join("history.jsonl");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let tracker = SkillTracker::with_path(history_path, tx).expect("Should create tracker");
+
+        // Initial offset should be 0 since file doesn't exist
+        assert_eq!(tracker.current_offset(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_file_exists() {
+        let (_temp_dir, history_path) = create_test_history_file(SAMPLE_HISTORY);
+
+        let (tx, _rx) = mpsc::channel(100);
+        let tracker = SkillTracker::with_path(history_path, tx).expect("Should create tracker");
+
+        // Initial offset should be at end of file
+        assert_eq!(tracker.current_offset(), SAMPLE_HISTORY.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_with_emit_existing_on_startup() {
+        let (_temp_dir, history_path) = create_test_history_file(SAMPLE_HISTORY);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let config = SkillTrackerConfig {
+            emit_existing_on_startup: true,
+        };
+        let _tracker = SkillTracker::with_path_and_config(history_path, tx, config)
+            .expect("Should create tracker");
+
+        // Should receive initial events for all 3 entries
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(200), rx.recv()).await {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events.len(),
+            3,
+            "Should emit events for all existing entries"
+        );
+        assert_eq!(events[0].skill_name, "commit");
+        assert_eq!(events[1].skill_name, "review-pr");
+        assert_eq!(events[2].skill_name, "sdd:plan");
+    }
+
+    #[tokio::test]
+    async fn test_tracker_without_emit_existing_on_startup() {
+        let (_temp_dir, history_path) = create_test_history_file(SAMPLE_HISTORY);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = SkillTracker::with_path(history_path, tx).expect("Should create tracker");
+
+        // Should NOT receive any initial events
+        let result = timeout(Duration::from_millis(100), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "Should not receive events without emit_existing_on_startup"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tracker_refresh() {
+        let (temp_dir, history_path) = create_test_history_file(SAMPLE_HISTORY);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let tracker =
+            SkillTracker::with_path(history_path.clone(), tx).expect("Should create tracker");
+
+        // Reset offset to 0 for testing refresh
+        tracker.offset.store(0, Ordering::SeqCst);
+
+        // Call refresh
+        tracker.refresh().await.expect("Should refresh");
+
+        // Should receive events for all entries
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(200), rx.recv()).await {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events.len(),
+            3,
+            "Refresh should emit events for all entries"
+        );
+
+        // Offset should be updated
+        assert_eq!(tracker.current_offset(), SAMPLE_HISTORY.len() as u64);
+
+        drop(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_detects_new_entries() {
+        let (temp_dir, history_path) = create_test_history_file("");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker =
+            SkillTracker::with_path(history_path.clone(), tx).expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(Duration::from_millis(50)).await;
+
+        // Append a new entry
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&history_path)
+            .expect("Should open file");
+        writeln!(
+            file,
+            r#"{{"display": "/commit", "timestamp": 1738567268363, "project": "/proj", "sessionId": "sess-new"}}"#
+        )
+        .expect("Should write");
+        file.flush().expect("Should flush");
+
+        // Should receive the new event
+        let result = timeout(Duration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for new entry");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.skill_name, "commit");
+        assert_eq!(event.session_id, "sess-new");
+
+        drop(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_detects_multiple_new_entries() {
+        let (temp_dir, history_path) = create_test_history_file("");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker =
+            SkillTracker::with_path(history_path.clone(), tx).expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(Duration::from_millis(50)).await;
+
+        // Append multiple new entries
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&history_path)
+            .expect("Should open file");
+        writeln!(
+            file,
+            r#"{{"display": "/commit", "timestamp": 1738567268363, "project": "/proj", "sessionId": "sess-1"}}"#
+        )
+        .expect("Should write");
+        writeln!(
+            file,
+            r#"{{"display": "/review-pr", "timestamp": 1738567268400, "project": "/proj", "sessionId": "sess-2"}}"#
+        )
+        .expect("Should write");
+        file.flush().expect("Should flush");
+
+        // Should receive both events
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(500), rx.recv()).await {
+            events.push(event);
+            if events.len() >= 2 {
+                break;
+            }
+        }
+
+        assert_eq!(
+            events.len(),
+            2,
+            "Should receive events for both new entries"
+        );
+        assert_eq!(events[0].skill_name, "commit");
+        assert_eq!(events[1].skill_name, "review-pr");
+
+        drop(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_handles_invalid_entries_gracefully() {
+        let (temp_dir, history_path) = create_test_history_file("");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker =
+            SkillTracker::with_path(history_path.clone(), tx).expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(Duration::from_millis(50)).await;
+
+        // Append entries including invalid ones
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&history_path)
+            .expect("Should open file");
+        writeln!(file, "invalid json here").expect("Should write");
+        writeln!(
+            file,
+            r#"{{"display": "/commit", "timestamp": 1738567268363, "project": "/proj", "sessionId": "sess-valid"}}"#
+        )
+        .expect("Should write");
+        file.flush().expect("Should flush");
+
+        // Should receive only the valid event
+        let result = timeout(Duration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for valid entry");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.skill_name, "commit");
+        assert_eq!(event.session_id, "sess-valid");
+
+        drop(temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_get_file_size() {
+        let (_temp_dir, history_path) = create_test_history_file(SAMPLE_HISTORY);
+
+        let size = get_file_size(&history_path).expect("Should get file size");
+        assert_eq!(size, SAMPLE_HISTORY.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_get_file_size_missing_file() {
+        let result = get_file_size(Path::new("/nonexistent/file.jsonl"));
+        assert!(result.is_err());
+    }
+
+    // =========================================================================
+    // Emit Functions Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_emit_all_entries() {
+        let (_temp_dir, history_path) = create_test_history_file(SAMPLE_HISTORY);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        emit_all_entries(&history_path, &tx)
+            .await
+            .expect("Should emit all entries");
+
+        // Should receive 3 events
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
+            events.push(event);
+        }
+
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].skill_name, "commit");
+        assert_eq!(events[1].skill_name, "review-pr");
+        assert_eq!(events[2].skill_name, "sdd:plan");
+    }
+
+    #[tokio::test]
+    async fn test_emit_new_entries_from_offset() {
+        let content = r#"{"display": "/first", "timestamp": 1738567268363, "project": "/proj", "sessionId": "a"}
+{"display": "/second", "timestamp": 1738567268400, "project": "/proj", "sessionId": "b"}"#;
+        let (_temp_dir, history_path) = create_test_history_file(content);
+
+        // Calculate offset to just after first line
+        let first_line_len = content.lines().next().unwrap().len() + 1; // +1 for newline
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let new_offset = emit_new_entries(&history_path, &tx, first_line_len as u64)
+            .await
+            .expect("Should emit new entries");
+
+        // Should receive only the second event
+        let result = timeout(Duration::from_millis(100), rx.recv()).await;
+        assert!(result.is_ok());
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.skill_name, "second");
+
+        // New offset should be at end of file
+        assert_eq!(new_offset, content.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_emit_new_entries_handles_truncated_file() {
+        let (_temp_dir, history_path) = create_test_history_file(SAMPLE_HISTORY);
+
+        let (tx, mut rx) = mpsc::channel(100);
+
+        // Use an offset larger than the file size (simulating truncation)
+        let large_offset = (SAMPLE_HISTORY.len() + 1000) as u64;
+        let new_offset = emit_new_entries(&history_path, &tx, large_offset)
+            .await
+            .expect("Should handle truncated file");
+
+        // Should reset to beginning and read all entries
+        let mut events = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
+            events.push(event);
+        }
+
+        assert_eq!(
+            events.len(),
+            3,
+            "Should read all entries after truncation reset"
+        );
+        assert_eq!(new_offset, SAMPLE_HISTORY.len() as u64);
+    }
+
+    #[tokio::test]
+    async fn test_emit_new_entries_empty_file() {
+        let (_temp_dir, history_path) = create_test_history_file("");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let new_offset = emit_new_entries(&history_path, &tx, 0)
+            .await
+            .expect("Should handle empty file");
+
+        // Should receive no events
+        let result = timeout(Duration::from_millis(50), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "Should timeout with no events for empty file"
+        );
+
+        assert_eq!(new_offset, 0);
+    }
+
+    #[tokio::test]
+    async fn test_emit_new_entries_skips_non_skill_entries() {
+        let content = r#"{"display": "not a skill", "timestamp": 1738567268363, "project": "/proj", "sessionId": "a"}
+{"display": "/commit", "timestamp": 1738567268400, "project": "/proj", "sessionId": "b"}"#;
+        let (_temp_dir, history_path) = create_test_history_file(content);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        emit_new_entries(&history_path, &tx, 0)
+            .await
+            .expect("Should emit entries");
+
+        // Should receive only the valid skill event
+        let result = timeout(Duration::from_millis(100), rx.recv()).await;
+        assert!(result.is_ok());
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.skill_name, "commit");
+
+        // No more events
+        let result = timeout(Duration::from_millis(50), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "Should not receive event for non-skill entry"
+        );
     }
 }
