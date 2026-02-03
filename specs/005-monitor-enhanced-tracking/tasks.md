@@ -175,9 +175,9 @@
 
 ### Phase Completion
 - [x] T085 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T086 [GIT] Create/update PR to main with phase summary
-- [ ] T087 [GIT] Verify all CI checks pass
-- [ ] T088 [GIT] Report PR ready status
+- [x] T086 [GIT] Create/update PR to main with phase summary
+- [x] T087 [GIT] Verify all CI checks pass
+- [x] T088 [GIT] Report PR ready status
 
 **Checkpoint**: Agent spawn tracking fully functional and testable independently
 
