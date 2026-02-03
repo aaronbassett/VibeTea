@@ -105,6 +105,26 @@ interface ActivityIndicatorProps {
  */
 type ActivityLevel = 'none' | 'low' | 'medium' | 'high';
 
+/**
+ * Animation phases for session card transitions.
+ */
+export type SessionAnimationPhase = 'entering' | 'idle' | 'exiting' | 'statusChange';
+
+/**
+ * Animation states for session cards.
+ *
+ * Tracks the current animation phase, previous status for transitions,
+ * and hover state for interactive animations.
+ */
+export interface SessionCardAnimationState {
+  /** Current animation phase */
+  readonly phase: SessionAnimationPhase;
+  /** Previous status (for status change animation) */
+  readonly previousStatus: SessionStatus | null;
+  /** Whether hover state is active */
+  readonly isHovered: boolean;
+}
+
 // -----------------------------------------------------------------------------
 // Helper Functions
 // -----------------------------------------------------------------------------
