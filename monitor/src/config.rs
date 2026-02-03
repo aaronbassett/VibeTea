@@ -12,6 +12,9 @@
 //! | `VIBETEA_CLAUDE_DIR` | No | `~/.claude` | Claude Code directory |
 //! | `VIBETEA_BUFFER_SIZE` | No | 1000 | Event buffer capacity |
 //! | `VIBETEA_BASENAME_ALLOWLIST` | No | (all) | Comma-separated extensions to allow |
+//! | `VIBETEA_SUPABASE_URL` | No | - | Supabase edge function URL (enables persistence) |
+//! | `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | No | 60 | Seconds between batch submissions |
+//! | `VIBETEA_SUPABASE_RETRY_LIMIT` | No | 3 | Max retry attempts (1-10) |
 //!
 //! # Example
 //!
@@ -37,6 +40,18 @@ const DEFAULT_KEY_DIR: &str = ".vibetea";
 /// Default Claude Code directory name relative to home.
 const DEFAULT_CLAUDE_DIR: &str = ".claude";
 
+/// Default batch interval for persistence (in seconds).
+const DEFAULT_BATCH_INTERVAL_SECS: u64 = 60;
+
+/// Default retry limit for persistence batch submissions.
+const DEFAULT_RETRY_LIMIT: u8 = 3;
+
+/// Minimum allowed retry limit.
+const MIN_RETRY_LIMIT: u8 = 1;
+
+/// Maximum allowed retry limit.
+const MAX_RETRY_LIMIT: u8 = 10;
+
 /// Errors that can occur during configuration parsing.
 #[derive(Error, Debug)]
 pub enum ConfigError {
@@ -51,6 +66,24 @@ pub enum ConfigError {
     /// Failed to determine home directory.
     #[error("failed to determine home directory")]
     NoHomeDirectory,
+}
+
+/// Configuration for optional Supabase persistence.
+///
+/// When enabled, the monitor batches events and sends them to a Supabase edge function
+/// for historic data storage and activity heatmap visualization.
+#[derive(Debug, Clone)]
+pub struct PersistenceConfig {
+    /// Supabase edge function base URL (e.g., `https://xyz.supabase.co/functions/v1`).
+    pub supabase_url: String,
+
+    /// Seconds between batch submissions. Events are also sent immediately when
+    /// the batch reaches 1000 events.
+    pub batch_interval_secs: u64,
+
+    /// Maximum consecutive retry attempts before dropping a failed batch.
+    /// Must be between 1 and 10 (inclusive).
+    pub retry_limit: u8,
 }
 
 /// Configuration for the VibeTea Monitor.
@@ -74,6 +107,10 @@ pub struct Config {
     /// Optional allowlist of file basename patterns to watch.
     /// If `None`, all files are watched.
     pub basename_allowlist: Option<Vec<String>>,
+
+    /// Optional persistence configuration for Supabase.
+    /// If `None`, persistence is disabled and events are only sent in real-time.
+    pub persistence: Option<PersistenceConfig>,
 }
 
 impl Config {
@@ -143,6 +180,56 @@ impl Config {
                 .collect()
         });
 
+        // Optional: Persistence configuration (enabled if VIBETEA_SUPABASE_URL is set)
+        let persistence = match env::var("VIBETEA_SUPABASE_URL") {
+            Ok(supabase_url) => {
+                // Parse batch interval (default: 60, must be >= 1)
+                let batch_interval_secs = match env::var("VIBETEA_SUPABASE_BATCH_INTERVAL_SECS") {
+                    Ok(val) => {
+                        let secs = val.parse::<u64>().map_err(|_| ConfigError::InvalidValue {
+                            key: "VIBETEA_SUPABASE_BATCH_INTERVAL_SECS".to_string(),
+                            message: format!("expected positive integer, got '{val}'"),
+                        })?;
+                        if secs == 0 {
+                            return Err(ConfigError::InvalidValue {
+                                key: "VIBETEA_SUPABASE_BATCH_INTERVAL_SECS".to_string(),
+                                message: "batch interval must be at least 1 second".to_string(),
+                            });
+                        }
+                        secs
+                    }
+                    Err(_) => DEFAULT_BATCH_INTERVAL_SECS,
+                };
+
+                // Parse retry limit (default: 3, must be 1-10)
+                let retry_limit = match env::var("VIBETEA_SUPABASE_RETRY_LIMIT") {
+                    Ok(val) => {
+                        let limit = val.parse::<u8>().map_err(|_| ConfigError::InvalidValue {
+                            key: "VIBETEA_SUPABASE_RETRY_LIMIT".to_string(),
+                            message: format!("expected integer 1-10, got '{val}'"),
+                        })?;
+                        if !(MIN_RETRY_LIMIT..=MAX_RETRY_LIMIT).contains(&limit) {
+                            return Err(ConfigError::InvalidValue {
+                                key: "VIBETEA_SUPABASE_RETRY_LIMIT".to_string(),
+                                message: format!(
+                                    "retry limit must be between {MIN_RETRY_LIMIT} and {MAX_RETRY_LIMIT}, got {limit}"
+                                ),
+                            });
+                        }
+                        limit
+                    }
+                    Err(_) => DEFAULT_RETRY_LIMIT,
+                };
+
+                Some(PersistenceConfig {
+                    supabase_url,
+                    batch_interval_secs,
+                    retry_limit,
+                })
+            }
+            Err(_) => None,
+        };
+
         Ok(Self {
             server_url,
             source_id,
@@ -150,6 +237,7 @@ impl Config {
             claude_dir,
             buffer_size,
             basename_allowlist,
+            persistence,
         })
     }
 }
@@ -336,5 +424,135 @@ mod tests {
         let hostname = get_hostname();
         // Hostname should be non-empty (even if it's "unknown")
         assert!(!hostname.is_empty());
+    }
+
+    #[test]
+    #[serial]
+    fn test_persistence_disabled_when_url_not_set() {
+        with_clean_env(|| {
+            env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
+
+            let config = Config::from_env().expect("should parse config");
+
+            assert!(config.persistence.is_none());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_persistence_enabled_with_defaults() {
+        with_clean_env(|| {
+            env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
+            env::set_var(
+                "VIBETEA_SUPABASE_URL",
+                "https://xyz.supabase.co/functions/v1",
+            );
+
+            let config = Config::from_env().expect("should parse config with persistence");
+
+            let persistence = config.persistence.expect("persistence should be enabled");
+            assert_eq!(
+                persistence.supabase_url,
+                "https://xyz.supabase.co/functions/v1"
+            );
+            assert_eq!(persistence.batch_interval_secs, DEFAULT_BATCH_INTERVAL_SECS);
+            assert_eq!(persistence.retry_limit, DEFAULT_RETRY_LIMIT);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_persistence_with_custom_values() {
+        with_clean_env(|| {
+            env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
+            env::set_var(
+                "VIBETEA_SUPABASE_URL",
+                "https://xyz.supabase.co/functions/v1",
+            );
+            env::set_var("VIBETEA_SUPABASE_BATCH_INTERVAL_SECS", "120");
+            env::set_var("VIBETEA_SUPABASE_RETRY_LIMIT", "5");
+
+            let config = Config::from_env().expect("should parse config with custom persistence");
+
+            let persistence = config.persistence.expect("persistence should be enabled");
+            assert_eq!(
+                persistence.supabase_url,
+                "https://xyz.supabase.co/functions/v1"
+            );
+            assert_eq!(persistence.batch_interval_secs, 120);
+            assert_eq!(persistence.retry_limit, 5);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_persistence_retry_limit_zero_rejected() {
+        with_clean_env(|| {
+            env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
+            env::set_var(
+                "VIBETEA_SUPABASE_URL",
+                "https://xyz.supabase.co/functions/v1",
+            );
+            env::set_var("VIBETEA_SUPABASE_RETRY_LIMIT", "0");
+
+            let result = Config::from_env();
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::InvalidValue { ref key, ref message }
+                    if key == "VIBETEA_SUPABASE_RETRY_LIMIT"
+                    && message.contains("between 1 and 10")
+            ));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_persistence_retry_limit_eleven_rejected() {
+        with_clean_env(|| {
+            env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
+            env::set_var(
+                "VIBETEA_SUPABASE_URL",
+                "https://xyz.supabase.co/functions/v1",
+            );
+            env::set_var("VIBETEA_SUPABASE_RETRY_LIMIT", "11");
+
+            let result = Config::from_env();
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::InvalidValue { ref key, ref message }
+                    if key == "VIBETEA_SUPABASE_RETRY_LIMIT"
+                    && message.contains("between 1 and 10")
+            ));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn test_persistence_batch_interval_zero_rejected() {
+        with_clean_env(|| {
+            env::set_var("VIBETEA_SERVER_URL", "https://test.example.com");
+            env::set_var(
+                "VIBETEA_SUPABASE_URL",
+                "https://xyz.supabase.co/functions/v1",
+            );
+            env::set_var("VIBETEA_SUPABASE_BATCH_INTERVAL_SECS", "0");
+
+            let result = Config::from_env();
+            assert!(result.is_err());
+
+            let err = result.unwrap_err();
+            assert!(matches!(
+                err,
+                ConfigError::InvalidValue { ref key, ref message }
+                    if key == "VIBETEA_SUPABASE_BATCH_INTERVAL_SECS"
+                    && message.contains("at least 1 second")
+            ));
+        });
     }
 }
