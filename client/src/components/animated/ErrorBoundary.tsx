@@ -125,11 +125,7 @@ export class AnimationErrorBoundary extends Component<
    */
   private renderDefaultFallback(): ReactNode {
     return (
-      <div
-        style={defaultFallbackStyles}
-        role="alert"
-        aria-live="polite"
-      >
+      <div style={defaultFallbackStyles} role="alert" aria-live="polite">
         Animation unavailable
       </div>
     );

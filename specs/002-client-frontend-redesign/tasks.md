@@ -81,7 +81,7 @@
 - [x] T037 Run /sdd:map incremental for Phase 2 changes (skipped - not critical for MVP)
 - [x] T038 [GIT] Commit: update codebase documents for phase 2 (skipped with T037)
 - [x] T039 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T040 [GIT] Commit: finalize phase 2 retro
+- [x] T040 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
 - [ ] T041 [GIT] Push branch to origin (ensure pre-push hooks pass)

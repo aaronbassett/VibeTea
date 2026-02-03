@@ -200,11 +200,14 @@ export default function App() {
                         )}
                         {filters.timeRange !== null && (
                           <span className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 rounded-md">
-                            {filters.timeRange.start.toLocaleTimeString('en-US', {
-                              hour12: false,
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}{' '}
+                            {filters.timeRange.start.toLocaleTimeString(
+                              'en-US',
+                              {
+                                hour12: false,
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              }
+                            )}{' '}
                             -{' '}
                             {filters.timeRange.end.toLocaleTimeString('en-US', {
                               hour12: false,
