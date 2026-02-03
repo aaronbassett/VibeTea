@@ -219,8 +219,7 @@ async fn run_monitor() -> Result<()> {
             watch_dir = %watch_dir.display(),
             "Creating projects directory"
         );
-        std::fs::create_dir_all(&watch_dir)
-            .context("Failed to create watch directory")?;
+        std::fs::create_dir_all(&watch_dir).context("Failed to create watch directory")?;
     }
 
     let _watcher = FileWatcher::new(watch_dir.clone(), watch_tx).context(format!(

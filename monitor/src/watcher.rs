@@ -528,10 +528,7 @@ async fn drain_pending_removals(
 ) {
     let paths = pending.drain();
     if !paths.is_empty() {
-        debug!(
-            count = paths.len(),
-            "Draining coalesced pending removals"
-        );
+        debug!(count = paths.len(), "Draining coalesced pending removals");
         for path in paths {
             handle_file_removed_async(&path, positions, sender).await;
         }
@@ -562,7 +559,10 @@ async fn handle_file_created_async(
     }
 
     // Send event
-    if let Err(e) = sender.send(WatchEvent::FileCreated(path.to_path_buf())).await {
+    if let Err(e) = sender
+        .send(WatchEvent::FileCreated(path.to_path_buf()))
+        .await
+    {
         error!(error = %e, "Failed to send FileCreated event");
     }
 }
@@ -622,7 +622,10 @@ async fn handle_file_removed_async(
     }
 
     // Send event
-    if let Err(e) = sender.send(WatchEvent::FileRemoved(path.to_path_buf())).await {
+    if let Err(e) = sender
+        .send(WatchEvent::FileRemoved(path.to_path_buf()))
+        .await
+    {
         error!(error = %e, "Failed to send FileRemoved event");
     }
 }
