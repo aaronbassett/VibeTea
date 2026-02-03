@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security Vulnerability
+    url: https://github.com/aaronbassett/VibeTea/blob/main/SECURITY.md
+    about: Please report security vulnerabilities privately following our security policy.
+  - name: Questions
+    url: https://github.com/aaronbassett/VibeTea/discussions
+    about: Ask questions and discuss VibeTea in GitHub Discussions.
