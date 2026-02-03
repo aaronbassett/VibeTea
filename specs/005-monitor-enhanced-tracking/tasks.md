@@ -154,9 +154,9 @@
 - [x] T068 [US2] Create retro/P4.md for this phase
 
 ### Tests for User Story 2
-- [ ] T069 [GIT] Commit: initialize phase 4 retro
-- [ ] T070 [P] [US2] Unit test for Task tool_use parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [ ] T071 [P] [US2] Unit test for AgentSpawnEvent emission in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [x] T069 [GIT] Commit: initialize phase 4 retro
+- [x] T070 [P] [US2] Unit test for Task tool_use parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [x] T071 [P] [US2] Unit test for AgentSpawnEvent emission in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
 - [ ] T072 [GIT] Commit: add agent_tracker tests
 
 ### Implementation for User Story 2
