@@ -69,7 +69,7 @@ fn generate_valid_base64_seed() -> (String, [u8; 32]) {
     let mut seed = [0u8; 32];
     use rand::Rng;
     rand::rng().fill(&mut seed);
-    let base64_seed = BASE64_STANDARD.encode(&seed);
+    let base64_seed = BASE64_STANDARD.encode(seed);
     (base64_seed, seed)
 }
 
@@ -136,7 +136,7 @@ fn load_from_env_returns_error_when_not_set() {
 #[serial]
 fn whitespace_is_trimmed_from_env_value() {
     let guard = EnvGuard::new(ENV_VAR_NAME);
-    let (base64_seed, seed) = generate_valid_base64_seed();
+    let (base64_seed, _seed) = generate_valid_base64_seed();
 
     // Test with leading/trailing spaces
     let padded_value = format!("   {}   ", base64_seed);
@@ -249,7 +249,7 @@ fn short_key_produces_clear_error() {
     let guard = EnvGuard::new(ENV_VAR_NAME);
 
     // 16 bytes instead of 32 (valid base64, wrong length)
-    let short_key = BASE64_STANDARD.encode(&[0u8; 16]);
+    let short_key = BASE64_STANDARD.encode([0u8; 16]);
     guard.set(&short_key);
 
     let result = Crypto::load_from_env();
@@ -272,7 +272,7 @@ fn long_key_produces_clear_error() {
     let guard = EnvGuard::new(ENV_VAR_NAME);
 
     // 64 bytes instead of 32 (valid base64, wrong length)
-    let long_key = BASE64_STANDARD.encode(&[0u8; 64]);
+    let long_key = BASE64_STANDARD.encode([0u8; 64]);
     guard.set(&long_key);
 
     let result = Crypto::load_from_env();
@@ -536,10 +536,10 @@ fn rejects_url_safe_base64() {
     }
 
     // URL-safe base64 uses '-' and '_' instead of '+' and '/'
-    let url_safe_encoded = base64::prelude::BASE64_URL_SAFE.encode(&seed);
+    let url_safe_encoded = base64::prelude::BASE64_URL_SAFE.encode(seed);
 
     // Only set if URL-safe encoding differs from standard (it should for this seed)
-    let standard_encoded = BASE64_STANDARD.encode(&seed);
+    let standard_encoded = BASE64_STANDARD.encode(seed);
     if url_safe_encoded != standard_encoded {
         guard.set(&url_safe_encoded);
 
@@ -565,7 +565,7 @@ fn all_zero_seed_is_valid() {
     let guard = EnvGuard::new(ENV_VAR_NAME);
 
     let zero_seed = [0u8; 32];
-    let base64_seed = BASE64_STANDARD.encode(&zero_seed);
+    let base64_seed = BASE64_STANDARD.encode(zero_seed);
     guard.set(&base64_seed);
 
     let result = Crypto::load_from_env();
@@ -583,7 +583,7 @@ fn all_ff_seed_is_valid() {
     let guard = EnvGuard::new(ENV_VAR_NAME);
 
     let ff_seed = [0xffu8; 32];
-    let base64_seed = BASE64_STANDARD.encode(&ff_seed);
+    let base64_seed = BASE64_STANDARD.encode(ff_seed);
     guard.set(&base64_seed);
 
     let result = Crypto::load_from_env();
