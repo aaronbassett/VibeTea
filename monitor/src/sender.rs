@@ -72,6 +72,9 @@ const MAX_RETRY_ATTEMPTS: u32 = 10;
 /// HTTP request timeout.
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
+/// Maximum payload size per request (slightly under 1MB to leave room for headers/overhead).
+const MAX_CHUNK_SIZE: usize = 900 * 1024;
+
 /// Errors that can occur during event sending.
 #[derive(Error, Debug)]
 pub enum SenderError {
@@ -230,25 +233,69 @@ impl Sender {
 
     /// Flushes all buffered events to the server.
     ///
-    /// Events are sent in a single batch. On success, the buffer is cleared.
-    /// On failure, events remain in the buffer for later retry.
+    /// Events are sent in chunks that fit within the server's body size limit.
+    /// On success, the buffer is cleared. On failure, remaining events stay
+    /// in the buffer for later retry.
     ///
     /// # Errors
     ///
-    /// Returns `SenderError` if the batch cannot be sent after all retries.
+    /// Returns `SenderError` if a chunk cannot be sent after all retries.
     pub async fn flush(&mut self) -> Result<(), SenderError> {
         if self.buffer.is_empty() {
             return Ok(());
         }
 
+        // Chunk events to stay under server's body size limit
         let events: Vec<Event> = self.buffer.iter().cloned().collect();
-        self.send_batch(&events).await?;
+        let chunks = self.chunk_events(&events);
+
+        debug!(
+            total_events = events.len(),
+            chunks = chunks.len(),
+            "Flushing events in chunks"
+        );
+
+        for chunk in chunks {
+            self.send_batch(&chunk).await?;
+        }
 
         // Clear buffer on success
         self.buffer.clear();
         self.reset_retry_delay();
 
         Ok(())
+    }
+
+    /// Chunks events into batches that fit within the size limit.
+    fn chunk_events(&self, events: &[Event]) -> Vec<Vec<Event>> {
+        let mut chunks = Vec::new();
+        let mut current_chunk = Vec::new();
+        let mut current_size = 2; // Start with "[]" for empty array
+
+        for event in events {
+            // Estimate serialized size (actual JSON may be slightly different)
+            let event_size = serde_json::to_string(event)
+                .map(|s| s.len())
+                .unwrap_or(1000);
+
+            // Account for comma separator
+            let separator_size = if current_chunk.is_empty() { 0 } else { 1 };
+
+            if current_size + separator_size + event_size > MAX_CHUNK_SIZE && !current_chunk.is_empty() {
+                // Start a new chunk
+                chunks.push(std::mem::take(&mut current_chunk));
+                current_size = 2;
+            }
+
+            current_chunk.push(event.clone());
+            current_size += event_size + if current_chunk.len() > 1 { 1 } else { 0 };
+        }
+
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+
+        chunks
     }
 
     /// Sends a batch of events to the server with retry logic.
@@ -557,5 +604,62 @@ mod tests {
 
         sender.queue(create_test_event());
         assert!(!sender.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_events_small_batch() {
+        let sender = create_test_sender();
+        let events: Vec<Event> = (0..5).map(|_| create_test_event()).collect();
+
+        let chunks = sender.chunk_events(&events);
+
+        // Small batch should be a single chunk
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].len(), 5);
+    }
+
+    #[test]
+    fn test_chunk_events_empty() {
+        let sender = create_test_sender();
+        let events: Vec<Event> = vec![];
+
+        let chunks = sender.chunk_events(&events);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_events_splits_large_batch() {
+        let sender = create_test_sender();
+
+        // Create events with large context to force chunking
+        let large_context = "x".repeat(10000); // 10KB per event context
+        let events: Vec<Event> = (0..200).map(|_| {
+            Event::new(
+                "test-monitor".to_string(),
+                EventType::Tool,
+                EventPayload::Tool {
+                    session_id: Uuid::new_v4(),
+                    tool: "Read".to_string(),
+                    status: crate::types::ToolStatus::Completed,
+                    context: Some(large_context.clone()),
+                    project: Some("test".to_string()),
+                },
+            )
+        }).collect();
+
+        let chunks = sender.chunk_events(&events);
+
+        // Should have multiple chunks
+        assert!(chunks.len() > 1, "Expected multiple chunks, got {}", chunks.len());
+
+        // Total events should match
+        let total: usize = chunks.iter().map(|c| c.len()).sum();
+        assert_eq!(total, 200);
+
+        // Each chunk should serialize to under the limit
+        for chunk in &chunks {
+            let size = serde_json::to_string(chunk).unwrap().len();
+            assert!(size <= MAX_CHUNK_SIZE + 1000, "Chunk too large: {} bytes", size);
+        }
     }
 }
