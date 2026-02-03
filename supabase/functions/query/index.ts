@@ -122,24 +122,52 @@ function parseQueryParams(
 }
 
 /**
- * Query hourly aggregates from the database
+ * Database row type returned by get_hourly_aggregates RPC
+ */
+interface HourlyAggregateRow {
+  readonly source: string;
+  readonly date: string;
+  readonly hour: number;
+  readonly event_count: number;
+}
+
+/**
+ * Query hourly aggregates from the database using the get_hourly_aggregates RPC function
  *
- * TODO (T053): Implement database query
- *   - Query hourly_aggregates table
- *   - Filter by date range (now - days)
- *   - Filter by source if provided
- *   - Order by date/hour descending
+ * @param client - Supabase client for database access
+ * @param days - Number of days of historic data to fetch (7 or 30)
+ * @param source - Optional filter by monitor source
+ * @returns Array of HourlyAggregate records or an error object
  */
 async function queryAggregates(
-  _client: SupabaseClient,
-  _days: ValidDays,
-  _source: string | null
+  client: SupabaseClient,
+  days: ValidDays,
+  source: string | null
 ): Promise<{ aggregates: HourlyAggregate[] } | { error: string; message: string }> {
-  // TODO (T053): Implement actual database query
-  // Placeholder return for scaffold
-  return {
-    aggregates: [],
-  };
+  const { data, error } = await client.rpc("get_hourly_aggregates", {
+    days_back: days,
+    source_filter: source,
+  });
+
+  if (error) {
+    console.error("RPC error:", error);
+    return {
+      error: "internal_error",
+      message: `Failed to fetch aggregates: ${error.message}`,
+    };
+  }
+
+  // Map database rows (snake_case) to API response (camelCase)
+  const aggregates: HourlyAggregate[] = (data as HourlyAggregateRow[]).map(
+    (row) => ({
+      source: row.source,
+      date: row.date,
+      hour: row.hour,
+      eventCount: row.event_count,
+    })
+  );
+
+  return { aggregates };
 }
 
 /**
@@ -180,7 +208,6 @@ async function handleRequest(request: Request): Promise<Response> {
   try {
     const client = createSupabaseClient();
 
-    // TODO (T053): Implement actual database query
     const result = await queryAggregates(client, days, source);
 
     if ("error" in result) {
