@@ -108,6 +108,28 @@ impl RetryPolicy {
             jitter_factor: 0.0, // No jitter for deterministic tests
         }
     }
+
+    /// Validates and clamps values to acceptable ranges.
+    ///
+    /// This prevents panics and pathological behavior from invalid configurations:
+    /// - `jitter_factor` is clamped to 0.0..=1.0 (prevents panic in `random_range`)
+    /// - `initial_delay_ms` is clamped to at least 1
+    /// - `max_delay_ms` is clamped to at least `initial_delay_ms`
+    /// - `max_attempts` is clamped to at least 1
+    #[must_use]
+    pub fn validated(mut self) -> Self {
+        // Clamp jitter factor to valid range (negative values cause random_range panic)
+        self.jitter_factor = self.jitter_factor.clamp(0.0, 1.0);
+
+        // Ensure positive delays
+        self.initial_delay_ms = self.initial_delay_ms.max(1);
+        self.max_delay_ms = self.max_delay_ms.max(self.initial_delay_ms);
+
+        // Ensure at least one attempt
+        self.max_attempts = self.max_attempts.max(1);
+
+        self
+    }
 }
 
 /// HTTP request timeout.
@@ -187,9 +209,12 @@ impl SenderConfig {
     }
 
     /// Sets a custom retry policy.
+    ///
+    /// The policy is validated and values are clamped to safe ranges.
+    /// See [`RetryPolicy::validated`] for details.
     #[must_use]
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
-        self.retry_policy = policy;
+        self.retry_policy = policy.validated();
         self
     }
 }
@@ -496,8 +521,8 @@ impl Sender {
             .get(RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<u64>().ok())
-            // Retry-After header is in seconds, convert to ms
-            .map(|secs| secs * 1000)
+            // Retry-After header is in seconds, convert to ms (saturating to prevent overflow)
+            .map(|secs| secs.saturating_mul(1000))
             .unwrap_or(self.current_retry_delay_ms)
     }
 
@@ -857,5 +882,84 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_retry_policy_validated_clamps_jitter_factor() {
+        // Negative jitter factor should be clamped to 0
+        let policy = RetryPolicy {
+            jitter_factor: -0.5,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.jitter_factor, 0.0);
+
+        // Jitter factor > 1.0 should be clamped to 1.0
+        let policy = RetryPolicy {
+            jitter_factor: 2.5,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.jitter_factor, 1.0);
+
+        // Valid jitter factor should remain unchanged
+        let policy = RetryPolicy {
+            jitter_factor: 0.25,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.jitter_factor, 0.25);
+    }
+
+    #[test]
+    fn test_retry_policy_validated_clamps_delays() {
+        // Zero initial delay should be clamped to 1
+        let policy = RetryPolicy {
+            initial_delay_ms: 0,
+            max_delay_ms: 100,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.initial_delay_ms, 1);
+
+        // max_delay_ms less than initial should be raised to initial
+        let policy = RetryPolicy {
+            initial_delay_ms: 100,
+            max_delay_ms: 50,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.max_delay_ms, 100);
+    }
+
+    #[test]
+    fn test_retry_policy_validated_clamps_max_attempts() {
+        // Zero attempts should be clamped to 1
+        let policy = RetryPolicy {
+            max_attempts: 0,
+            ..Default::default()
+        }
+        .validated();
+        assert_eq!(policy.max_attempts, 1);
+    }
+
+    #[test]
+    fn test_with_retry_policy_validates() {
+        let config = SenderConfig::with_defaults(
+            "https://example.com".to_string(),
+            "test".to_string(),
+        )
+        .with_retry_policy(RetryPolicy {
+            initial_delay_ms: 0,
+            max_delay_ms: 0,
+            max_attempts: 0,
+            jitter_factor: -1.0,
+        });
+
+        // Values should be clamped by validation
+        assert_eq!(config.retry_policy.initial_delay_ms, 1);
+        assert_eq!(config.retry_policy.max_delay_ms, 1);
+        assert_eq!(config.retry_policy.max_attempts, 1);
+        assert_eq!(config.retry_policy.jitter_factor, 0.0);
     }
 }
