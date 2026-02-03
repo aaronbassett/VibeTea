@@ -67,10 +67,10 @@
 - [x] T025 Create retro/P2.md for this phase
 
 ### Implementation
-- [ ] T026 [GIT] Commit: initialize phase 2 retro
-- [ ] T027 [P] Create useReducedMotion hook at client/src/hooks/useReducedMotion.ts (use devs:react-dev agent)
-- [ ] T028 [P] Create usePageVisibility hook at client/src/hooks/usePageVisibility.ts (use devs:react-dev agent)
-- [ ] T029 [P] Create useAnimationThrottle hook at client/src/hooks/useAnimationThrottle.ts (use devs:react-dev agent)
+- [x] T026 [GIT] Commit: initialize phase 2 retro
+- [x] T027 [P] Create useReducedMotion hook at client/src/hooks/useReducedMotion.ts (use devs:react-dev agent)
+- [x] T028 [P] Create usePageVisibility hook at client/src/hooks/usePageVisibility.ts (use devs:react-dev agent)
+- [x] T029 [P] Create useAnimationThrottle hook at client/src/hooks/useAnimationThrottle.ts (use devs:react-dev agent)
 - [ ] T030 [GIT] Commit: add animation utility hooks
 - [ ] T031 Create AnimationErrorBoundary component at client/src/components/animated/ErrorBoundary.tsx (use devs:react-dev agent)
 - [ ] T032 [GIT] Commit: add AnimationErrorBoundary component
