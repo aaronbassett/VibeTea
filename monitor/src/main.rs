@@ -40,6 +40,15 @@ const DEFAULT_KEY_DIR: &str = ".vibetea";
 /// Graceful shutdown timeout.
 const SHUTDOWN_TIMEOUT_SECS: u64 = 5;
 
+/// Namespace UUID for generating deterministic session IDs from malformed paths.
+/// This ensures the same path always maps to the same session ID across restarts.
+const VIBETEA_NAMESPACE: Uuid = Uuid::from_bytes([
+    0x76, 0x69, 0x62, 0x65, // "vibe"
+    0x74, 0x65, 0x61, 0x2d, // "tea-"
+    0x73, 0x65, 0x73, 0x73, // "sess"
+    0x69, 0x6f, 0x6e, 0x73, // "ions"
+]);
+
 /// VibeTea Monitor - Claude Code session watcher.
 ///
 /// Watches Claude Code session files and forwards privacy-filtered
@@ -306,9 +315,12 @@ async fn process_watch_event(
                             error = %e,
                             "Failed to create session parser, using fallback"
                         );
-                        // Fallback: use nil UUID and extract project from path
+                        // Fallback: use deterministic v5 UUID based on path.
+                        // This ensures the same malformed path always maps to
+                        // the same session ID, even across monitor restarts.
+                        let path_str = path.to_string_lossy();
                         SessionParser::new(
-                            Uuid::new_v4(),
+                            Uuid::new_v5(&VIBETEA_NAMESPACE, path_str.as_bytes()),
                             path.parent()
                                 .and_then(|p| p.file_name())
                                 .and_then(|s| s.to_str())
@@ -412,11 +424,10 @@ fn convert_to_event(
         ),
 
         ParsedEventKind::Summary => (
-            EventType::Session,
-            EventPayload::Session {
+            EventType::Summary,
+            EventPayload::Summary {
                 session_id,
-                action: SessionAction::Ended,
-                project: project.to_string(),
+                summary: format!("Session ended for {}", project),
             },
         ),
     };
