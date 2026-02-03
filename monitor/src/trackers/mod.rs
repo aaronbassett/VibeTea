@@ -14,8 +14,9 @@
 //! All trackers follow the privacy-first principle: only metadata and aggregate
 //! metrics are extracted. No code content, prompts, or file contents are transmitted.
 
+pub mod stats_tracker;
+
 // Tracker modules will be added as they are implemented:
-// pub mod stats_tracker;
 // pub mod agent_tracker;
 // pub mod skill_tracker;
 // pub mod todo_tracker;
