@@ -199,10 +199,10 @@
 - [x] T107 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
-- [ ] T108 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T109 [GIT] Create/update PR to main with phase summary
-- [ ] T110 [GIT] Verify all CI checks pass
-- [ ] T111 [GIT] Report PR ready status
+- [x] T108 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T109 [GIT] Create/update PR to main with phase summary
+- [x] T110 [GIT] Verify all CI checks pass
+- [x] T111 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 3 (Session Cards) fully functional - borders glow, transitions animate, hover responds
 
