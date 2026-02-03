@@ -37,6 +37,12 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 /** View options for the heatmap */
 const VIEW_OPTIONS = [7, 30] as const;
 
+/** Maximum glow intensity (number of stacked events) */
+const MAX_GLOW_INTENSITY = 5;
+
+/** Duration in ms for glow decay animation */
+const GLOW_DECAY_DURATION_MS = 2000;
+
 // -----------------------------------------------------------------------------
 // Types
 // -----------------------------------------------------------------------------
@@ -77,6 +83,23 @@ interface HeatmapCell {
   readonly count: number;
   readonly dayLabel: string;
   readonly dateLabel: string;
+}
+
+/**
+ * State for managing glow effects on heatmap cells.
+ * Tracks intensity (brightness stacking) and last event time for decay.
+ *
+ * Glow behavior (FR-003):
+ * - Cells animate with orange glow (#d97757 from COLORS.grid.glow) when receiving new events
+ * - 2s timer restarts per event
+ * - Brightness stacks up to MAX_GLOW_INTENSITY (5) events max
+ * - Brightness decays over GLOW_DECAY_DURATION_MS (2000ms) when events stop
+ */
+interface HeatmapGlowState {
+  /** Map of cell key to glow intensity (0-5, where 0 = no glow, 5 = max brightness) */
+  readonly intensities: Map<string, number>;
+  /** Map of cell key to timestamp of last event (for decay timer management) */
+  readonly lastEventTimes: Map<string, number>;
 }
 
 // -----------------------------------------------------------------------------
