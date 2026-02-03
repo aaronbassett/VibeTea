@@ -151,11 +151,13 @@ function getEventDescription(event: VibeteaEvent): string {
     }
     // Enhanced tracking event descriptions
     case 'agent_spawn': {
-      const agentSpawnPayload = payload as VibeteaEvent<'agent_spawn'>['payload'];
+      const agentSpawnPayload =
+        payload as VibeteaEvent<'agent_spawn'>['payload'];
       return `Agent spawned: ${agentSpawnPayload.agentType} - ${agentSpawnPayload.description.slice(0, 50)}${agentSpawnPayload.description.length > 50 ? '...' : ''}`;
     }
     case 'skill_invocation': {
-      const skillPayload = payload as VibeteaEvent<'skill_invocation'>['payload'];
+      const skillPayload =
+        payload as VibeteaEvent<'skill_invocation'>['payload'];
       return `Skill invoked: ${skillPayload.skillName} in ${skillPayload.project}`;
     }
     case 'token_usage': {
@@ -164,22 +166,26 @@ function getEventDescription(event: VibeteaEvent): string {
       return `Token usage: ${totalTokens.toLocaleString()} tokens (${tokenPayload.model})`;
     }
     case 'session_metrics': {
-      const metricsPayload = payload as VibeteaEvent<'session_metrics'>['payload'];
+      const metricsPayload =
+        payload as VibeteaEvent<'session_metrics'>['payload'];
       return `Metrics: ${metricsPayload.totalSessions} sessions, ${metricsPayload.totalMessages} messages`;
     }
     case 'activity_pattern': {
-      const patternPayload = payload as VibeteaEvent<'activity_pattern'>['payload'];
+      const patternPayload =
+        payload as VibeteaEvent<'activity_pattern'>['payload'];
       const hourCount = Object.keys(patternPayload.hourCounts).length;
       return `Activity pattern: ${hourCount} hours tracked`;
     }
     case 'model_distribution': {
-      const distPayload = payload as VibeteaEvent<'model_distribution'>['payload'];
+      const distPayload =
+        payload as VibeteaEvent<'model_distribution'>['payload'];
       const modelCount = Object.keys(distPayload.modelUsage).length;
       return `Model distribution: ${modelCount} model${modelCount !== 1 ? 's' : ''} used`;
     }
     case 'todo_progress': {
       const todoPayload = payload as VibeteaEvent<'todo_progress'>['payload'];
-      const total = todoPayload.completed + todoPayload.inProgress + todoPayload.pending;
+      const total =
+        todoPayload.completed + todoPayload.inProgress + todoPayload.pending;
       return `Todo progress: ${todoPayload.completed}/${total} completed${todoPayload.abandoned ? ' (abandoned)' : ''}`;
     }
     case 'file_change': {
@@ -187,7 +193,8 @@ function getEventDescription(event: VibeteaEvent): string {
       return `File change: +${filePayload.linesAdded}/-${filePayload.linesRemoved} lines (v${filePayload.version})`;
     }
     case 'project_activity': {
-      const projectPayload = payload as VibeteaEvent<'project_activity'>['payload'];
+      const projectPayload =
+        payload as VibeteaEvent<'project_activity'>['payload'];
       return `Project ${projectPayload.isActive ? 'active' : 'inactive'}: ${projectPayload.projectPath}`;
     }
     default:
@@ -228,7 +235,10 @@ function EventRow({ event }: { readonly event: VibeteaEvent }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-100 truncate">{description}</p>
         <p className="text-xs text-gray-500 truncate">
-          {event.source}{getSessionId(event) !== undefined ? ` | ${getSessionId(event)?.slice(0, 8)}...` : ''}
+          {event.source}
+          {getSessionId(event) !== undefined
+            ? ` | ${getSessionId(event)?.slice(0, 8)}...`
+            : ''}
         </p>
       </div>
 

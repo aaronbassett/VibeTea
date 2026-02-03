@@ -221,14 +221,29 @@ export type EventPayload =
   | { readonly type: 'error'; readonly payload: ErrorPayload }
   // Enhanced tracking payloads
   | { readonly type: 'agent_spawn'; readonly payload: AgentSpawnPayload }
-  | { readonly type: 'skill_invocation'; readonly payload: SkillInvocationPayload }
+  | {
+      readonly type: 'skill_invocation';
+      readonly payload: SkillInvocationPayload;
+    }
   | { readonly type: 'token_usage'; readonly payload: TokenUsagePayload }
-  | { readonly type: 'session_metrics'; readonly payload: SessionMetricsPayload }
-  | { readonly type: 'activity_pattern'; readonly payload: ActivityPatternPayload }
-  | { readonly type: 'model_distribution'; readonly payload: ModelDistributionPayload }
+  | {
+      readonly type: 'session_metrics';
+      readonly payload: SessionMetricsPayload;
+    }
+  | {
+      readonly type: 'activity_pattern';
+      readonly payload: ActivityPatternPayload;
+    }
+  | {
+      readonly type: 'model_distribution';
+      readonly payload: ModelDistributionPayload;
+    }
   | { readonly type: 'todo_progress'; readonly payload: TodoProgressPayload }
   | { readonly type: 'file_change'; readonly payload: FileChangePayload }
-  | { readonly type: 'project_activity'; readonly payload: ProjectActivityPayload };
+  | {
+      readonly type: 'project_activity';
+      readonly payload: ProjectActivityPayload;
+    };
 
 // -----------------------------------------------------------------------------
 // VibeTea Event Interface

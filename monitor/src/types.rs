@@ -245,7 +245,6 @@ pub enum EventPayload {
     // ========================================================================
     // Enhanced Tracking Event Variants
     // ========================================================================
-
     /// Agent spawn event for Task tool tracking.
     AgentSpawn(AgentSpawnEvent),
 

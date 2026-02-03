@@ -203,7 +203,6 @@ pub enum EventPayload {
 
     // New event variants for enhanced tracking - ordered from most specific to least specific
     // These must come BEFORE Activity since Activity only requires session_id
-
     /// File change tracking events.
     ///
     /// Very specific: has `version`, `lines_added`, `lines_removed`, `lines_modified`, `file_hash`.
@@ -674,5 +673,4 @@ mod tests {
             assert_eq!(event, roundtrip);
         }
     }
-
 }

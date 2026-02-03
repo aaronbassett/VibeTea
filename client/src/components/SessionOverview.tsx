@@ -205,7 +205,10 @@ function countRecentEventsBySession(
 
     if (age <= windowMs && age >= 0) {
       // Only count events that have a sessionId
-      if ('sessionId' in event.payload && typeof event.payload.sessionId === 'string') {
+      if (
+        'sessionId' in event.payload &&
+        typeof event.payload.sessionId === 'string'
+      ) {
         const sessionId = event.payload.sessionId;
         const currentCount = counts.get(sessionId) ?? 0;
         counts.set(sessionId, currentCount + 1);

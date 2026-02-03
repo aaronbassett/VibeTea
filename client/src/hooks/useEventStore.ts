@@ -132,7 +132,10 @@ export const useEventStore = create<EventStore>()((set) => ({
 
       // Only update session state for events that have a sessionId
       // Some enhanced tracking events (token_usage, session_metrics, etc.) are global
-      if (!('sessionId' in event.payload) || typeof event.payload.sessionId !== 'string') {
+      if (
+        !('sessionId' in event.payload) ||
+        typeof event.payload.sessionId !== 'string'
+      ) {
         return { events: newEvents };
       }
 
@@ -276,7 +279,10 @@ export function selectEventsBySession(
 ): readonly VibeteaEvent[] {
   return state.events.filter((event) => {
     // Only include events that have a sessionId matching the filter
-    if ('sessionId' in event.payload && typeof event.payload.sessionId === 'string') {
+    if (
+      'sessionId' in event.payload &&
+      typeof event.payload.sessionId === 'string'
+    ) {
       return event.payload.sessionId === sessionId;
     }
     return false;
@@ -326,7 +332,10 @@ export function selectFilteredEvents(
   return events.filter((event) => {
     // Session filter - only filter events that have a sessionId
     if (filters.sessionId !== null) {
-      if ('sessionId' in event.payload && typeof event.payload.sessionId === 'string') {
+      if (
+        'sessionId' in event.payload &&
+        typeof event.payload.sessionId === 'string'
+      ) {
         if (event.payload.sessionId !== filters.sessionId) {
           return false;
         }
