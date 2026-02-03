@@ -27,7 +27,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use vibetea_monitor::config::Config;
-use vibetea_monitor::crypto::Crypto;
+use vibetea_monitor::crypto::{Crypto, KeySource};
 use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
@@ -179,16 +179,38 @@ async fn run_monitor() -> Result<()> {
         "Configuration loaded"
     );
 
-    // Load cryptographic keys
-    let crypto = Crypto::load(&config.key_path).context(format!(
-        "Failed to load keys from {}. Run 'vibetea-monitor init' first.",
+    // Load cryptographic keys with environment variable precedence
+    let (crypto, key_source) = Crypto::load_with_fallback(&config.key_path).context(format!(
+        "Failed to load cryptographic key. Either set VIBETEA_PRIVATE_KEY environment variable \
+         or run 'vibetea-monitor init' to generate keys at {}.",
         config.key_path.display()
     ))?;
 
-    info!(
-        key_path = %config.key_path.display(),
-        "Cryptographic keys loaded"
-    );
+    // Log which key source is being used (FR-007)
+    match &key_source {
+        KeySource::EnvironmentVariable => {
+            // Check if file key also exists and log if it's being ignored (FR-002)
+            if Crypto::exists(&config.key_path) {
+                info!(
+                    ignored_path = %config.key_path.display(),
+                    "File key exists but VIBETEA_PRIVATE_KEY takes precedence"
+                );
+            }
+            info!(
+                source = "environment",
+                fingerprint = %crypto.public_key_fingerprint(),
+                "Cryptographic key loaded"
+            );
+        }
+        KeySource::File(path) => {
+            info!(
+                source = "file",
+                path = %path.display(),
+                fingerprint = %crypto.public_key_fingerprint(),
+                "Cryptographic key loaded"
+            );
+        }
+    }
 
     // Create sender
     let sender_config = SenderConfig::new(
