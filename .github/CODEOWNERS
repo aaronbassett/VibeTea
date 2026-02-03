@@ -1,0 +1,32 @@
+# CODEOWNERS for VibeTea
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything in the repo
+* @aaronbassett
+
+# Rust Server
+/server/ @aaronbassett
+
+# Rust Monitor
+/monitor/ @aaronbassett
+
+# React Client/Dashboard
+/client/ @aaronbassett
+
+# Discovery Service
+/discovery/ @aaronbassett
+
+# Specifications
+/specs/ @aaronbassett
+
+# CI/CD and GitHub configuration
+/.github/ @aaronbassett
+
+# Documentation
+*.md @aaronbassett
+/docs/ @aaronbassett
+
+# Configuration files
+Cargo.toml @aaronbassett
+Cargo.lock @aaronbassett
+/client/package.json @aaronbassett
