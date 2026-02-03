@@ -29,25 +29,25 @@
 **Purpose**: Project initialization, dependencies, and basic structure
 
 ### Git Workflow Start
-- [ ] T001 [GIT] Verify on main branch and working tree is clean
-- [ ] T002 [GIT] Pull latest changes from origin/main
-- [ ] T003 [GIT] Create feature branch: 003-monitor-tui
+- [x] T001 [GIT] Verify on main branch and working tree is clean
+- [x] T002 [GIT] Pull latest changes from origin/main
+- [x] T003 [GIT] Create feature branch: 003-monitor-tui
 
 ### Setup Tasks
-- [ ] T004 Add ratatui and crossterm dependencies to monitor/Cargo.toml (use devs:rust-dev agent)
-- [ ] T005 [GIT] Commit: add TUI dependencies
-- [ ] T006 [P] Create TUI module structure in monitor/src/tui/mod.rs (use devs:rust-dev agent)
-- [ ] T007 [P] Create widgets module structure in monitor/src/tui/widgets/mod.rs (use devs:rust-dev agent)
-- [ ] T008 [GIT] Commit: scaffold TUI module structure
-- [ ] T009 Update monitor/src/lib.rs to export tui module (use devs:rust-dev agent)
-- [ ] T010 [GIT] Commit: export TUI module from lib.rs
-- [ ] T011 Verify cargo build compiles with new structure
+- [x] T004 Add ratatui and crossterm dependencies to monitor/Cargo.toml (use devs:rust-dev agent)
+- [x] T005 [GIT] Commit: add TUI dependencies
+- [x] T006 [P] Create TUI module structure in monitor/src/tui/mod.rs (use devs:rust-dev agent)
+- [x] T007 [P] Create widgets module structure in monitor/src/tui/widgets/mod.rs (use devs:rust-dev agent)
+- [x] T008 [GIT] Commit: scaffold TUI module structure
+- [x] T009 Update monitor/src/lib.rs to export tui module (use devs:rust-dev agent)
+- [x] T010 [GIT] Commit: export TUI module from lib.rs
+- [x] T011 Verify cargo build compiles with new structure
 
 ### Phase Completion
-- [ ] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T013 [GIT] Create/update PR to main with phase summary
-- [ ] T014 [GIT] Verify all CI checks pass
-- [ ] T015 [GIT] Report PR ready status
+- [x] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T013 [GIT] Create/update PR to main with phase summary
+- [x] T014 [GIT] Verify all CI checks pass
+- [x] T015 [GIT] Report PR ready status
 
 ---
 
