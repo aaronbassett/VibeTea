@@ -377,6 +377,15 @@ function SessionCard({
       animate="animate"
       exit="exit"
       layout
+      whileHover={
+        onClick !== undefined
+          ? {
+              scale: 1.02,
+              boxShadow: '0 0 12px 2px rgba(217, 119, 87, 0.3)',
+              transition: SPRING_CONFIGS.gentle,
+            }
+          : undefined
+      }
     >
       {/* Header row: Project name and status badge */}
       <div className="flex items-start justify-between gap-2 mb-2">
