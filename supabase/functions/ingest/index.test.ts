@@ -397,9 +397,8 @@ Deno.test("ingest auth: returns error when signature is empty", async () => {
     const result: AuthResult = await verifyIngestAuth(request, body);
 
     assertEquals(result.isValid, false);
-    // Empty string still counts as missing the header content-wise
-    // but the header is technically present, so we get invalid signature
-    assertEquals(result.error, "Invalid signature");
+    // Empty string is falsy in JavaScript, so it's treated as missing
+    assertEquals(result.error, "Missing X-Signature header");
     assertEquals(result.sourceId, undefined);
   } finally {
     cleanupTestKeys();
