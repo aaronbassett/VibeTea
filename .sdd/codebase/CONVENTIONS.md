@@ -14,6 +14,7 @@
 | ESLint (TypeScript/Client) | `eslint.config.js` | `npm run lint` |
 | rustfmt (Rust/Server/Monitor) | Default settings | `cargo fmt` |
 | clippy (Rust/Server/Monitor) | Default lints | `cargo clippy` |
+| Deno fmt (Supabase Edge Functions) | Default settings | `deno fmt` |
 
 ### Style Rules
 
@@ -37,6 +38,29 @@
 | Line length | 100 chars (soft) | rustfmt respects natural breaks |
 | Comments | `//` for lines, `///` for docs | Doc comments on public items |
 | Naming | snake_case for functions, PascalCase for types | `fn get_config()`, `struct Config` |
+
+#### SQL (Database Migrations)
+
+| Rule | Convention | Example |
+|------|------------|---------|
+| Identifiers | SCREAMING_SNAKE_CASE for table/column names | `public.events`, `event_type`, `created_at` |
+| Keywords | UPPERCASE for SQL keywords | `CREATE TABLE`, `NOT NULL`, `PRIMARY KEY` |
+| Comments | SQL block comments with descriptions | `-- Event identifier (format: evt_<20-char-suffix>)` |
+| Indexing | Descriptive names with `idx_` prefix | `idx_events_timestamp`, `idx_events_source` |
+| Constraints | Descriptive constraint names | `CHECK (event_type IN (...)` |
+| Functions | snake_case for function names | `bulk_insert_events()`, `get_hourly_aggregates()` |
+| Function parameters | snake_case | `days_back INTEGER`, `source_filter TEXT` |
+| Return table columns | snake_case | `date DATE`, `hour INTEGER`, `event_count BIGINT` |
+
+#### Deno/TypeScript (Edge Functions)
+
+| Rule | Convention | Example |
+|------|------------|---------|
+| Indentation | 2 spaces | Standard TypeScript |
+| Module imports | Use ESM with `.ts` extensions | `import * as ed from "https://esm.sh/..."` |
+| Error handling | Try-catch with null returns | Return `false`/`null` on error |
+| Env vars | Use `Deno.env.get()` | `Deno.env.get("VIBETEA_PUBLIC_KEYS")` |
+| Logging | `console.error()` for failures | `console.error("Signature verification error:", error)` |
 
 ## Naming Conventions
 
@@ -63,7 +87,7 @@
 | Functions | camelCase, verb prefix | `selectEventsBySession()`, `isSessionEvent()`, `parseEventMessage()`, `calculateBackoff()`, `formatTimestamp()`, `getEventDescription()`, `countRecentEventsBySession()`, `getActivityLevel()` |
 | Classes | PascalCase (rare in modern React) | N/A |
 | Interfaces | PascalCase, no `I` prefix | `EventStore`, `Session`, `VibeteaEvent`, `UseWebSocketReturn`, `ConnectionStatusProps`, `EventStreamProps`, `SessionOverviewProps`, `ActivityIndicatorProps` |
-| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus`, `TokenStatus`, `EventType`, `ActivityLevel`, `SessionStatus` |
+| Types | PascalCase | `VibeteaEvent<T>`, `EventPayload`, `ConnectionStatus`, `TokenStatus`, `EventType`, `ActivityLevel`, `SessionStatus`, `HourlyAggregate` |
 | Type guards | `is` prefix | `isSessionEvent()`, `isValidEventType()` |
 | Enums | PascalCase | N/A (use union types instead) |
 | Refs | camelCase with `Ref` suffix | `wsRef`, `reconnectTimeoutRef`, `connectRef`, `parentRef`, `previousEventCountRef` |
@@ -90,6 +114,29 @@
 | Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command` |
 | Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
+
+### SQL (Database)
+
+#### Identifiers
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Tables | snake_case | `events`, `sessions`, `aggregates` |
+| Columns | snake_case | `event_type`, `session_id`, `timestamp`, `created_at`, `event_count` |
+| Indexes | `idx_` prefix + descriptive name | `idx_events_timestamp`, `idx_events_source`, `idx_events_source_timestamp` |
+| Functions | snake_case | `bulk_insert_events()`, `get_hourly_aggregates()` |
+| Constraints | Type prefix or descriptive | `CHECK (event_type IN (...))` |
+
+### Deno/TypeScript (Edge Functions)
+
+#### Identifiers
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Functions | camelCase | `verifySignature()`, `getPublicKeyForSource()`, `validateBearerToken()` |
+| Exports | camelCase for functions | `export async function verifyIngestAuth()` |
+| Interfaces | PascalCase | `AuthResult` |
+| Error types | String-based or inline | Error messages in `error` field |
 
 ## Error Handling
 
@@ -128,6 +175,15 @@ Client error handling uses:
 | File watching errors | String-based variants | `MonitorError::Watch(String)` |
 | JSONL parsing errors | String-based variants | `MonitorError::Parse(String)` |
 
+#### Deno/TypeScript (Edge Functions)
+
+| Scenario | Pattern | Example Location |
+|----------|---------|------------------|
+| Signature verification | Return `AuthResult` with error field | `supabase/functions/_shared/auth.ts` defines `AuthResult` |
+| Missing headers | Return `AuthResult` with descriptive error | `verifyIngestAuth()` returns `{ isValid: false, error: "Missing X-Source-ID header" }` |
+| Invalid tokens | Return `AuthResult` with specific error message | `verifyQueryAuth()` returns `{ isValid: false, error: "Invalid or missing bearer token" }` |
+| Logging errors | Use `console.error()` with context | `console.error("Signature verification error:", error)` |
+
 ### Error Response Format
 
 #### TypeScript (Standard for client responses)
@@ -140,6 +196,22 @@ Client error handling uses:
     details?: object
   }
 }
+```
+
+#### Deno/Edge Functions (AuthResult pattern)
+
+```typescript
+interface AuthResult {
+  readonly isValid: boolean;
+  readonly error?: string;
+  readonly sourceId?: string;
+}
+
+// Success case
+{ isValid: true, sourceId: "my-source" }
+
+// Failure case
+{ isValid: false, error: "Missing X-Source-ID header" }
 ```
 
 #### Rust Error Messages
@@ -244,6 +316,14 @@ console.error('[useWebSocket] Connection error:', event);
 console.error('[useWebSocket] Failed to create WebSocket:', error);
 ```
 
+In Deno/Edge Functions, use `console.error()` for failures:
+
+```typescript
+console.error(`Invalid public key length: ${publicKey.length}, expected 32`);
+console.error("Signature verification error:", error);
+console.error("VIBETEA_PUBLIC_KEYS environment variable not set");
+```
+
 ## Common Patterns
 
 ### Event-Driven Architecture
@@ -301,6 +381,193 @@ pub struct Event {
     pub payload: EventPayload,
 }
 ```
+
+### Hourly Aggregate Type (Phase 11)
+
+TypeScript interface for time-series data visualization:
+
+```typescript
+/**
+ * Hourly aggregate of events for heatmap visualization.
+ * Returned by the query edge function from get_hourly_aggregates().
+ */
+export interface HourlyAggregate {
+  /** Monitor identifier */
+  readonly source: string;
+  /** Date in YYYY-MM-DD format (UTC) */
+  readonly date: string;
+  /** Hour of day 0-23 (UTC) */
+  readonly hour: number;
+  /** Count of events in this hour */
+  readonly eventCount: number;
+}
+```
+
+Naming conventions:
+1. **Interface naming**: Singular noun describing the data (`HourlyAggregate`, not `HourlyAggregates`)
+2. **Field naming**: camelCase for all fields (`eventCount`, `source`, `date`, `hour`)
+3. **Readonly properties**: All interface properties are readonly to enforce immutability
+4. **Field types**: Use simple types (string, number) for JSON compatibility
+5. **Documentation**: Include JSDoc with usage context and field descriptions
+
+### Deno Edge Function Authentication Pattern
+
+Secure authentication for Supabase Edge Functions:
+
+**From `supabase/functions/_shared/auth.ts`**:
+
+```typescript
+/**
+ * Result of authentication verification
+ */
+export interface AuthResult {
+  readonly isValid: boolean;
+  readonly error?: string;
+  readonly sourceId?: string;
+}
+
+/**
+ * Verify Ed25519 signature authentication for ingest endpoint
+ *
+ * @param request - The incoming Request object
+ * @param body - The request body as a string (must be read before calling)
+ * @returns AuthResult with validation status
+ */
+export async function verifyIngestAuth(
+  request: Request,
+  body: string
+): Promise<AuthResult> {
+  const sourceId = request.headers.get("X-Source-ID");
+  const signature = request.headers.get("X-Signature");
+
+  if (!sourceId) {
+    return { isValid: false, error: "Missing X-Source-ID header" };
+  }
+
+  if (!signature) {
+    return { isValid: false, error: "Missing X-Signature header" };
+  }
+
+  const publicKey = getPublicKeyForSource(sourceId);
+  if (!publicKey) {
+    return { isValid: false, error: `Unknown source: ${sourceId}` };
+  }
+
+  const message = new TextEncoder().encode(body);
+  const isValid = await verifySignature(publicKey, signature, message);
+
+  if (!isValid) {
+    return { isValid: false, error: "Invalid signature" };
+  }
+
+  return { isValid: true, sourceId };
+}
+
+/**
+ * Verify bearer token authentication for query endpoint
+ *
+ * @param request - The incoming Request object
+ * @returns AuthResult with validation status
+ */
+export function verifyQueryAuth(request: Request): AuthResult {
+  const authHeader = request.headers.get("Authorization");
+
+  if (!validateBearerToken(authHeader)) {
+    return { isValid: false, error: "Invalid or missing bearer token" };
+  }
+
+  return { isValid: true };
+}
+```
+
+Key patterns:
+1. **AuthResult interface**: Standard return type with `isValid` boolean and optional error message
+2. **Header extraction**: Use `request.headers.get()` for case-insensitive header access
+3. **Validation order**: Check required headers first, then delegate to validation functions
+4. **Error messages**: Return descriptive errors for debugging without exposing implementation details
+5. **Async function pattern**: Use `async` for Ed25519 verification with `@noble/ed25519`
+6. **Environment variables**: Use `Deno.env.get()` for runtime configuration
+
+### Database Function Pattern (SQL)
+
+PostgreSQL functions with proper naming and documentation:
+
+```sql
+-- Function: bulk_insert_events
+-- Description: Atomic batch insertion of events from the ingest edge function
+-- Parameters: events_json - JSONB array of event objects
+-- Returns: Number of successfully inserted events
+-- Note: Uses ON CONFLICT DO NOTHING for idempotency
+
+CREATE OR REPLACE FUNCTION public.bulk_insert_events(events_json JSONB)
+RETURNS TABLE(inserted_count BIGINT) AS $$
+BEGIN
+  RETURN QUERY
+  WITH inserted AS (
+    INSERT INTO public.events (id, source, timestamp, event_type, payload)
+    SELECT
+      (e->>'id')::TEXT,
+      (e->>'source')::TEXT,
+      (e->>'timestamp')::TIMESTAMPTZ,
+      (e->>'eventType')::TEXT,
+      e->'payload'
+    FROM jsonb_array_elements(events_json) AS e
+    ON CONFLICT (id) DO NOTHING
+    RETURNING 1
+  )
+  SELECT COUNT(*)::BIGINT FROM inserted;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Function: get_hourly_aggregates
+-- Description: Retrieve hourly event counts for heatmap visualization
+-- Parameters:
+--   days_back - Number of days to look back (default: 7)
+--   source_filter - Optional source filter (default: NULL for all sources)
+-- Returns: Table of (source, date, hour, event_count) sorted by date/hour DESC
+
+CREATE OR REPLACE FUNCTION public.get_hourly_aggregates(
+  days_back INTEGER DEFAULT 7,
+  source_filter TEXT DEFAULT NULL
+)
+RETURNS TABLE(
+  source TEXT,
+  date DATE,
+  hour INTEGER,
+  event_count BIGINT
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT
+    e.source,
+    DATE(e.timestamp AT TIME ZONE 'UTC') AS date,
+    EXTRACT(HOUR FROM e.timestamp AT TIME ZONE 'UTC')::INTEGER AS hour,
+    COUNT(*)::BIGINT AS event_count
+  FROM public.events e
+  WHERE
+    e.timestamp >= NOW() - (days_back || ' days')::INTERVAL
+    AND (source_filter IS NULL OR e.source = source_filter)
+  GROUP BY e.source, DATE(e.timestamp AT TIME ZONE 'UTC'), EXTRACT(HOUR FROM e.timestamp AT TIME ZONE 'UTC')
+  ORDER BY date DESC, hour DESC;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Grant execute permission to service role only
+GRANT EXECUTE ON FUNCTION public.bulk_insert_events(JSONB) TO service_role;
+GRANT EXECUTE ON FUNCTION public.get_hourly_aggregates(INTEGER, TEXT) TO service_role;
+```
+
+Key patterns:
+1. **Function naming**: snake_case (PostgreSQL convention)
+2. **Documentation**: Comments describing purpose, parameters, and return values
+3. **Parameter names**: snake_case with descriptive names
+4. **Return table columns**: Explicitly defined in RETURNS TABLE clause
+5. **Default values**: Use LANGUAGE plpgsql with DEFAULT keyword
+6. **Security**: SECURITY DEFINER limits execution to function owner
+7. **Permissions**: GRANT EXECUTE to service_role only
+8. **Type casting**: Explicit `::TYPE` casts for clarity
+9. **NULL handling**: Allow NULL for optional parameters
+10. **Comments**: Multi-line comments for complex logic
 
 ### Zustand Store Pattern (TypeScript)
 
@@ -1603,6 +1870,31 @@ use vibetea_monitor::crypto::Crypto;
 use vibetea_monitor::sender::{Sender, SenderConfig};
 ```
 
+### Deno/TypeScript (Edge Functions)
+
+Standard ordering for Supabase Edge Functions:
+
+1. External module imports (ESM imports from deno.land or esm.sh)
+2. Internal type/interface definitions
+3. Function definitions
+
+Example from `supabase/functions/_shared/auth.ts`:
+
+```typescript
+import * as ed from "https://esm.sh/@noble/ed25519@2.0.0";
+
+/**
+ * Result of authentication verification
+ */
+export interface AuthResult {
+  readonly isValid: boolean;
+  readonly error?: string;
+  readonly sourceId?: string;
+}
+
+export async function verifySignature(...) { ... }
+```
+
 ## Comments & Documentation
 
 ### TypeScript
@@ -1958,6 +2250,128 @@ Example from `monitor/src/privacy.rs` (Phase 5):
 const SENSITIVE_TOOLS: &[&str] = &["Bash", "Grep", "Glob", "WebSearch", "WebFetch"];
 ```
 
+### Deno/TypeScript (Edge Functions)
+
+| Type | When to Use | Format |
+|------|-------------|--------|
+| JSDoc | Public functions, interfaces | `/** ... */` |
+| Inline | Complex logic | `// Explanation` |
+| Note | Important implementation details | `// Note: ...` |
+
+Example from `supabase/functions/_shared/auth.ts`:
+
+```typescript
+/**
+ * Shared authentication utilities for VibeTea Edge Functions
+ *
+ * Uses @noble/ed25519 for Ed25519 signature verification (RFC 8032 compliant)
+ */
+
+/**
+ * Decode a base64 string to Uint8Array
+ */
+function base64Decode(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Verify an Ed25519 signature
+ *
+ * @param publicKeyBase64 - Base64-encoded public key (32 bytes)
+ * @param signatureBase64 - Base64-encoded signature (64 bytes)
+ * @param message - The message that was signed (as Uint8Array)
+ * @returns Promise<boolean> - True if signature is valid
+ */
+export async function verifySignature(
+  publicKeyBase64: string,
+  signatureBase64: string,
+  message: Uint8Array
+): Promise<boolean> {
+  try {
+    const publicKey = base64Decode(publicKeyBase64);
+    const signature = base64Decode(signatureBase64);
+
+    // Validate key/signature lengths
+    if (publicKey.length !== 32) {
+      console.error(`Invalid public key length: ${publicKey.length}, expected 32`);
+      return false;
+    }
+    if (signature.length !== 64) {
+      console.error(`Invalid signature length: ${signature.length}, expected 64`);
+      return false;
+    }
+
+    return await ed.verifyAsync(signature, message, publicKey);
+  } catch (error) {
+    console.error("Signature verification error:", error);
+    return false;
+  }
+}
+
+/**
+ * Get public key for a source from environment configuration
+ *
+ * VIBETEA_PUBLIC_KEYS format: source_id:base64_public_key,source_id2:base64_public_key2
+ *
+ * @param sourceId - The source identifier from X-Source-ID header
+ * @returns The base64-encoded public key, or null if not found
+ */
+export function getPublicKeyForSource(sourceId: string): string | null {
+  const publicKeys = Deno.env.get("VIBETEA_PUBLIC_KEYS");
+  if (!publicKeys) {
+    console.error("VIBETEA_PUBLIC_KEYS environment variable not set");
+    return null;
+  }
+
+  // Parse format: source_id:public_key,source_id2:public_key2
+  const pairs = publicKeys.split(",");
+  for (const pair of pairs) {
+    const [id, key] = pair.trim().split(":");
+    if (id === sourceId && key) {
+      return key;
+    }
+  }
+
+  console.error(`No public key found for source: ${sourceId}`);
+  return null;
+}
+
+/**
+ * Validate a bearer token against the configured subscriber token
+ *
+ * @param authHeader - The Authorization header value (e.g., "Bearer token123")
+ * @returns boolean - True if token is valid
+ */
+export function validateBearerToken(authHeader: string | null): boolean {
+  if (!authHeader) {
+    return false;
+  }
+
+  const expectedToken = Deno.env.get("VIBETEA_SUBSCRIBER_TOKEN");
+  if (!expectedToken) {
+    console.error("VIBETEA_SUBSCRIBER_TOKEN environment variable not set");
+    return false;
+  }
+
+  const prefix = "Bearer ";
+  if (!authHeader.startsWith(prefix)) {
+    return false;
+  }
+
+  const token = authHeader.slice(prefix.length);
+
+  // Constant-time comparison to prevent timing attacks
+  // Note: In Deno, we use a simple comparison since the token is not cryptographically sensitive
+  // For production, consider using a constant-time comparison library
+  return token === expectedToken;
+}
+```
+
 ## Git Conventions
 
 ### Commit Messages
@@ -1973,6 +2387,10 @@ Format: `type(scope): description`
 | refactor | Code restructure | `refactor(config): simplify validation` |
 | test | Adding/updating tests | `test(client): add initial event type tests` |
 | chore | Maintenance, dependencies | `chore: ignore TypeScript build artifacts` |
+
+Examples with Phase 11:
+- `feat(types): add HourlyAggregate type for heatmap data`
+- `feat(db): add get_hourly_aggregates SQL function`
 
 Examples with Phase 10:
 - `feat(client): add SessionOverview component with activity indicators`

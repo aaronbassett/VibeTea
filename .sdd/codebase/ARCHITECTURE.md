@@ -6,75 +6,103 @@
 
 ## Architecture Overview
 
-VibeTea is a distributed event aggregation and broadcast system for AI coding assistants with three independent components:
+VibeTea is a distributed event aggregation, broadcast, and persistence system for AI coding assistants with four integrated components:
 
-- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server
-- **Server** (Rust HTTP API) - Central hub that receives events from monitors and broadcasts them to subscribers via WebSocket
-- **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, and usage heatmaps
+- **Monitor** (Rust CLI) - Watches local Claude Code session files, forwards privacy-filtered events to the server, and optionally batches them to Supabase via edge functions
+- **Server** (Rust HTTP API) - Central hub that receives events from monitors and broadcasts them to subscribers via WebSocket (in-memory, no persistence)
+- **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, and heatmaps (real-time + optional historic data from Supabase)
+- **Supabase** (PostgreSQL + Edge Functions) - Optional persistence layer storing events and providing hourly aggregates for historic heatmap visualization
 
-The system follows a **hub-and-spoke architecture** where the Server acts as a central event bus, decoupling multiple Monitor sources from multiple Client consumers. Events flow unidirectionally: Monitors → Server → Clients, with no persistent storage.
+The system follows a **hub-and-spoke architecture** where the Server acts as a central event bus for real-time delivery, decoupling Monitor sources from Client consumers. Events flow unidirectionally: Monitors → Server → Clients (in-memory broadcast). Independently, if persistence is enabled, Monitors also batch events → Supabase edge functions → PostgreSQL database, and Clients query edge functions ← Supabase for historic data.
 
 ## Architecture Pattern
 
 | Pattern | Description |
 |---------|-------------|
-| **Hub-and-Spoke** | Central Server acts as event aggregation point, Monitors feed events, Clients consume |
-| **Producer-Consumer** | Monitors are event producers, Clients are event consumers, Server mediates asynchronous delivery |
+| **Hub-and-Spoke** | Central Server acts as real-time event aggregation point; Monitors feed events; Clients consume |
+| **Producer-Consumer** | Monitors are event producers; Clients are event consumers; Server mediates asynchronous real-time delivery |
+| **Optional Persistence** | Supabase layer (PostgreSQL + edge functions) provides optional durability for historic analysis without impacting real-time path |
 | **Privacy-First** | Events contain only structural metadata (timestamps, tool names, file basenames), never code or sensitive content |
-| **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
+| **Real-time Streaming** | WebSocket-based live event delivery with no message persistence at Server (fire-and-forget) |
+| **Serverless Processing** | Edge functions handle all Supabase database access via VibeTea authentication (not direct client access) |
 
 ## Core Components
 
 ### Monitor (Source)
 
-- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl` and emits structured events
+- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl` and emits structured events; optionally batches events to Supabase
 - **Location**: `monitor/src/`
 - **Key Responsibilities**:
   - File watching via `inotify` (Linux), `FSEvents` (macOS), `ReadDirectoryChangesW` (Windows)
   - Privacy-preserving JSONL parsing (extracts metadata only)
   - Cryptographic signing of events (Ed25519)
-  - Event buffering and exponential backoff retry
+  - Event buffering and exponential backoff retry for real-time server
+  - **NEW**: Optional batch buffering and submission to Supabase edge functions (if `VIBETEA_SUPABASE_URL` configured)
+  - **NEW**: Batch retry logic with exponential backoff (1s → 2s → 4s, max 3 attempts, then drop and log)
   - Graceful shutdown with event flushing
 - **Dependencies**:
-  - Monitors depend on **Server** (via HTTP POST to `/events`)
+  - Monitors depend on **Server** (via HTTP POST to `/events` for real-time)
+  - Monitors optionally depend on **Supabase** (via HTTP POST to ingest edge function for persistence)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
 - **Dependents**: None (source component)
 
 ### Server (Hub)
 
-- **Purpose**: Central event aggregation point that validates, authenticates, and broadcasts events to all subscribers
+- **Purpose**: Central event aggregation point that validates, authenticates, and broadcasts events to all subscribers in real-time
 - **Location**: `server/src/`
 - **Key Responsibilities**:
   - Receiving and authenticating events from Monitors (Ed25519 signature verification)
   - Rate limiting (per-source basis, configurable)
-  - Broadcasting events to WebSocket subscribers
+  - Broadcasting events to WebSocket subscribers (in-memory, no persistence)
   - Token-based authentication for WebSocket clients
   - Graceful shutdown with timeout for in-flight requests
 - **Dependencies**:
   - Broadcasts to **Clients** (via WebSocket `/ws` endpoint)
   - Depends on Monitor-provided public keys for signature verification
 - **Dependents**: Clients (consumers)
+- **Note**: Server does NOT interact with Supabase; persistence is handled separately by Monitor → edge functions and Client ← edge functions
 
 ### Client (Consumer)
 
-- **Purpose**: Real-time dashboard displaying aggregated event stream from the Server
+- **Purpose**: Real-time dashboard displaying aggregated event stream from the Server and optional historic data from Supabase
 - **Location**: `client/src/`
 - **Key Responsibilities**:
   - WebSocket connection management with exponential backoff reconnection
-  - Event buffering (1000 events max) with FIFO eviction
+  - Event buffering (1000 events max) with FIFO eviction for real-time events
   - Session state management (Active, Inactive, Ended, Removed)
   - Event filtering (by session ID, time range)
-  - Real-time visualization (event list, session overview, heatmap)
+  - Real-time visualization (event list, session overview)
+  - **NEW**: Optional historic data fetching from Supabase query edge function (if `VITE_SUPABASE_URL` configured)
+  - **NEW**: Heatmap visualization combining real-time event counts with historic hourly aggregates
+  - **NEW**: Deduplication logic: real-time event counts for current hour override historic aggregates for that hour
 - **Dependencies**:
-  - Depends on **Server** (via WebSocket connection to `/ws`)
-  - No persistence layer (in-memory Zustand store)
+  - Depends on **Server** (via WebSocket connection to `/ws` for real-time)
+  - Optionally depends on **Supabase** (via HTTP GET to query edge function for historic data)
+  - No persistence layer (in-memory Zustand store for real-time events)
 - **Dependents**: None (consumer component)
+
+### Supabase (Persistence)
+
+- **Purpose**: Optional persistence layer providing event durability and historic data for heatmap visualization
+- **Location**: `supabase/` (migrations and edge functions)
+- **Key Responsibilities**:
+  - **Database**: PostgreSQL events table with RLS (Row Level Security) policies denying all direct access
+  - **Migrations**: `supabase/migrations/20260203000000_create_events_table.sql` - Creates events table with indexes
+  - **Migrations**: `supabase/migrations/20260203000001_create_functions.sql` - Creates bulk insert and aggregation functions
+  - **Ingest Edge Function** (future): Validates Ed25519 signatures, inserts events via `bulk_insert_events()` function
+  - **Query Edge Function** (future): Validates bearer tokens, returns hourly aggregates via `get_hourly_aggregates()` function
+  - **Shared Auth** (`supabase/functions/_shared/auth.ts`): Ed25519 signature verification and bearer token validation
+- **Dependencies**:
+  - Receives events from **Monitor** (via HTTP POST to ingest edge function)
+  - Receives queries from **Client** (via HTTP GET to query edge function)
+- **Dependents**: Monitor (for batch submission), Client (for historic data queries)
+- **Note**: Database uses service role only access; all client requests must go through authenticated edge functions
 
 ## Data Flow
 
-### Primary Monitor-to-Client Flow
+### Primary Real-Time Monitor-to-Client Flow
 
-Claude Code → Monitor → Server → Client:
+Claude Code → Monitor → Server → Client (in-memory broadcast):
 1. JSONL line written to `~/.claude/projects/<uuid>.jsonl`
 2. File watcher detects change via inotify/FSEvents
 3. Parser extracts event metadata (no code/prompts)
@@ -85,62 +113,117 @@ Claude Code → Monitor → Server → Client:
 8. Broadcaster sends event to all WebSocket subscribers
 9. Client receives via useWebSocket hook
 10. Zustand store adds event (FIFO eviction at 1000 limit)
-11. React renders updated event list, session overview, heatmap
+11. React renders updated event list, session overview, real-time heatmap
+
+### NEW: Persistence Flow (Monitor to Supabase)
+
+Monitor → Supabase ingest edge function → PostgreSQL (batched, asynchronous to real-time):
+1. Monitor accumulates events in batch buffer
+2. **When batch interval elapses (default 60s) OR batch size reaches 1000, whichever first**:
+   - Sender signs batch with Ed25519, creates JSON array
+   - POST to edge function with X-Source-ID and X-Signature headers
+3. Edge function validates signature (using shared auth utility)
+4. Edge function calls `bulk_insert_events(JSONB)` PL/pgSQL function
+5. Function inserts events with `ON CONFLICT DO NOTHING` (idempotency)
+6. Returns inserted count
+7. Monitor updates batch state and continues
+8. On failure: exponential backoff (1s, 2s, 4s), max 3 retries, then drop and log
+
+### NEW: Historic Data Flow (Supabase to Client)
+
+Client → Supabase query edge function → PostgreSQL (periodic fetches):
+1. Client initializes with `VITE_SUPABASE_URL` configured
+2. On component mount, fetches historic heatmap data
+3. GET /query with Authorization: Bearer token header
+4. Edge function validates bearer token (constant-time comparison)
+5. Edge function calls `get_hourly_aggregates(days_back, source_filter)`
+6. Function returns `{source, date, hour, event_count}` rows grouped by hour
+7. Client receives hourly aggregates and stores in Zustand
+8. Heatmap renders: real-time counts for current hour override historic counts for that hour
+9. On fetch failure/timeout (5 seconds): shows "Unable to load historic data" with retry button
 
 ### Detailed Request/Response Cycle
 
-1. **Event Creation** (Monitor/Parser):
-   - JSONL line parsed from `~/.claude/projects/<uuid>.jsonl`
-   - `SessionParser` extracts timestamp, tool name, action
-   - `PrivacyPipeline` removes sensitive fields (code, prompts)
-   - `Event` struct created with unique ID (`evt_` prefix + 20-char suffix)
+#### 1. Event Creation (Monitor/Parser):
+- JSONL line parsed from `~/.claude/projects/<uuid>.jsonl`
+- `SessionParser` extracts timestamp, tool name, action
+- `PrivacyPipeline` removes sensitive fields (code, prompts)
+- `Event` struct created with unique ID (`evt_` prefix + 20-char suffix)
 
-2. **Event Signing** (Monitor/Sender):
-   - Event payload serialized to JSON
-   - Ed25519 signature computed over message body
-   - Event queued in local buffer (max 1000, FIFO eviction)
+#### 2. Event Signing (Monitor/Sender):
+- Event payload serialized to JSON
+- Ed25519 signature computed over message body
+- Event queued in local buffer (max 1000 for real-time, separate batch buffer for persistence)
 
-3. **Event Transmission** (Monitor/Sender):
-   - `POST /events` with headers: `X-Source-ID`, `X-Signature`
-   - On 429 (rate limit): parse `Retry-After` header
-   - On network failure: exponential backoff (1s → 60s, ±25% jitter)
-   - On success: continue flushing buffered events
+#### 3. Event Transmission to Server (Monitor/Sender):
+- `POST /events` with headers: `X-Source-ID`, `X-Signature`
+- On 429 (rate limit): parse `Retry-After` header
+- On network failure: exponential backoff (1s → 60s, ±25% jitter)
+- On success: continue flushing buffered events
 
-4. **Event Ingestion** (Server):
-   - Extract `X-Source-ID` and `X-Signature` headers
-   - Load Monitor's public key from config (`VIBETEA_PUBLIC_KEYS`)
-   - Verify Ed25519 signature using `subtle::ConstantTimeEq` (timing-safe)
-   - Rate limit check per source_id
-   - Broadcast event to all WebSocket subscribers via `tokio::broadcast`
+#### 4. Event Ingestion (Server):
+- Extract `X-Source-ID` and `X-Signature` headers
+- Load Monitor's public key from config (`VIBETEA_PUBLIC_KEYS`)
+- Verify Ed25519 signature using `subtle::ConstantTimeEq` (timing-safe)
+- Rate limit check per source_id
+- Broadcast event to all WebSocket subscribers via `tokio::broadcast`
 
-5. **Event Delivery** (Server → Client):
-   - WebSocket subscriber receives `BroadcastEvent`
-   - Client's `useWebSocket` hook calls `addEvent()` action
-   - Zustand store updates event buffer (evicts oldest if > 1000)
-   - Session state updated (Active/Inactive/Ended/Removed)
-   - React re-renders only affected components (via Zustand selectors)
+#### 5. Event Delivery (Server → Client):
+- WebSocket subscriber receives `BroadcastEvent`
+- Client's `useWebSocket` hook calls `addEvent()` action
+- Zustand store updates event buffer (evicts oldest if > 1000)
+- Session state updated (Active/Inactive/Ended/Removed)
+- React re-renders only affected components (via Zustand selectors)
 
-6. **Visualization** (Client):
-   - `EventStream` component renders with virtualized scrolling
-   - `SessionOverview` shows active sessions with metadata
-   - `Heatmap` displays activity over time bins
-   - `ConnectionStatus` shows server connectivity
+#### 6. Event Batching for Persistence (Monitor/Sender):
+- Event added to batch buffer (separate from real-time buffer)
+- Timestamp recorded for batch interval tracking
+- **When 60 seconds elapses OR 1000 events accumulated**:
+  - Batch serialized as JSONB array
+  - Ed25519 signature computed over JSON batch
+  - POST to Supabase ingest edge function with X-Source-ID and X-Signature
+
+#### 7. Event Persistence (Supabase Edge Function):
+- Extract X-Source-ID and X-Signature from request
+- Load public key for source from env (`VIBETEA_PUBLIC_KEYS`)
+- Verify Ed25519 signature (using `verifyAsync()` from @noble/ed25519)
+- Parse JSONB array from request body
+- Call `bulk_insert_events(JSONB)` with parsed array
+- Function inserts each event with ON CONFLICT DO NOTHING
+- Return inserted_count
+
+#### 8. Historic Data Fetch (Client):
+- On component mount or "refresh" click
+- GET /query with Authorization: Bearer token
+- Edge function validates token against `VIBETEA_SUBSCRIBER_TOKEN`
+- Call `get_hourly_aggregates(days_back=7 or 30, source_filter=null)`
+- Return hourly event counts grouped by (source, date, hour)
+- Client merges with real-time data and renders heatmap
+
+#### 9. Visualization (Client):
+- `EventStream` component renders with virtualized scrolling (real-time events)
+- `SessionOverview` shows active sessions with metadata
+- `Heatmap` displays activity over time bins (real-time + historic aggregates)
+- `ConnectionStatus` shows server connectivity
 
 ## Layer Boundaries
 
 | Layer | Responsibility | Can Access | Cannot Access |
 |-------|----------------|------------|---------------|
-| **Monitor** | Observe local activity, preserve privacy, authenticate | FileSystem, HTTP client, Crypto | Server internals, other Monitors, network stack details |
-| **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state | File system, external APIs, Client implementation details |
-| **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
+| **Monitor** | Observe local activity, preserve privacy, authenticate, batch for persistence | FileSystem, HTTP client, Crypto | Server internals, other Monitors, Supabase direct (only via edge functions) |
+| **Server** | Route, authenticate, broadcast, rate limit (real-time only) | All Monitors' public keys, event config, rate limiter state, broadcast channel | File system, Supabase database, Client implementation, persistence state |
+| **Client** | Display, interact, filter, manage WebSocket, fetch historic data | Server WebSocket, Supabase edge functions, localStorage (token), Zustand state | Server internals, other Clients' state, file system, Supabase database direct |
+| **Supabase** | Persist events, aggregate historic data, authenticate edge function access | PostgreSQL database, environment secrets | Monitor/Client implementation, real-time Server |
 
 ## Dependency Rules
 
-- **Monitor → Server**: Only on startup (load server URL from config), then periodically via HTTP POST
+- **Monitor → Server**: Continuous via HTTP POST (real-time path)
+- **Monitor → Supabase**: Periodic via HTTP POST (persistence path, async to real-time)
 - **Server → Monitor**: None (server doesn't initiate contact)
-- **Server ↔ Client**: Bidirectional (Client initiates WebSocket, Server sends events, Client sends nothing back)
-- **Cross-Monitor**: No inter-Monitor communication (all go through Server)
-- **Persistence**: None at any layer (no database, no cache persistence)
+- **Server → Supabase**: None (Server has no persistence concern)
+- **Client → Server**: Initiated WebSocket, bidirectional (Client sends WebSocket close, Server sends events)
+- **Client → Supabase**: Periodic HTTP GET for historic data (independent of Server)
+- **Supabase → Monitor/Client**: None (pull only via edge functions)
 
 ## Key Interfaces & Contracts
 
@@ -152,10 +235,12 @@ Claude Code → Monitor → Server → Client:
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
 | `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
+| **NEW**: `HourlyAggregate` | Historic data format | {source, date, hour, event_count} |
+| **NEW**: `AuthResult` | Edge function auth result | {isValid, error?, sourceId?} |
 
 ## Authentication & Authorization
 
-### Monitor Authentication (Source)
+### Monitor Authentication (Source) - Real-Time Path
 
 - **Mechanism**: Ed25519 signature verification
 - **Flow**:
@@ -167,7 +252,18 @@ Claude Code → Monitor → Server → Client:
 - **Security**: Uses `ed25519_dalek::VerifyingKey::verify_strict()` (RFC 8032 compliant)
 - **Timing Attack Prevention**: `subtle::ConstantTimeEq` for signature comparison
 
-### Client Authentication (Consumer)
+### Monitor Authentication (Source) - Persistence Path (NEW)
+
+- **Mechanism**: Same Ed25519 signature verification used for real-time
+- **Flow**:
+  1. Monitor reads private key (initialized via `vibetea-monitor init`)
+  2. On batch ready, signs batch JSON with private key
+  3. POST to Supabase ingest edge function with X-Source-ID and X-Signature headers
+  4. Edge function uses same public key lookup and verification as Server
+- **Security**: Uses `@noble/ed25519` for RFC 8032 compliant verification
+- **Timing Attack Prevention**: Constant-time comparison in edge function (note: token comparison uses `===` due to Deno limitations)
+
+### Client Authentication (Consumer) - Real-Time Path
 
 - **Mechanism**: Bearer token (HTTP header)
 - **Flow**:
@@ -176,6 +272,16 @@ Claude Code → Monitor → Server → Client:
   3. Server calls `validate_token()` to check token
   4. Invalid/missing tokens rejected with 401 Unauthorized
 - **Storage**: Client stores token in localStorage under `vibetea_token` key
+
+### Client Authentication (Consumer) - Persistence Path (NEW)
+
+- **Mechanism**: Same bearer token as real-time, via HTTP Authorization header
+- **Flow**:
+  1. Client reads token from localStorage (`vibetea_token`)
+  2. GET /query edge function with `Authorization: Bearer <token>` header
+  3. Edge function validates token using `validateBearerToken()`
+  4. Invalid/missing tokens rejected with 401 Unauthorized
+- **Timing Attack Prevention**: Constant-time comparison recommended (implementation in edge function)
 
 ## State Management
 
@@ -195,13 +301,17 @@ Claude Code → Monitor → Server → Client:
 | **Sessions** | Zustand store (Map<sessionId, Session>) | Keyed by UUID, state machines (Active → Inactive → Ended → Removed) |
 | **Filters** | Zustand store | Session ID filter, time range filter |
 | **Authentication Token** | localStorage | Persisted across page reloads |
+| **NEW**: **Historic Heatmap Data** | Zustand store (HourlyAggregate[]) | Fetched from Supabase, merged with real-time counts |
+| **NEW**: **Heatmap Loading State** | Zustand store | Loading, loaded, error (non-blocking) |
 
 ### Monitor State
 | State Type | Location | Pattern |
 |------------|----------|---------|
-| **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown |
+| **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown (real-time) |
+| **NEW**: **Batch Buffer** | `VecDeque<Event>` (max 1000) | Separate from real-time buffer, batched on interval or size limit |
+| **NEW**: **Batch State** | Sender internal | Tracks last batch send time, retry count per batch |
 | **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
-| **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
+| **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation (real-time) |
 
 ## Cross-Cutting Concerns
 
@@ -212,7 +322,9 @@ Claude Code → Monitor → Server → Client:
 | **Rate Limiting** | Per-source counter with TTL | `server/src/rate_limit.rs` |
 | **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
-| **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
+| **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs` (real-time), NEW: batch retry in monitor |
+| **NEW**: **Persistence** | Optional, async to real-time | Monitor: batch buffering and submission, Client: independent query fetches |
+| **NEW**: **Batch Retry** | Exponential backoff (1s, 2s, 4s), max 3 attempts | Monitor sender module (persistence path) |
 
 ## Design Decisions
 
@@ -223,21 +335,41 @@ Claude Code → Monitor → Server → Client:
 - **Easy horizontal scaling**: Monitors and Clients scale independently
 - **No inter-Monitor coupling**: Monitors don't need to know about each other
 
-### Why No Persistence?
+### Why Optional Persistence via Supabase?
 
-- **Simplifies deployment**: No database to manage
-- **Supports distributed monitoring**: Each Client sees latest events only
-- **Privacy-first**: Events never written to disk (except logs)
-- **Real-time focus**: System optimized for live streams, not historical analysis
+- **Decouples real-time from durability**: Persistence failures don't impact real-time broadcasts
+- **Best-effort delivery**: System continues operating even if Supabase is temporarily unavailable
+- **Async batching**: Monitor groups events to reduce request overhead
+- **Privacy preserved**: Events already privacy-filtered by Monitor; database locked down with RLS
 
-### Why Ed25519?
+### Why Separate Batch Buffer?
 
+- **Independent failure domains**: Persistence failures don't block real-time event delivery
+- **Configurable batch interval**: Allows tuning latency vs. throughput (default 60s)
+- **Idempotency**: Duplicate batch submissions handled via `ON CONFLICT DO NOTHING`
+
+### Why Edge Functions for Database Access?
+
+- **Centralized auth**: All database access enforces VibeTea authentication
+- **RLS enforcement**: Database tables have implicit deny-all policies without edge function access
+- **Reduces client library size**: Clients don't need Supabase SDK, just HTTP
+- **Simplifies deployment**: Database credentials never exposed to Monitors or Clients
+
+### Why No Persistence in Server?
+
+- **Simplifies deployment**: No database migration needed for Server
+- **Supports distributed Servers**: Multiple Server instances don't need shared state
+- **Real-time optimization**: No write latency to secondary storage
+- **Privacy-first**: Events never written to disk except via optional Supabase layer
+
+### Why Ed25519 for Both Paths?
+
+- **Consistency**: Same key pair used for real-time Server auth and persistence edge function auth
 - **Widely supported**: NIST-standardized modern elliptic curve
 - **Signature verification only**: Public key crypto prevents Monitors impersonating each other
-- **Timing-safe implementation**: `subtle::ConstantTimeEq` prevents timing attacks
-- **Small key size**: ~32 bytes per key, easy to share via env vars
+- **Timing-safe implementation**: `subtle::ConstantTimeEq` prevents timing attacks (Server), @noble/ed25519 for edge functions
 
-### Why WebSocket?
+### Why WebSocket for Real-Time?
 
 - **Bi-directional low-latency**: Better than HTTP polling for real-time updates
 - **Connection persistence**: Single connection replaces request/response overhead
