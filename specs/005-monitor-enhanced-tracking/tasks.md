@@ -149,9 +149,9 @@
 **Independent Test**: Ask Claude to perform a task triggering agent spawns, verify monitor captures subagent_type for each Task tool invocation.
 
 ### Phase Start
-- [ ] T066 [GIT] Verify working tree is clean before starting Phase 4
-- [ ] T067 [GIT] Pull and rebase on origin/main if needed
-- [ ] T068 [US2] Create retro/P4.md for this phase
+- [x] T066 [GIT] Verify working tree is clean before starting Phase 4
+- [x] T067 [GIT] Pull and rebase on origin/main if needed
+- [x] T068 [US2] Create retro/P4.md for this phase
 
 ### Tests for User Story 2
 - [ ] T069 [GIT] Commit: initialize phase 4 retro
