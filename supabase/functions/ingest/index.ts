@@ -19,6 +19,44 @@ import { verifyIngestAuth, type AuthResult } from "../_shared/auth.ts";
 const MAX_BATCH_SIZE = 1000;
 
 /**
+ * Valid event types per API contract
+ */
+const VALID_EVENT_TYPES = [
+  "session",
+  "activity",
+  "tool",
+  "agent",
+  "summary",
+  "error",
+] as const;
+
+type EventType = (typeof VALID_EVENT_TYPES)[number];
+
+/**
+ * Event schema per API contract
+ * @see specs/001-supabase-persistence/contracts/ingest.yaml
+ */
+interface Event {
+  readonly id: string;
+  readonly source: string;
+  readonly timestamp: string;
+  readonly eventType: EventType;
+  readonly payload: Record<string, unknown>;
+}
+
+/**
+ * Regex pattern for event ID: evt_ followed by 20 lowercase alphanumeric characters
+ */
+const EVENT_ID_PATTERN = /^evt_[a-z0-9]{20}$/;
+
+/**
+ * Regex pattern for RFC 3339 timestamp validation
+ * Matches: YYYY-MM-DDTHH:mm:ss with optional fractional seconds and timezone
+ */
+const RFC3339_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
  * Standard error response format per API contract
  */
 interface ErrorResponse {
@@ -47,6 +85,128 @@ function errorResponse(
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+/**
+ * Result of validating an event
+ */
+type EventValidationResult =
+  | { readonly isValid: true; readonly event: Event }
+  | { readonly isValid: false; readonly error: string; readonly errorCode: string };
+
+/**
+ * Validate a single event against the Event schema
+ */
+function validateEvent(value: unknown, index: number): EventValidationResult {
+  if (typeof value !== "object" || value === null) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} must be an object`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  const obj = value as Record<string, unknown>;
+
+  // Validate id: string, pattern ^evt_[a-z0-9]{20}$
+  if (typeof obj.id !== "string") {
+    return {
+      isValid: false,
+      error: `Event at index ${index} missing required field 'id'`,
+      errorCode: "invalid_event",
+    };
+  }
+  if (!EVENT_ID_PATTERN.test(obj.id)) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} has invalid id format '${obj.id}'`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  // Validate source: string, non-empty
+  if (typeof obj.source !== "string") {
+    return {
+      isValid: false,
+      error: `Event at index ${index} missing required field 'source'`,
+      errorCode: "invalid_event",
+    };
+  }
+  if (obj.source.length === 0) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} has empty 'source' field`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  // Validate timestamp: string, RFC 3339 format
+  if (typeof obj.timestamp !== "string") {
+    return {
+      isValid: false,
+      error: `Event at index ${index} missing required field 'timestamp'`,
+      errorCode: "invalid_event",
+    };
+  }
+  if (!RFC3339_PATTERN.test(obj.timestamp)) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} has invalid timestamp format '${obj.timestamp}'`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  // Validate eventType: string, one of valid types
+  if (typeof obj.eventType !== "string") {
+    return {
+      isValid: false,
+      error: `Event at index ${index} missing required field 'eventType'`,
+      errorCode: "invalid_event",
+    };
+  }
+  if (!VALID_EVENT_TYPES.includes(obj.eventType as EventType)) {
+    return {
+      isValid: false,
+      error: `Invalid event type '${obj.eventType}' at index ${index}`,
+      errorCode: "invalid_event_type",
+    };
+  }
+
+  // Validate payload: object
+  if (typeof obj.payload !== "object" || obj.payload === null) {
+    return {
+      isValid: false,
+      error: `Event at index ${index} missing required field 'payload' or payload is not an object`,
+      errorCode: "invalid_event",
+    };
+  }
+
+  return {
+    isValid: true,
+    event: {
+      id: obj.id,
+      source: obj.source,
+      timestamp: obj.timestamp,
+      eventType: obj.eventType as EventType,
+      payload: obj.payload as Record<string, unknown>,
+    },
+  };
+}
+
+/**
+ * Validate that event source matches authenticated source
+ */
+function validateSourceMatch(
+  event: Event,
+  authenticatedSourceId: string
+): { readonly isValid: true } | { readonly isValid: false; readonly error: string } {
+  if (event.source !== authenticatedSourceId) {
+    return {
+      isValid: false,
+      error: `Event source '${event.source}' does not match authenticated source '${authenticatedSourceId}'`,
+    };
+  }
+  return { isValid: true };
 }
 
 /**
@@ -84,7 +244,6 @@ async function handleRequest(request: Request): Promise<Response> {
   }
 
   // Verify Ed25519 signature authentication
-  // TODO (T044): Auth verification is implemented via verifyIngestAuth
   const authResult: AuthResult = await verifyIngestAuth(request, bodyText);
   if (!authResult.isValid) {
     // Map auth errors to appropriate HTTP status codes
@@ -101,11 +260,9 @@ async function handleRequest(request: Request): Promise<Response> {
     return errorResponse(401, "invalid_signature", authResult.error ?? "Authentication failed");
   }
 
-  // sourceId will be used in T045 for source validation and T051 for database operations
-  const _sourceId = authResult.sourceId;
+  const sourceId = authResult.sourceId;
 
   // Parse and validate the request body
-  // TODO (T045): Implement full event validation with Zod schema
   let events: unknown[];
   try {
     const parsed: unknown = JSON.parse(bodyText);
@@ -134,11 +291,24 @@ async function handleRequest(request: Request): Promise<Response> {
     );
   }
 
-  // TODO (T045): Validate each event against the Event schema
-  // - Validate event structure (id, source, timestamp, eventType, payload)
-  // - Validate eventType enum values
-  // - Verify event.source matches authenticated sourceId (422 source_mismatch)
-  // - Validate timestamp format
+  // Validate each event against the Event schema
+  const validatedEvents: Event[] = [];
+  for (let i = 0; i < events.length; i++) {
+    const validationResult = validateEvent(events[i], i);
+    if (!validationResult.isValid) {
+      // Use 422 for invalid_event_type per contract, 400 for other validation errors
+      const status = validationResult.errorCode === "invalid_event_type" ? 422 : 400;
+      return errorResponse(status, validationResult.errorCode, validationResult.error);
+    }
+
+    // Verify event source matches authenticated sourceId
+    const sourceCheck = validateSourceMatch(validationResult.event, sourceId!);
+    if (!sourceCheck.isValid) {
+      return errorResponse(422, "source_mismatch", sourceCheck.error);
+    }
+
+    validatedEvents.push(validationResult.event);
+  }
 
   // TODO (T051): Insert events into database
   // - Initialize Supabase client using environment variables
@@ -148,9 +318,9 @@ async function handleRequest(request: Request): Promise<Response> {
 
   // Placeholder: Return success with event count
   // This will be replaced with actual DB insertion in T051
-  const insertedCount = events.length;
+  const insertedCount = validatedEvents.length;
 
-  return successResponse(insertedCount, events.length);
+  return successResponse(insertedCount, validatedEvents.length);
 }
 
 /**
