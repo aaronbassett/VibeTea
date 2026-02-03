@@ -33,7 +33,7 @@ use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
 use vibetea_monitor::trackers::stats_tracker::StatsTracker;
 use vibetea_monitor::types::{
-    Event, EventPayload, EventType, SessionAction, TokenUsageEvent, ToolStatus,
+    AgentSpawnEvent, Event, EventPayload, EventType, SessionAction, TokenUsageEvent, ToolStatus,
 };
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
@@ -493,6 +493,19 @@ fn convert_to_event(
                 session_id,
                 summary: format!("Session ended for {}", project),
             },
+        ),
+
+        ParsedEventKind::AgentSpawned {
+            agent_type,
+            description,
+        } => (
+            EventType::AgentSpawn,
+            EventPayload::AgentSpawn(AgentSpawnEvent {
+                session_id: session_id.to_string(),
+                agent_type,
+                description,
+                timestamp: parsed.timestamp,
+            }),
         ),
     };
 

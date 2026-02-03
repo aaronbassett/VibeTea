@@ -157,13 +157,13 @@
 - [x] T069 [GIT] Commit: initialize phase 4 retro
 - [x] T070 [P] [US2] Unit test for Task tool_use parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
 - [x] T071 [P] [US2] Unit test for AgentSpawnEvent emission in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [ ] T072 [GIT] Commit: add agent_tracker tests
+- [x] T072 [GIT] Commit: add agent_tracker tests
 
 ### Implementation for User Story 2
-- [ ] T073 [US2] Implement TaskToolUse struct for JSON parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [ ] T074 [GIT] Commit: add TaskToolUse struct
-- [ ] T075 [US2] Implement agent_tracker module in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [ ] T076 [GIT] Commit: implement agent_tracker module
+- [x] T073 [US2] Implement TaskToolUse struct for JSON parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [x] T074 [GIT] Commit: add TaskToolUse struct
+- [x] T075 [US2] Implement agent_tracker module in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [x] T076 [GIT] Commit: implement agent_tracker module
 - [ ] T077 [US2] Integrate agent_tracker with existing JSONL parsing in monitor/src/parser.rs (use devs:rust-dev agent)
 - [ ] T078 [GIT] Commit: integrate agent_tracker with parser
 - [ ] T079 [US2] Add client store handler for agent_spawn events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
