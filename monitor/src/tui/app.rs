@@ -41,6 +41,7 @@
 //! }
 //! ```
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
@@ -301,13 +302,47 @@ pub struct SetupFormState {
 /// Contains all state needed to render and update the dashboard view,
 /// including event streams, metrics, and UI state.
 ///
-/// # Note
+/// # Example
 ///
-/// This is a placeholder type. The full implementation will be added in a later
-/// task with fields for event history, scroll position, metrics, and panel state.
+/// ```
+/// use vibetea_monitor::tui::app::{DashboardState, ConnectionStatus, EventStats};
+///
+/// let state = DashboardState {
+///     session_name: "my-workstation".to_string(),
+///     public_key: "Ij9dK...base64...".to_string(),
+///     connection_status: ConnectionStatus::Connected,
+///     stats: EventStats::default(),
+/// };
+///
+/// assert_eq!(state.session_name, "my-workstation");
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct DashboardState {
-    // Placeholder - fields will be added in future tasks
+    /// Session name used for identification.
+    ///
+    /// This is the trimmed session name from the setup form, used for
+    /// display in the dashboard header and for identifying this monitor
+    /// session on the server.
+    pub session_name: String,
+
+    /// Base64-encoded public key for server configuration.
+    ///
+    /// This key should be registered with the VibeTea server via the
+    /// `VIBETEA_PUBLIC_KEYS` environment variable to authorize this
+    /// monitor to send events.
+    pub public_key: String,
+
+    /// Connection status to the VibeTea server.
+    ///
+    /// Tracks the current WebSocket connection state for display in
+    /// the status indicator.
+    pub connection_status: ConnectionStatus,
+
+    /// Event statistics (sent, failed counts).
+    ///
+    /// Updated as events are sent to the server, used for the stats
+    /// footer display.
+    pub stats: EventStats,
 }
 
 /// Theme configuration for the TUI.
@@ -841,33 +876,71 @@ impl AppState {
 
     /// Completes the setup process and transitions to the dashboard.
     ///
-    /// This method should be called after the user submits the setup form
-    /// with valid input. It:
+    /// Loads or generates cryptographic keys based on the setup form's key option,
+    /// validates the session name, and transitions to the dashboard screen.
     ///
-    /// 1. Validates the current setup form state
-    /// 2. Transitions the screen from Setup to Dashboard
-    /// 3. Initializes the dashboard state
+    /// # Arguments
+    ///
+    /// * `key_dir` - Optional directory for key storage. Defaults to `~/.vibetea`
+    ///
+    /// # Key Handling
+    ///
+    /// The method handles keys based on the [`KeyOption`] selected in the setup form:
+    ///
+    /// - **`UseExisting`**: Loads existing keys from the key directory. Returns an
+    ///   error if no keys are found.
+    /// - **`GenerateNew`**: Generates a new Ed25519 keypair and saves it to the
+    ///   key directory, overwriting any existing keys.
     ///
     /// # Returns
     ///
     /// - `Ok(())` if the transition was successful
-    /// - `Err(String)` if validation fails (error message for the session name field)
+    /// - `Err(String)` if validation fails or key operations fail
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// use vibetea_monitor::tui::app::AppState;
+    /// use std::path::Path;
     ///
     /// let mut state = AppState::new();
     /// state.setup.session_name = "my-session".to_string();
     ///
     /// assert!(state.is_setup());
-    /// state.complete_setup().unwrap();
+    /// // Use a custom key directory for testing
+    /// state.complete_setup(Some(Path::new("/tmp/vibetea-test"))).unwrap();
     /// assert!(state.is_dashboard());
+    /// assert!(!state.dashboard.public_key.is_empty());
     /// ```
-    pub fn complete_setup(&mut self) -> Result<(), String> {
+    pub fn complete_setup(&mut self, key_dir: Option<&Path>) -> Result<(), String> {
+        use crate::crypto::Crypto;
+
         // Validate session name using the validation function
         crate::tui::widgets::validate_session_name(&self.setup.session_name)?;
+
+        // Determine key directory
+        let key_path = key_dir.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+            directories::BaseDirs::new()
+                .map(|dirs| dirs.home_dir().join(".vibetea"))
+                .unwrap_or_else(|| PathBuf::from(".vibetea"))
+        });
+
+        // Load or generate keys based on the selected option
+        let crypto = match self.setup.key_option {
+            KeyOption::UseExisting if Crypto::exists(&key_path) => Crypto::load(&key_path)
+                .map_err(|e| format!("Failed to load existing keys: {}", e))?,
+            KeyOption::UseExisting => {
+                // Keys don't exist but user selected "use existing"
+                return Err("No existing keys found. Please select 'Generate new key'.".to_string());
+            }
+            KeyOption::GenerateNew => {
+                let crypto = Crypto::generate();
+                crypto
+                    .save(&key_path)
+                    .map_err(|e| format!("Failed to save new keys: {}", e))?;
+                crypto
+            }
+        };
 
         // Clear any previous error
         self.setup.session_name_error = None;
@@ -875,8 +948,12 @@ impl AppState {
         // Transition to dashboard
         self.screen = Screen::Dashboard;
 
-        // Initialize dashboard state (will be populated later with actual data)
-        self.dashboard = DashboardState::default();
+        // Store credentials in dashboard state
+        self.dashboard = DashboardState {
+            session_name: self.setup.session_name.trim().to_string(),
+            public_key: crypto.public_key_base64(),
+            ..Default::default()
+        };
 
         Ok(())
     }
@@ -1307,6 +1384,7 @@ impl EventHandler {
 mod tests {
     use super::*;
     use crossterm::event::{KeyCode, KeyModifiers};
+    use tempfile::TempDir;
 
     #[test]
     fn event_stats_default() {
@@ -1644,15 +1722,47 @@ mod tests {
     #[test]
     fn dashboard_state_default() {
         let state = DashboardState::default();
-        // Just ensure it can be created with default
-        let _ = format!("{:?}", state);
+        // Verify default values
+        assert!(state.session_name.is_empty());
+        assert!(state.public_key.is_empty());
+        assert_eq!(state.connection_status, ConnectionStatus::Disconnected);
+        assert_eq!(state.stats.events_sent, 0);
+        assert_eq!(state.stats.events_failed, 0);
     }
 
     #[test]
     fn dashboard_state_is_clone() {
-        let state = DashboardState::default();
+        let state = DashboardState {
+            session_name: "test-session".to_string(),
+            public_key: "test-key".to_string(),
+            connection_status: ConnectionStatus::Connected,
+            stats: EventStats {
+                events_sent: 10,
+                events_failed: 2,
+            },
+        };
         let cloned = state.clone();
-        let _ = format!("{:?}", cloned);
+        assert_eq!(cloned.session_name, "test-session");
+        assert_eq!(cloned.public_key, "test-key");
+        assert_eq!(cloned.connection_status, ConnectionStatus::Connected);
+        assert_eq!(cloned.stats.events_sent, 10);
+        assert_eq!(cloned.stats.events_failed, 2);
+    }
+
+    #[test]
+    fn dashboard_state_is_debug() {
+        let state = DashboardState {
+            session_name: "my-session".to_string(),
+            public_key: "my-key".to_string(),
+            connection_status: ConnectionStatus::Connecting,
+            stats: EventStats::default(),
+        };
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("DashboardState"));
+        assert!(debug_str.contains("session_name"));
+        assert!(debug_str.contains("public_key"));
+        assert!(debug_str.contains("connection_status"));
+        assert!(debug_str.contains("stats"));
     }
 
     // =============================================================================
@@ -2291,36 +2401,41 @@ mod tests {
     }
 
     // =============================================================================
-    // complete_setup() Tests (T066)
+    // complete_setup() Tests (T066, T068)
     // =============================================================================
 
     #[test]
-    fn complete_setup_transitions_to_dashboard() {
+    fn complete_setup_transitions_to_dashboard_with_key_generation() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "my-session".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
 
         assert!(state.is_setup());
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_ok());
         assert!(state.is_dashboard());
     }
 
     #[test]
     fn complete_setup_validates_session_name() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "valid-session-name".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_ok());
         assert!(state.is_dashboard());
     }
 
     #[test]
     fn complete_setup_rejects_empty_session_name() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "".to_string();
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Session name cannot be empty");
         // Should remain on setup screen
@@ -2329,10 +2444,11 @@ mod tests {
 
     #[test]
     fn complete_setup_rejects_invalid_characters() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "invalid@name".to_string();
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
@@ -2344,24 +2460,27 @@ mod tests {
 
     #[test]
     fn complete_setup_clears_error_on_success() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "valid-session".to_string();
         state.setup.session_name_error = Some("Previous error".to_string());
+        state.setup.key_option = KeyOption::GenerateNew;
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_ok());
         assert!(state.setup.session_name_error.is_none());
     }
 
     #[test]
     fn complete_setup_preserves_setup_state_on_failure() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "invalid name with spaces".to_string();
         state.setup.key_option = KeyOption::UseExisting;
         state.setup.focused_field = SetupField::Submit;
         state.setup.existing_keys_found = true;
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_err());
 
         // All setup state should be preserved on failure
@@ -2373,33 +2492,41 @@ mod tests {
     }
 
     #[test]
-    fn complete_setup_initializes_dashboard_state() {
+    fn complete_setup_initializes_dashboard_state_with_credentials() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "test-session".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_ok());
 
-        // Dashboard state should be initialized (currently default)
-        let _ = format!("{:?}", state.dashboard);
+        // Dashboard state should be initialized with credentials
+        assert_eq!(state.dashboard.session_name, "test-session");
+        assert!(!state.dashboard.public_key.is_empty());
+        // Public key should be base64-encoded (44 chars for 32-byte key)
+        assert!(state.dashboard.public_key.len() >= 43);
     }
 
     #[test]
     fn complete_setup_accepts_hyphens_and_underscores() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "my-session_name".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_ok());
         assert!(state.is_dashboard());
     }
 
     #[test]
     fn complete_setup_rejects_whitespace_only() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "   ".to_string();
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Session name cannot be empty");
         assert!(state.is_setup());
@@ -2407,15 +2534,178 @@ mod tests {
 
     #[test]
     fn complete_setup_rejects_too_long_session_name() {
+        let temp_dir = TempDir::new().unwrap();
         let mut state = AppState::new();
         state.setup.session_name = "a".repeat(65);
 
-        let result = state.complete_setup();
+        let result = state.complete_setup(Some(temp_dir.path()));
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
             "Session name must be 64 characters or less"
         );
         assert!(state.is_setup());
+    }
+
+    // =============================================================================
+    // Key Generation Tests (T068)
+    // =============================================================================
+
+    #[test]
+    fn complete_setup_generates_new_keys_when_selected() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut state = AppState::new();
+        state.setup.session_name = "test-session".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
+
+        // Verify no keys exist initially
+        assert!(!crate::crypto::Crypto::exists(temp_dir.path()));
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_ok());
+
+        // Keys should now exist
+        assert!(crate::crypto::Crypto::exists(temp_dir.path()));
+    }
+
+    #[test]
+    fn complete_setup_loads_existing_keys_when_selected() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // First, generate some keys
+        let original_crypto = crate::crypto::Crypto::generate();
+        let original_pubkey = original_crypto.public_key_base64();
+        original_crypto.save(temp_dir.path()).unwrap();
+
+        // Now try to load them
+        let mut state = AppState::new();
+        state.setup.session_name = "test-session".to_string();
+        state.setup.key_option = KeyOption::UseExisting;
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_ok());
+
+        // The loaded public key should match the original
+        assert_eq!(state.dashboard.public_key, original_pubkey);
+    }
+
+    #[test]
+    fn complete_setup_fails_when_use_existing_but_no_keys() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut state = AppState::new();
+        state.setup.session_name = "test-session".to_string();
+        state.setup.key_option = KeyOption::UseExisting;
+
+        // No keys exist
+        assert!(!crate::crypto::Crypto::exists(temp_dir.path()));
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "No existing keys found. Please select 'Generate new key'."
+        );
+
+        // Should remain on setup screen
+        assert!(state.is_setup());
+    }
+
+    #[test]
+    fn complete_setup_generates_different_keys_each_time() {
+        let temp_dir1 = TempDir::new().unwrap();
+        let temp_dir2 = TempDir::new().unwrap();
+
+        // Generate keys in first directory
+        let mut state1 = AppState::new();
+        state1.setup.session_name = "session1".to_string();
+        state1.setup.key_option = KeyOption::GenerateNew;
+        state1.complete_setup(Some(temp_dir1.path())).unwrap();
+
+        // Generate keys in second directory
+        let mut state2 = AppState::new();
+        state2.setup.session_name = "session2".to_string();
+        state2.setup.key_option = KeyOption::GenerateNew;
+        state2.complete_setup(Some(temp_dir2.path())).unwrap();
+
+        // Public keys should be different
+        assert_ne!(state1.dashboard.public_key, state2.dashboard.public_key);
+    }
+
+    #[test]
+    fn complete_setup_trims_session_name_in_dashboard() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut state = AppState::new();
+        state.setup.session_name = "  test-session  ".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_ok());
+
+        // Session name in dashboard should be trimmed
+        assert_eq!(state.dashboard.session_name, "test-session");
+    }
+
+    #[test]
+    fn complete_setup_stores_session_name_in_dashboard() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut state = AppState::new();
+        state.setup.session_name = "my-workstation".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_ok());
+
+        assert_eq!(state.dashboard.session_name, "my-workstation");
+    }
+
+    #[test]
+    fn complete_setup_overwrites_existing_keys_when_generate_new() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // First, generate some keys
+        let original_crypto = crate::crypto::Crypto::generate();
+        let original_pubkey = original_crypto.public_key_base64();
+        original_crypto.save(temp_dir.path()).unwrap();
+
+        // Now generate new keys (should overwrite)
+        let mut state = AppState::new();
+        state.setup.session_name = "test-session".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_ok());
+
+        // The new public key should be different from the original
+        assert_ne!(state.dashboard.public_key, original_pubkey);
+    }
+
+    #[test]
+    fn complete_setup_default_connection_status_is_disconnected() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut state = AppState::new();
+        state.setup.session_name = "test-session".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_ok());
+
+        assert_eq!(
+            state.dashboard.connection_status,
+            ConnectionStatus::Disconnected
+        );
+    }
+
+    #[test]
+    fn complete_setup_default_stats_are_zero() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut state = AppState::new();
+        state.setup.session_name = "test-session".to_string();
+        state.setup.key_option = KeyOption::GenerateNew;
+
+        let result = state.complete_setup(Some(temp_dir.path()));
+        assert!(result.is_ok());
+
+        assert_eq!(state.dashboard.stats.events_sent, 0);
+        assert_eq!(state.dashboard.stats.events_failed, 0);
     }
 }

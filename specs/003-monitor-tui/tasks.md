@@ -145,8 +145,8 @@
 
 ### Setup-to-Dashboard Transition
 - [x] T066 [US1] Implement complete_setup() transition in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T067 [GIT] Commit: add setup to dashboard transition
-- [ ] T068 [US1] Load existing keys or generate new keys on form submit in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T067 [GIT] Commit: add setup to dashboard transition
+- [x] T068 [US1] Load existing keys or generate new keys on form submit in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T069 [GIT] Commit: integrate key generation in setup flow
 
 ### Default Values
