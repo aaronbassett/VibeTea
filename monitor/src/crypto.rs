@@ -32,6 +32,7 @@ use base64::prelude::*;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::Rng;
 use thiserror::Error;
+use zeroize::Zeroize;
 
 /// Indicates where the private key was loaded from.
 ///
@@ -109,6 +110,8 @@ impl Crypto {
         let mut seed = [0u8; SEED_LENGTH];
         rand::rng().fill(&mut seed);
         let signing_key = SigningKey::from_bytes(&seed);
+        // FR-020: Zero intermediate key material after signing key construction
+        seed.zeroize();
         Self { signing_key }
     }
 
@@ -146,20 +149,24 @@ impl Crypto {
             return Err(CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()));
         }
 
-        let decoded = BASE64_STANDARD.decode(trimmed)?;
+        let mut decoded = BASE64_STANDARD.decode(trimmed)?;
+        let decoded_len = decoded.len();
 
-        if decoded.len() != SEED_LENGTH {
+        if decoded_len != SEED_LENGTH {
+            // FR-020: Zero decoded buffer even on error path
+            decoded.zeroize();
             return Err(CryptoError::InvalidKey(format!(
                 "expected {} bytes, got {}",
-                SEED_LENGTH,
-                decoded.len()
+                SEED_LENGTH, decoded_len
             )));
         }
 
-        let seed: [u8; SEED_LENGTH] = decoded
+        let mut seed: [u8; SEED_LENGTH] = decoded
             .try_into()
             .expect("length already validated");
         let signing_key = SigningKey::from_bytes(&seed);
+        // FR-020: Zero intermediate key material after signing key construction
+        seed.zeroize();
 
         Ok((Self { signing_key }, KeySource::EnvironmentVariable))
     }
@@ -206,20 +213,24 @@ impl Crypto {
                     return Err(CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()));
                 }
 
-                let decoded = BASE64_STANDARD.decode(trimmed)?;
+                let mut decoded = BASE64_STANDARD.decode(trimmed)?;
+                let decoded_len = decoded.len();
 
-                if decoded.len() != SEED_LENGTH {
+                if decoded_len != SEED_LENGTH {
+                    // FR-020: Zero decoded buffer even on error path
+                    decoded.zeroize();
                     return Err(CryptoError::InvalidKey(format!(
                         "expected {} bytes, got {}",
-                        SEED_LENGTH,
-                        decoded.len()
+                        SEED_LENGTH, decoded_len
                     )));
                 }
 
-                let seed: [u8; SEED_LENGTH] = decoded
+                let mut seed: [u8; SEED_LENGTH] = decoded
                     .try_into()
                     .expect("length already validated");
                 let signing_key = SigningKey::from_bytes(&seed);
+                // FR-020: Zero intermediate key material after signing key construction
+                seed.zeroize();
 
                 Ok((Self { signing_key }, KeySource::EnvironmentVariable))
             }
@@ -263,6 +274,8 @@ impl Crypto {
         let bytes_read = file.read(&mut seed)?;
 
         if bytes_read != SEED_LENGTH {
+            // FR-020: Zero seed buffer even on error path
+            seed.zeroize();
             return Err(CryptoError::InvalidKey(format!(
                 "expected {} bytes, got {}",
                 SEED_LENGTH, bytes_read
@@ -270,6 +283,8 @@ impl Crypto {
         }
 
         let signing_key = SigningKey::from_bytes(&seed);
+        // FR-020: Zero intermediate key material after signing key construction
+        seed.zeroize();
         Ok(Self { signing_key })
     }
 
