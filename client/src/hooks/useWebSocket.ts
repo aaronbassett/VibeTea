@@ -79,11 +79,15 @@ function buildWebSocketUrl(baseUrl: string, token: string): string {
 }
 
 /**
- * Get default WebSocket URL based on current location.
+ * Get default WebSocket URL based on environment or current location.
  *
  * @returns Default WebSocket URL
  */
 function getDefaultUrl(): string {
+  // Check for environment variable first (set via VITE_WS_URL)
+  if (import.meta.env.VITE_WS_URL) {
+    return import.meta.env.VITE_WS_URL;
+  }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${protocol}//${window.location.host}/ws`;
 }
