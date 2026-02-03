@@ -70,6 +70,23 @@
   }
 }
 
+/**
+ * Session Glow Pulse Animation
+ *
+ * Subtle pulsing glow effect for active session cards.
+ * Uses the orange accent color (#d97757) for visual consistency.
+ * Pulses between 0.3 and 0.6 opacity over 2 seconds for a non-distracting effect.
+ */
+@keyframes session-glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 8px 2px rgba(217, 119, 87, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 12px 4px rgba(217, 119, 87, 0.6);
+  }
+}
+
 /* =============================================================================
    ANIMATION UTILITY CLASSES
    ============================================================================= */
@@ -111,6 +128,18 @@
   will-change: box-shadow;
 }
 
+/**
+ * Active Session Card Glow
+ *
+ * Apply to session cards when session.status === 'active'.
+ * Provides subtle visual feedback for active sessions.
+ * Uses orange accent color for consistency with heatmap glow.
+ */
+.session-card-glow-active {
+  animation: session-glow-pulse 2s ease-in-out infinite;
+  will-change: box-shadow;
+}
+
 /* =============================================================================
    ANIMATION STATE MODIFIERS
    ============================================================================= */
@@ -129,7 +158,8 @@
 .animation-paused,
 .animation-paused .grid-cell,
 .animation-paused .status-pulse,
-.animation-paused .heatmap-glow {
+.animation-paused .heatmap-glow,
+.animation-paused .session-card-glow-active {
   animation-play-state: paused !important;
 }
 
@@ -142,7 +172,8 @@
 .animation-running,
 .animation-running .grid-cell,
 .animation-running .status-pulse,
-.animation-running .heatmap-glow {
+.animation-running .heatmap-glow,
+.animation-running .session-card-glow-active {
   animation-play-state: running;
 }
 
@@ -237,6 +268,10 @@
 
   .heatmap-glow {
     box-shadow: 0 0 8px rgba(217, 119, 87, 0.45);
+  }
+
+  .session-card-glow-active {
+    box-shadow: 0 0 8px 2px rgba(217, 119, 87, 0.45);
   }
 }
 

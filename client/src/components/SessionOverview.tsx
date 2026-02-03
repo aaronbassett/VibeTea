@@ -295,6 +295,9 @@ function SessionCard({
   const isEnded = session.status === 'ended';
   const isDimmed = !isActive && !isSelected;
 
+  // Animated glow class for active sessions
+  const glowClass = isActive ? 'session-card-glow-active' : '';
+
   // Calculate display values
   const duration = getSessionDuration(session.startedAt);
   const formattedDuration = formatDuration(duration);
@@ -340,7 +343,7 @@ function SessionCard({
       tabIndex={onClick !== undefined ? 0 : undefined}
       aria-label={`${session.project} session, ${STATUS_CONFIG[session.status].label}, duration ${formattedDuration}${isSelected ? ', selected' : ''}`}
       aria-selected={isSelected}
-      className={`border rounded-lg p-4 transition-all ${selectedClass} ${opacityClass} ${hoverClass}`}
+      className={`border rounded-lg p-4 transition-all ${selectedClass} ${opacityClass} ${hoverClass} ${glowClass}`}
       onClick={onClick !== undefined ? handleClick : undefined}
       onKeyDown={onClick !== undefined ? handleKeyDown : undefined}
     >
