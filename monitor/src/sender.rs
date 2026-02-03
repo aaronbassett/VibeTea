@@ -102,6 +102,10 @@ pub enum SenderError {
     /// JSON serialization error.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
+
+    /// Invalid header value (source_id or signature contains invalid characters).
+    #[error("invalid header value: {0}")]
+    InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
 }
 
 /// Configuration for the sender.
@@ -160,10 +164,10 @@ impl Sender {
             .expect("Failed to create HTTP client");
 
         Self {
+            buffer: VecDeque::with_capacity(config.buffer_size),
             config,
             crypto,
             client,
-            buffer: VecDeque::with_capacity(DEFAULT_BUFFER_SIZE),
             current_retry_delay: Duration::from_secs(INITIAL_RETRY_DELAY_SECS),
         }
     }
@@ -262,9 +266,9 @@ impl Sender {
             headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
             headers.insert(
                 "X-Source-Id",
-                HeaderValue::from_str(&self.config.source_id).unwrap(),
+                HeaderValue::from_str(&self.config.source_id)?,
             );
-            headers.insert("X-Signature", HeaderValue::from_str(&signature).unwrap());
+            headers.insert("X-Signature", HeaderValue::from_str(&signature)?);
 
             debug!(
                 url = %url,
