@@ -379,6 +379,16 @@ impl Sender {
                             sleep(Duration::from_secs(retry_after)).await;
                             continue;
                         }
+                        StatusCode::PAYLOAD_TOO_LARGE => {
+                            // Log and skip this chunk - don't let oversized events block
+                            // subsequent valid events. The chunk_events function already
+                            // isolates oversized events into their own chunks.
+                            warn!(
+                                events = events.len(),
+                                "Payload too large (413), dropping oversized chunk"
+                            );
+                            return Ok(());
+                        }
                         _ if status.is_server_error() => {
                             let message = response.text().await.unwrap_or_default();
                             warn!(
