@@ -67,13 +67,17 @@ The server starts on `http://localhost:3000` by default.
 ### Running the Monitor
 
 ```bash
+# Generate a keypair (first time only)
+cargo run --package vibetea-monitor --release -- keygen
+
 # Set required environment variables
-export VIBETEA_SERVER_URL="ws://localhost:3000/ws"
-export VIBETEA_AUTH_TOKEN="your-auth-token"
+export VIBETEA_SERVER_URL="https://localhost:3000"
 
 # Run the monitor
-cargo run --package vibetea-monitor --release
+cargo run --package vibetea-monitor --release -- run
 ```
+
+The `keygen` command creates Ed25519 keys in `~/.vibetea/` and outputs the public key to register with the server.
 
 ### Running the Client Dashboard
 
@@ -95,11 +99,12 @@ The dashboard will be available at `http://localhost:5173`.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VIBETEA_SERVER_URL` | Required | WebSocket URL of VibeTea Server |
-| `VIBETEA_AUTH_TOKEN` | Required | Authentication bearer token |
-| `VIBETEA_SOURCE_ID` | hostname | Unique identifier for this monitor |
+| `VIBETEA_SERVER_URL` | Required | Server URL (e.g., `https://vibetea.fly.dev`) |
+| `VIBETEA_SOURCE_ID` | hostname | Monitor identifier (must match key registration) |
+| `VIBETEA_KEY_PATH` | `~/.vibetea` | Directory containing `key.priv` and `key.pub` |
 | `VIBETEA_CLAUDE_DIR` | `~/.claude` | Claude Code config directory |
 | `VIBETEA_BUFFER_SIZE` | 1000 | Events to buffer during disconnect |
+| `VIBETEA_BASENAME_ALLOWLIST` | (all) | Comma-separated file extensions to include |
 
 ### Server Configuration
 
@@ -107,7 +112,24 @@ The dashboard will be available at `http://localhost:5173`.
 |----------|---------|-------------|
 | `VIBETEA_HOST` | `0.0.0.0` | Host to bind to |
 | `VIBETEA_PORT` | `3000` | Port to listen on |
-| `VIBETEA_AUTH_TOKEN` | Required | Token for authenticating monitors and clients |
+| `VIBETEA_PUBLIC_KEYS` | Required | Monitor public keys. Format: `source1:pubkey1,source2:pubkey2` |
+| `VIBETEA_AUTH_TOKEN` | Required | Bearer token for WebSocket client authentication |
+
+### Authentication
+
+VibeTea uses two authentication mechanisms:
+
+**Monitors → Server (Ed25519 Signatures)**
+- Monitors sign event payloads with Ed25519 private keys
+- Server verifies signatures using registered public keys
+- Headers: `X-Source-ID` (monitor identifier), `X-Signature` (base64-encoded signature)
+- Generate keys: `vibetea-monitor keygen`
+- Register public key via `VIBETEA_PUBLIC_KEYS` on the server
+
+**Clients → Server (Bearer Token)**
+- Dashboard and WebSocket clients use bearer token authentication
+- Token passed via `?token=` query parameter on WebSocket connections
+- Configured via `VIBETEA_AUTH_TOKEN` on both server and client
 
 ## API Reference
 
