@@ -25,11 +25,13 @@
 //! - [`privacy`]: Privacy pipeline for sanitizing event payloads
 //! - [`crypto`]: Ed25519 keypair generation and event signing
 //! - [`sender`]: HTTP client with retry, buffering, and rate limiting
+//! - [`persistence`]: Event batching and Supabase persistence
 
 pub mod config;
 pub mod crypto;
 pub mod error;
 pub mod parser;
+pub mod persistence;
 pub mod privacy;
 pub mod sender;
 pub mod types;
@@ -43,3 +45,4 @@ pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
 pub use sender::{RetryPolicy, Sender, SenderConfig, SenderError};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 pub use watcher::{FileWatcher, WatchEvent, WatcherError};
+pub use persistence::{EventBatcher, PersistenceError};
