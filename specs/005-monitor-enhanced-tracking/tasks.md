@@ -212,9 +212,9 @@
 - [x] T100 [US3] Implement skill name extraction using shell-like tokenizer in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
 - [x] T101 [GIT] Commit: implement skill name extraction
 - [x] T102 [US3] Wire skill_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [ ] T103 [GIT] Commit: wire skill_tracker to watcher
-- [ ] T104 [US3] Add client store handler for skill_invocation events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T105 [GIT] Commit: add client skill_invocation handler
+- [x] T103 [GIT] Commit: wire skill_tracker to watcher
+- [x] T104 [US3] Add client store handler for skill_invocation events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T105 [GIT] Commit: add client skill_invocation handler
 - [ ] T106 [US3] Run /sdd:map incremental for Phase 5 changes
 - [ ] T107 [GIT] Commit: update codebase documents for phase 5
 - [ ] T108 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
