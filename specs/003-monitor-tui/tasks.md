@@ -91,12 +91,12 @@
 
 ### Error Types
 - [x] T038 Add TuiError and SetupError types to monitor/src/error.rs (use devs:rust-dev agent)
-- [ ] T039 [GIT] Commit: add TUI error types
+- [x] T039 [GIT] Commit: add TUI error types
 
 ### Codebase Mapping and Retro
-- [ ] T040 Run /sdd:map incremental for Phase 2 changes
-- [ ] T041 [GIT] Commit: update codebase documents for phase 2
-- [ ] T042 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T040 Run /sdd:map incremental for Phase 2 changes
+- [x] T041 [GIT] Commit: update codebase documents for phase 2
+- [x] T042 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T043 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
