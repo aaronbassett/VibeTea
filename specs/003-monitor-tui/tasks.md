@@ -178,15 +178,15 @@
 **Independent Test**: Start monitor, trigger Claude Code activity, verify events appear in stream within 2 seconds
 
 ### Phase Start
-- [ ] T082 [GIT] Verify working tree is clean before starting Phase 4
-- [ ] T083 [GIT] Pull and rebase on origin/main if needed
-- [ ] T084 [US2] Create retro/P4.md for this phase
-- [ ] T085 [GIT] Commit: initialize phase 4 retro
+- [x] T082 [GIT] Verify working tree is clean before starting Phase 4
+- [x] T083 [GIT] Pull and rebase on origin/main if needed
+- [x] T084 [US2] Create retro/P4.md for this phase
+- [x] T085 [GIT] Commit: initialize phase 4 retro
 
 ### Display Event Types
-- [ ] T086 [P] [US2] Implement DisplayEvent struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T087 [P] [US2] Implement DisplayEventType enum with From trait in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T088 [GIT] Commit: add display event types
+- [x] T086 [P] [US2] Implement DisplayEvent struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T087 [P] [US2] Implement DisplayEventType enum with From trait in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T088 [GIT] Commit: add display event types
 
 ### Event Buffer
 - [ ] T089 [US2] Implement EventBuffer with VecDeque and FIFO eviction in monitor/src/tui/app.rs (use devs:rust-dev agent)

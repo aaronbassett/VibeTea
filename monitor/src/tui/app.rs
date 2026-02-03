@@ -44,11 +44,12 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use chrono::{DateTime, Local};
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 use ratatui::style::{Color, Modifier, Style};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::types::Event;
+use crate::types::{Event, EventType};
 
 // =============================================================================
 // Screen and Application State Types
@@ -1209,6 +1210,346 @@ pub enum ConnectionStatus {
     Connected,
     /// Connection attempt failed or connection was lost.
     Error,
+}
+
+/// Event type categories for display in the event stream (FR-010).
+///
+/// Maps from the underlying [`crate::types::EventType`] to a display-friendly
+/// representation. Each variant corresponds to a unique visual identifier
+/// (icon + color) in the TUI theme.
+///
+/// # Variants
+///
+/// - **Session**: Session lifecycle events (started, ended)
+/// - **Activity**: Activity heartbeat events
+/// - **Tool**: Tool usage events (started, completed)
+/// - **Agent**: Agent state change events
+/// - **Summary**: Session summary events
+/// - **Error**: Error events
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::DisplayEventType;
+/// use vibetea_monitor::types::EventType;
+///
+/// // Convert from EventType
+/// let display_type = DisplayEventType::from(EventType::Tool);
+/// assert_eq!(display_type, DisplayEventType::Tool);
+///
+/// // Get icon for display
+/// let icon = display_type.icon();
+/// assert!(!icon.is_empty());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DisplayEventType {
+    /// Session lifecycle event (started, ended).
+    Session,
+    /// Activity heartbeat event.
+    Activity,
+    /// Tool usage event (started, completed).
+    Tool,
+    /// Agent state change event.
+    Agent,
+    /// Session summary event.
+    Summary,
+    /// Error event.
+    Error,
+}
+
+impl DisplayEventType {
+    /// Returns a short label for this event type.
+    ///
+    /// Used for text display alongside icons.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::DisplayEventType;
+    ///
+    /// assert_eq!(DisplayEventType::Session.label(), "SESSION");
+    /// assert_eq!(DisplayEventType::Tool.label(), "TOOL");
+    /// ```
+    #[must_use]
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::Session => "SESSION",
+            Self::Activity => "ACTIVITY",
+            Self::Tool => "TOOL",
+            Self::Agent => "AGENT",
+            Self::Summary => "SUMMARY",
+            Self::Error => "ERROR",
+        }
+    }
+
+    /// Returns a unicode icon for this event type.
+    ///
+    /// Icons provide visual distinction per FR-010: "Each event type
+    /// MUST have a unique visual identifier (icon + color)."
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::DisplayEventType;
+    ///
+    /// assert_eq!(DisplayEventType::Session.icon(), "\u{1F4AC}"); // speech balloon
+    /// assert_eq!(DisplayEventType::Error.icon(), "\u{26A0}");    // warning sign
+    /// ```
+    #[must_use]
+    pub const fn icon(&self) -> &'static str {
+        match self {
+            Self::Session => "\u{1F4AC}",  // speech balloon
+            Self::Activity => "\u{1F49A}", // green heart (activity/heartbeat)
+            Self::Tool => "\u{1F527}",     // wrench
+            Self::Agent => "\u{1F916}",    // robot face
+            Self::Summary => "\u{1F4CB}",  // clipboard
+            Self::Error => "\u{26A0}",     // warning sign
+        }
+    }
+
+    /// Returns an ASCII icon for terminals without unicode support.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::DisplayEventType;
+    ///
+    /// assert_eq!(DisplayEventType::Session.ascii_icon(), "[S]");
+    /// assert_eq!(DisplayEventType::Tool.ascii_icon(), "[T]");
+    /// ```
+    #[must_use]
+    pub const fn ascii_icon(&self) -> &'static str {
+        match self {
+            Self::Session => "[S]",
+            Self::Activity => "[A]",
+            Self::Tool => "[T]",
+            Self::Agent => "[G]",
+            Self::Summary => "[M]",
+            Self::Error => "[!]",
+        }
+    }
+}
+
+impl From<EventType> for DisplayEventType {
+    /// Converts from the underlying event type to the display type.
+    ///
+    /// This is a direct 1:1 mapping since the display types match
+    /// the underlying event types.
+    fn from(event_type: EventType) -> Self {
+        match event_type {
+            EventType::Session => Self::Session,
+            EventType::Activity => Self::Activity,
+            EventType::Tool => Self::Tool,
+            EventType::Agent => Self::Agent,
+            EventType::Summary => Self::Summary,
+            EventType::Error => Self::Error,
+        }
+    }
+}
+
+impl From<&EventType> for DisplayEventType {
+    /// Converts from a reference to the underlying event type.
+    fn from(event_type: &EventType) -> Self {
+        Self::from(*event_type)
+    }
+}
+
+/// Event formatted for display in the event stream (FR-009, FR-010, FR-011).
+///
+/// Represents a processed event ready for rendering in the TUI event stream.
+/// Contains all information needed to display the event including timestamp,
+/// type classification, and human-readable message.
+///
+/// # FR-009 Compliance
+///
+/// Per FR-009: "Event stream MUST show timestamp, event type, and message
+/// for each event." This struct provides all three components.
+///
+/// # FR-010 Compliance
+///
+/// Per FR-010: "Each event type MUST have a unique visual identifier
+/// (icon + color)." The `event_type` field enables this through the
+/// [`DisplayEventType`] methods.
+///
+/// # FR-011 Compliance
+///
+/// Per FR-011: "New events MUST auto-scroll unless user has manually
+/// scrolled up." The `age_secs` field supports highlighting recent events.
+///
+/// # Example
+///
+/// ```
+/// use chrono::Local;
+/// use vibetea_monitor::tui::app::{DisplayEvent, DisplayEventType};
+///
+/// let event = DisplayEvent {
+///     id: "evt_abc123".to_string(),
+///     timestamp: Local::now(),
+///     event_type: DisplayEventType::Tool,
+///     message: "Read file: src/main.rs".to_string(),
+/// };
+///
+/// assert_eq!(event.event_type.label(), "TOOL");
+/// ```
+#[derive(Debug, Clone)]
+pub struct DisplayEvent {
+    /// Unique event identifier.
+    ///
+    /// Used for keying and deduplication. Typically in the format
+    /// `evt_` followed by alphanumeric characters.
+    pub id: String,
+
+    /// When the event occurred.
+    ///
+    /// Stored in local time for display formatting. The event stream
+    /// typically shows this as `HH:MM:SS`.
+    pub timestamp: DateTime<Local>,
+
+    /// Event type for icon and color selection.
+    ///
+    /// Determines the visual presentation of the event in the stream.
+    pub event_type: DisplayEventType,
+
+    /// Human-readable event message.
+    ///
+    /// A brief description of what the event represents. May be
+    /// truncated during rendering to fit the available width.
+    pub message: String,
+}
+
+impl DisplayEvent {
+    /// Creates a new `DisplayEvent` with the current timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Unique event identifier
+    /// * `event_type` - Type classification for display
+    /// * `message` - Human-readable description
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{DisplayEvent, DisplayEventType};
+    ///
+    /// let event = DisplayEvent::new(
+    ///     "evt_xyz789".to_string(),
+    ///     DisplayEventType::Session,
+    ///     "Session started".to_string(),
+    /// );
+    ///
+    /// assert_eq!(event.id, "evt_xyz789");
+    /// assert_eq!(event.event_type, DisplayEventType::Session);
+    /// ```
+    #[must_use]
+    pub fn new(id: String, event_type: DisplayEventType, message: String) -> Self {
+        Self {
+            id,
+            timestamp: Local::now(),
+            event_type,
+            message,
+        }
+    }
+
+    /// Returns the age of this event in seconds.
+    ///
+    /// Useful for highlighting recent events in the display.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{DisplayEvent, DisplayEventType};
+    ///
+    /// let event = DisplayEvent::new(
+    ///     "evt_1".to_string(),
+    ///     DisplayEventType::Activity,
+    ///     "Heartbeat".to_string(),
+    /// );
+    ///
+    /// // Just created, should be very recent
+    /// assert!(event.age_secs() < 2);
+    /// ```
+    #[must_use]
+    pub fn age_secs(&self) -> u64 {
+        let now = Local::now();
+        now.signed_duration_since(self.timestamp)
+            .num_seconds()
+            .max(0) as u64
+    }
+
+    /// Formats the timestamp as `HH:MM:SS` for display.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{DisplayEvent, DisplayEventType};
+    ///
+    /// let event = DisplayEvent::new(
+    ///     "evt_1".to_string(),
+    ///     DisplayEventType::Tool,
+    ///     "Executed command".to_string(),
+    /// );
+    ///
+    /// let formatted = event.formatted_timestamp();
+    /// // Format: "HH:MM:SS" (8 characters)
+    /// assert_eq!(formatted.len(), 8);
+    /// ```
+    #[must_use]
+    pub fn formatted_timestamp(&self) -> String {
+        self.timestamp.format("%H:%M:%S").to_string()
+    }
+}
+
+impl From<&Event> for DisplayEvent {
+    /// Converts from the underlying `Event` type to a `DisplayEvent`.
+    ///
+    /// Extracts the relevant fields and generates a human-readable
+    /// message based on the event payload.
+    fn from(event: &Event) -> Self {
+        use crate::types::EventPayload;
+
+        let message = match &event.payload {
+            EventPayload::Session {
+                action, project, ..
+            } => format!("{:?} session for {}", action, project),
+            EventPayload::Activity { project, .. } => {
+                if let Some(proj) = project {
+                    format!("Activity heartbeat ({})", proj)
+                } else {
+                    "Activity heartbeat".to_string()
+                }
+            }
+            EventPayload::Tool {
+                tool,
+                status,
+                context,
+                ..
+            } => {
+                let ctx = context
+                    .as_ref()
+                    .map(|c| format!(" - {}", c))
+                    .unwrap_or_default();
+                format!("{}: {:?}{}", tool, status, ctx)
+            }
+            EventPayload::Agent { state, .. } => format!("Agent state: {}", state),
+            EventPayload::Summary { summary, .. } => {
+                // Truncate long summaries for display
+                if summary.len() > 50 {
+                    format!("{}...", &summary[..47])
+                } else {
+                    summary.clone()
+                }
+            }
+            EventPayload::Error { category, .. } => format!("Error: {}", category),
+        };
+
+        Self {
+            id: event.id.clone(),
+            // Convert from UTC to Local time
+            timestamp: event.timestamp.with_timezone(&Local),
+            event_type: DisplayEventType::from(event.event_type),
+            message,
+        }
+    }
 }
 
 /// Events that drive the TUI event loop.
