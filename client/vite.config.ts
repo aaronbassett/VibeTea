@@ -1,3 +1,4 @@
+/// <reference types="vitest" />
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -12,6 +13,12 @@ export default defineConfig({
       exclude: [/\.(br)$/, /\.(gz)$/],
     }),
   ],
+  test: {
+    globals: true,
+    // Use jsdom only for component tests via inline config
+    // Other tests use default node environment
+    include: ['src/__tests__/**/*.test.{ts,tsx}'],
+  },
   build: {
     target: 'es2020',
     rollupOptions: {
