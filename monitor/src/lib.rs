@@ -26,6 +26,7 @@
 //! - [`crypto`]: Ed25519 keypair generation and event signing
 //! - [`sender`]: HTTP client with retry, buffering, and rate limiting
 //! - [`trackers`]: Enhanced data tracking modules
+//! - [`tui`]: Terminal user interface for interactive monitoring
 //! - [`utils`]: Shared utilities (debouncing, etc.)
 
 pub mod config;
@@ -35,6 +36,7 @@ pub mod parser;
 pub mod privacy;
 pub mod sender;
 pub mod trackers;
+pub mod tui;
 pub mod types;
 pub mod utils;
 pub mod watcher;
