@@ -42,11 +42,11 @@
 //! }
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use notify::{
     event::{CreateKind, ModifyKind, RemoveKind},
@@ -91,6 +91,50 @@ enum InternalEvent {
     FileCreated(PathBuf),
     FileModified(PathBuf),
     FileRemoved(PathBuf),
+}
+
+/// Interval for draining pending modifications when channel is congested.
+const PENDING_DRAIN_INTERVAL_MS: u64 = 100;
+
+/// Thread-safe storage for pending file modifications.
+///
+/// When the internal channel is full, FileModified events are coalesced here
+/// to ensure at least one modification event per path is eventually processed.
+/// This prevents data loss under bursty write conditions.
+#[derive(Debug, Default)]
+struct PendingModifications {
+    /// Set of paths with pending modifications.
+    paths: Mutex<HashSet<PathBuf>>,
+}
+
+impl PendingModifications {
+    /// Creates a new empty pending modifications store.
+    fn new() -> Self {
+        Self {
+            paths: Mutex::new(HashSet::new()),
+        }
+    }
+
+    /// Adds a path to the pending set.
+    fn insert(&self, path: PathBuf) {
+        if let Ok(mut guard) = self.paths.lock() {
+            guard.insert(path);
+        }
+    }
+
+    /// Drains all pending paths, returning them.
+    fn drain(&self) -> Vec<PathBuf> {
+        if let Ok(mut guard) = self.paths.lock() {
+            guard.drain().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Returns true if there are pending modifications.
+    fn has_pending(&self) -> bool {
+        self.paths.lock().map(|g| !g.is_empty()).unwrap_or(false)
+    }
 }
 
 /// Errors that can occur during file watching operations.
@@ -207,15 +251,25 @@ impl FileWatcher {
         // This channel bridges the sync notify callback to our async processing task
         let (internal_tx, internal_rx) = mpsc::channel::<InternalEvent>(1000);
 
+        // Create pending modifications store for coalescing when channel is full
+        let pending_modifications = Arc::new(PendingModifications::new());
+
         // Spawn the async processing task
         let positions_for_task = Arc::clone(&positions);
         let sender_for_task = event_sender.clone();
+        let pending_for_task = Arc::clone(&pending_modifications);
         tokio::spawn(async move {
-            process_internal_events(internal_rx, positions_for_task, sender_for_task).await;
+            process_internal_events(
+                internal_rx,
+                positions_for_task,
+                sender_for_task,
+                pending_for_task,
+            )
+            .await;
         });
 
         // Create the notify watcher with lightweight callback
-        let watcher = create_watcher(internal_tx, watch_dir.clone())?;
+        let watcher = create_watcher(internal_tx, watch_dir.clone(), pending_modifications)?;
 
         Ok(Self {
             watcher,
@@ -278,14 +332,16 @@ impl FileWatcher {
 /// Creates the underlying notify watcher with a lightweight callback.
 ///
 /// The callback only sends events through the internal channel; all heavy
-/// processing is done by the async task.
+/// processing is done by the async task. When the channel is full, FileModified
+/// events are coalesced into the pending modifications store.
 fn create_watcher(
     internal_tx: mpsc::Sender<InternalEvent>,
     watch_dir: PathBuf,
+    pending_modifications: Arc<PendingModifications>,
 ) -> Result<RecommendedWatcher> {
     let mut watcher = RecommendedWatcher::new(
         move |res: std::result::Result<Event, notify::Error>| {
-            handle_notify_event(res, &internal_tx);
+            handle_notify_event(res, &internal_tx, &pending_modifications);
         },
         Config::default(),
     )?;
@@ -306,9 +362,13 @@ fn create_watcher(
 /// This callback is kept extremely lightweight - it only filters events and
 /// sends them through a channel. All file I/O and locking is done by the
 /// async processing task.
+///
+/// When the channel is full, FileModified events are coalesced into the
+/// pending modifications store to ensure no file modifications are lost.
 fn handle_notify_event(
     res: std::result::Result<Event, notify::Error>,
     internal_tx: &mpsc::Sender<InternalEvent>,
+    pending_modifications: &PendingModifications,
 ) {
     let event = match res {
         Ok(event) => event,
@@ -345,10 +405,35 @@ fn handle_notify_event(
 
         if let Some(evt) = internal_event {
             // Use try_send to avoid blocking the notify thread
-            // If the channel is full, we'll miss some events, but that's
-            // preferable to blocking the file system watcher
             if let Err(e) = internal_tx.try_send(evt) {
-                warn!(error = %e, "Failed to queue internal event, channel may be full");
+                // Channel is full - coalesce FileModified events to prevent data loss
+                // FileCreated and FileRemoved are less common and more critical,
+                // so we log warnings for those
+                match e.into_inner() {
+                    InternalEvent::FileModified(p) => {
+                        trace!(
+                            path = %p.display(),
+                            "Channel full, coalescing FileModified event"
+                        );
+                        pending_modifications.insert(p);
+                    }
+                    InternalEvent::FileCreated(p) => {
+                        warn!(
+                            path = %p.display(),
+                            "Channel full, FileCreated event may be delayed"
+                        );
+                        // For FileCreated, we treat it as a modification since the
+                        // async task will handle it appropriately
+                        pending_modifications.insert(p);
+                    }
+                    InternalEvent::FileRemoved(p) => {
+                        warn!(
+                            path = %p.display(),
+                            "Channel full, FileRemoved event may be delayed"
+                        );
+                        // FileRemoved can't be coalesced meaningfully - log and continue
+                    }
+                }
             }
         }
     }
@@ -359,26 +444,64 @@ fn handle_notify_event(
 /// This centralizes all async operations (file I/O, lock acquisition) into
 /// a single managed task, avoiding the need to spawn threads or block on
 /// the runtime from the notify callback.
+///
+/// Also periodically drains pending modifications that were coalesced when
+/// the channel was full, ensuring no file modifications are lost.
 async fn process_internal_events(
     mut rx: mpsc::Receiver<InternalEvent>,
     positions: Arc<RwLock<HashMap<PathBuf, u64>>>,
     sender: mpsc::Sender<WatchEvent>,
+    pending_modifications: Arc<PendingModifications>,
 ) {
-    while let Some(event) = rx.recv().await {
-        match event {
-            InternalEvent::FileCreated(path) => {
-                handle_file_created_async(&path, &positions, &sender).await;
+    let drain_interval = tokio::time::Duration::from_millis(PENDING_DRAIN_INTERVAL_MS);
+
+    loop {
+        tokio::select! {
+            // Process events from the channel
+            event = rx.recv() => {
+                match event {
+                    Some(InternalEvent::FileCreated(path)) => {
+                        handle_file_created_async(&path, &positions, &sender).await;
+                    }
+                    Some(InternalEvent::FileModified(path)) => {
+                        handle_file_modified_async(&path, &positions, &sender).await;
+                    }
+                    Some(InternalEvent::FileRemoved(path)) => {
+                        handle_file_removed_async(&path, &positions, &sender).await;
+                    }
+                    None => {
+                        // Channel closed, drain any remaining pending modifications
+                        drain_pending_modifications(&pending_modifications, &positions, &sender).await;
+                        break;
+                    }
+                }
             }
-            InternalEvent::FileModified(path) => {
-                handle_file_modified_async(&path, &positions, &sender).await;
-            }
-            InternalEvent::FileRemoved(path) => {
-                handle_file_removed_async(&path, &positions, &sender).await;
+            // Periodically drain pending modifications
+            _ = tokio::time::sleep(drain_interval), if pending_modifications.has_pending() => {
+                drain_pending_modifications(&pending_modifications, &positions, &sender).await;
             }
         }
     }
 
     debug!("Internal event processor shutting down");
+}
+
+/// Drains pending modifications and processes them as FileModified events.
+async fn drain_pending_modifications(
+    pending: &PendingModifications,
+    positions: &Arc<RwLock<HashMap<PathBuf, u64>>>,
+    sender: &mpsc::Sender<WatchEvent>,
+) {
+    let paths = pending.drain();
+    if !paths.is_empty() {
+        debug!(
+            count = paths.len(),
+            "Draining coalesced pending modifications"
+        );
+        for path in paths {
+            handle_file_modified_async(&path, positions, sender).await;
+        }
+    }
 }
 
 /// Handles a file creation event asynchronously.
