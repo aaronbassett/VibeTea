@@ -71,8 +71,8 @@
 
 ### Event Handler Infrastructure
 - [x] T024 Implement TuiEvent enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T025 [GIT] Commit: add TuiEvent enum
-- [ ] T026 Implement EventHandler with tokio::select! pattern in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T025 [GIT] Commit: add TuiEvent enum
+- [x] T026 Implement EventHandler with tokio::select! pattern in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T027 [GIT] Commit: add EventHandler with async event loop
 
 ### State Types
