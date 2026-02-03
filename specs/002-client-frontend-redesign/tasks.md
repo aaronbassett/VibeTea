@@ -84,10 +84,10 @@
 - [x] T040 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
-- [ ] T041 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T042 [GIT] Create/update PR to main with phase summary
-- [ ] T043 [GIT] Verify all CI checks pass
-- [ ] T044 [GIT] Report PR ready status
+- [x] T041 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T042 [GIT] Create/update PR to main with phase summary
+- [x] T043 [GIT] Verify all CI checks pass
+- [x] T044 [GIT] Report PR ready status
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
