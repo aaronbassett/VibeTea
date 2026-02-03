@@ -26,6 +26,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence at Server (fire-and-forget) |
 | **Serverless Processing** | Edge functions handle all Supabase database access via VibeTea authentication (not direct client access) |
 | **Event-Driven** | Deno edge functions respond to HTTP requests for ingestion and querying; RPC functions handle database operations |
+| **Async Channel-Based Batching** | **NEW Phase 4**: Persistence uses mpsc channels for decoupled event batching in background tasks |
 
 ## Core Components
 
@@ -38,8 +39,10 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Privacy-preserving JSONL parsing (extracts metadata only)
   - Cryptographic signing of events (Ed25519)
   - Event buffering and exponential backoff retry for real-time server
-  - **NEW Phase 3**: Optional batch buffering and submission to Supabase edge functions (if `VIBETEA_SUPABASE_URL` configured)
-  - **NEW Phase 3**: Batch retry logic with exponential backoff (1s → 2s → 4s, max 3 attempts, then drop and log)
+  - Optional batch buffering and submission to Supabase edge functions (if `VIBETEA_SUPABASE_URL` configured)
+  - Batch retry logic with exponential backoff (1s → 2s → 4s, max 3 attempts, then drop and log)
+  - **NEW Phase 4**: PersistenceManager runs as async background task, receives events via mpsc channel
+  - **NEW Phase 4**: EventBatcher handles buffering, flushes on interval or capacity, manages retry state
   - Graceful shutdown with event flushing
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events` for real-time)
@@ -73,16 +76,16 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Session state management (Active, Inactive, Ended, Removed)
   - Event filtering (by session ID, time range)
   - Real-time visualization (event list, session overview)
-  - **NEW Phase 3**: Optional historic data fetching from Supabase query edge function (if `VITE_SUPABASE_URL` configured)
-  - **NEW Phase 3**: Heatmap visualization combining real-time event counts with historic hourly aggregates
-  - **NEW Phase 3**: Deduplication logic: real-time event counts for current hour override historic aggregates for that hour
+  - Optional historic data fetching from Supabase query edge function (if `VITE_SUPABASE_URL` configured)
+  - Heatmap visualization combining real-time event counts with historic hourly aggregates
+  - Deduplication logic: real-time event counts for current hour override historic aggregates for that hour
 - **Dependencies**:
   - Depends on **Server** (via WebSocket connection to `/ws` for real-time)
   - Optionally depends on **Supabase** (via HTTP GET to query edge function for historic data)
   - No persistence layer (in-memory Zustand store for real-time events)
 - **Dependents**: None (consumer component)
 
-### Supabase (Persistence) - Phase 3 Implementation
+### Supabase (Persistence)
 
 - **Purpose**: Optional persistence layer providing event durability and historic data for heatmap visualization
 - **Location**: `supabase/` (migrations and edge functions)
@@ -90,9 +93,9 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - **Database**: PostgreSQL events table with RLS (Row Level Security) policies denying all direct access
   - **Migrations**: `supabase/migrations/20260203000000_create_events_table.sql` - Creates events table with indexes
   - **Migrations**: `supabase/migrations/20260203000001_create_functions.sql` - Creates bulk insert and aggregation functions
-  - **Ingest Edge Function** (Phase 3 - IMPLEMENTED): `supabase/functions/ingest/index.ts` - Validates Ed25519 signatures, inserts events via `bulk_insert_events()` function
-  - **Query Edge Function** (Phase 3 - IMPLEMENTED): `supabase/functions/query/index.ts` - Validates bearer tokens, returns hourly aggregates via `get_hourly_aggregates()` function
-  - **Shared Auth** (Phase 3 - IMPLEMENTED): `supabase/functions/_shared/auth.ts` - Ed25519 signature verification and bearer token validation
+  - **Ingest Edge Function**: `supabase/functions/ingest/index.ts` - Validates Ed25519 signatures, inserts events via `bulk_insert_events()` function
+  - **Query Edge Function**: `supabase/functions/query/index.ts` - Validates bearer tokens, returns hourly aggregates via `get_hourly_aggregates()` function
+  - **Shared Auth**: `supabase/functions/_shared/auth.ts` - Ed25519 signature verification and bearer token validation
 - **Dependencies**:
   - Receives events from **Monitor** (via HTTP POST to ingest edge function)
   - Receives queries from **Client** (via HTTP GET to query edge function)
@@ -116,22 +119,25 @@ Claude Code → Monitor → Server → Client (in-memory broadcast):
 10. Zustand store adds event (FIFO eviction at 1000 limit)
 11. React renders updated event list, session overview, real-time heatmap
 
-### Phase 3: Persistence Flow (Monitor to Supabase Edge Function)
+### Persistence Flow (Monitor to Supabase Edge Function)
 
 Monitor → Supabase ingest edge function → PostgreSQL (batched, asynchronous to real-time):
-1. Monitor accumulates events in batch buffer
-2. **When batch interval elapses (default 60s) OR batch size reaches 1000, whichever first**:
-   - Sender signs batch with Ed25519, creates JSON array
+1. **NEW Phase 4**: Monitor sends events to `PersistenceManager` via mpsc channel (non-blocking try_send)
+2. **NEW Phase 4**: PersistenceManager runs in background task, receives events from channel
+3. **NEW Phase 4**: EventBatcher accumulates events in buffer (max 1000)
+4. **When batch interval elapses (default 60s) OR batch size reaches 1000, whichever first**:
+   - EventBatcher serializes events to JSON array, signs with Ed25519
    - POST to `/functions/v1/ingest` with X-Source-ID and X-Signature headers
-3. Edge function (`supabase/functions/ingest/index.ts`) validates signature (using shared auth utility)
-4. Edge function validates event schema (id, source, timestamp, eventType, payload)
-5. Edge function calls `bulk_insert_events(JSONB)` PL/pgSQL function with validated events
-6. Function inserts events with `ON CONFLICT DO NOTHING` (idempotency)
-7. Returns inserted count (separately tracks duplicates)
-8. Monitor updates batch state and continues
-9. On failure: exponential backoff (1s, 2s, 4s), max 3 retries, then drop and log
+5. Edge function (`supabase/functions/ingest/index.ts`) validates signature (using shared auth utility)
+6. Edge function validates event schema (id, source, timestamp, eventType, payload)
+7. Edge function calls `bulk_insert_events(JSONB)` PL/pgSQL function with validated events
+8. Function inserts events with `ON CONFLICT DO NOTHING` (idempotency)
+9. Returns inserted count (separately tracks duplicates)
+10. EventBatcher updates batch state and continues
+11. On failure: exponential backoff (1s, 2s, 4s), max 3 retries, then drop and log
+12. **NEW Phase 4**: On shutdown (channel closed), PersistenceManager flushes remaining events
 
-### Phase 3: Historic Data Flow (Supabase Edge Function to Client)
+### Historic Data Flow (Supabase Edge Function to Client)
 
 Client → Supabase query edge function → PostgreSQL (periodic fetches):
 1. Client initializes with `VITE_SUPABASE_URL` configured
@@ -178,15 +184,30 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - Session state updated (Active/Inactive/Ended/Removed)
 - React re-renders only affected components (via Zustand selectors)
 
-#### 6. Event Batching for Persistence (Monitor/Sender):
-- Event added to batch buffer (separate from real-time buffer)
-- Timestamp recorded for batch interval tracking
-- **When 60 seconds elapses OR 1000 events accumulated**:
-  - Batch serialized as JSONB array
-  - Ed25519 signature computed over JSON batch
-  - POST to `/functions/v1/ingest` with X-Source-ID and X-Signature
+#### 6. Event Routing to Persistence (Monitor/Main Loop):
+- **NEW Phase 4**: Event successfully sent to real-time server
+- **NEW Phase 4**: Also queued to PersistenceManager via `persistence_tx.try_send(event)`
+- **NEW Phase 4**: If channel full (backpressure), logs debug message and drops event
+- **NEW Phase 4**: Real-time event delivery is unaffected by persistence channel state
 
-#### 7. Event Persistence (Phase 3 - Supabase Edge Function):
+#### 7. Async Persistence Batching (PersistenceManager):
+- **NEW Phase 4**: PersistenceManager::run() continuously selects between:
+  - Receiving events from mpsc channel
+  - Periodic timer tick (configurable interval, default 60s)
+- **NEW Phase 4**: When event received, queue in EventBatcher buffer
+- **NEW Phase 4**: When buffer full (1000 events), trigger immediate flush
+- **NEW Phase 4**: When timer ticks and buffer not empty, trigger periodic flush
+
+#### 8. Event Batch Flush (EventBatcher):
+- Serializes buffered events to JSON array
+- Computes Ed25519 signature over JSON body
+- POST to `/functions/v1/ingest` with X-Source-ID and X-Signature headers
+- On success: clears buffer and resets retry counter
+- On transient failure: exponential backoff retry (with configurable limit)
+- On permanent failure (auth error): logs and skips retry
+- On max retries exceeded: drops batch, resets retry counter, logs warning
+
+#### 9. Event Persistence (Supabase Edge Function):
 - Edge function (`supabase/functions/ingest/index.ts`) handles POST request
 - Extract X-Source-ID and X-Signature from request headers
 - Load public key for source from env (`VIBETEA_PUBLIC_KEYS`)
@@ -198,7 +219,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - Return inserted_count separately from duplicates skipped
 - Edge function returns success with counts or 400/401/422 error
 
-#### 8. Historic Data Fetch (Phase 3 - Client via Edge Function):
+#### 10. Historic Data Fetch (Client via Edge Function):
 - On component mount (Heatmap) or manual refresh
 - GET `/functions/v1/query` with:
   - Authorization: Bearer token header
@@ -209,7 +230,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - Returns hourly event counts `{source, date, hour, event_count}` with metadata (totalCount, daysRequested, fetchedAt)
 - Client merges with real-time data and renders heatmap
 
-#### 9. Visualization (Client):
+#### 11. Visualization (Client):
 - `EventStream` component renders with virtualized scrolling (real-time events)
 - `SessionOverview` shows active sessions with metadata
 - `Heatmap` displays activity over time bins (real-time + historic aggregates)
@@ -228,6 +249,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 ## Dependency Rules
 
 - **Monitor → Server**: Continuous via HTTP POST (real-time path)
+- **Monitor → PersistenceManager**: Via mpsc channel (async, non-blocking)
 - **Monitor → Supabase**: Periodic via HTTP POST to edge functions (persistence path, async to real-time)
 - **Server → Monitor**: None (server doesn't initiate contact)
 - **Server → Supabase**: None (Server has no persistence concern)
@@ -246,10 +268,13 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
 | `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
-| **Phase 3**: `HourlyAggregate` | Historic data format | {source, date, hour, event_count} |
-| **Phase 3**: `AuthResult` | Edge function auth result | {isValid, error?, sourceId?} |
-| **Phase 3**: `IngestResponse` | Edge function ingest success | {inserted: number, message: string} |
-| **Phase 3**: `QueryResponse` | Edge function query success | {aggregates: HourlyAggregate[], meta: QueryMeta} |
+| `HourlyAggregate` | Historic data format | {source, date, hour, event_count} |
+| `AuthResult` | Edge function auth result | {isValid, error?, sourceId?} |
+| `IngestResponse` | Edge function ingest success | {inserted: number, message: string} |
+| `QueryResponse` | Edge function query success | {aggregates: HourlyAggregate[], meta: QueryMeta} |
+| **NEW Phase 4**: `PersistenceManager` | Async background task for event batching | Wraps `EventBatcher`, runs `run()` async function |
+| **NEW Phase 4**: `EventBatcher` | Buffer and flush events with retry logic | `queue()`, `flush()`, `needs_flush()`, `is_empty()` |
+| **NEW Phase 4**: `PersistenceError` | Persistence-specific errors | Http, Serialization, AuthFailed, ServerError, MaxRetriesExceeded |
 
 ## Authentication & Authorization
 
@@ -265,7 +290,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **Security**: Uses `ed25519_dalek::VerifyingKey::verify_strict()` (RFC 8032 compliant)
 - **Timing Attack Prevention**: `subtle::ConstantTimeEq` for signature comparison
 
-### Monitor Authentication (Source) - Persistence Path (Phase 3)
+### Monitor Authentication (Source) - Persistence Path
 
 - **Mechanism**: Same Ed25519 signature verification used for real-time
 - **Flow**:
@@ -286,7 +311,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
   4. Invalid/missing tokens rejected with 401 Unauthorized
 - **Storage**: Client stores token in localStorage under `vibetea_token` key
 
-### Client Authentication (Consumer) - Persistence Path (Phase 3)
+### Client Authentication (Consumer) - Persistence Path
 
 - **Mechanism**: Same bearer token as real-time, via HTTP Authorization header
 - **Flow**:
@@ -314,31 +339,34 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **Sessions** | Zustand store (Map<sessionId, Session>) | Keyed by UUID, state machines (Active → Inactive → Ended → Removed) |
 | **Filters** | Zustand store | Session ID filter, time range filter |
 | **Authentication Token** | localStorage | Persisted across page reloads |
-| **Phase 3**: **Historic Heatmap Data** | Zustand store (HourlyAggregate[]) | Fetched from Supabase edge function, merged with real-time counts |
-| **Phase 3**: **Heatmap Loading State** | Zustand store | Loading, loaded, error (non-blocking) |
+| **Historic Heatmap Data** | Zustand store (HourlyAggregate[]) | Fetched from Supabase edge function, merged with real-time counts |
+| **Heatmap Loading State** | Zustand store | Loading, loaded, error (non-blocking) |
 
 ### Monitor State
 | State Type | Location | Pattern |
 |------------|----------|---------|
 | **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown (real-time) |
-| **Phase 3**: **Batch Buffer** | `VecDeque<Event>` (max 1000) | Separate from real-time buffer, batched on interval or size limit |
-| **Phase 3**: **Batch State** | Sender internal | Tracks last batch send time, retry count per batch |
+| **Batch Buffer** | `Vec<Event>` in EventBatcher (max 1000) | Separate from real-time buffer, batched on interval or size limit |
+| **Batch Timer** | `tokio::time::interval` in PersistenceManager | Periodic tick for batch flush trigger |
+| **Batch Retry State** | `consecutive_failures` counter in EventBatcher | Tracks failures, resets on success, increments on transient errors |
 | **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation (real-time) |
+| **NEW Phase 4**: **Persistence Channel** | `mpsc::Sender<Event>` held in main loop | One per PersistenceManager instance, sent to background task |
 
 ## Cross-Cutting Concerns
 
 | Concern | Implementation | Location |
 |---------|----------------|----------|
 | **Logging** | Structured JSON (tracing crate) | Server: `main.rs`, Monitor: `main.rs`, Client: error boundaries in components |
-| **Error Handling** | Custom error enums + thiserror | `server/src/error.rs`, `monitor/src/error.rs` |
+| **Error Handling** | Custom error enums + thiserror | `server/src/error.rs`, `monitor/src/error.rs`, `monitor/src/persistence.rs` |
 | **Rate Limiting** | Per-source counter with TTL | `server/src/rate_limit.rs` |
 | **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
-| **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs` (real-time), batch retry (Phase 3) |
-| **Phase 3**: **Persistence** | Optional, async to real-time | Monitor: batch buffering and submission, Client: independent query fetches |
-| **Phase 3**: **Batch Retry** | Exponential backoff (1s, 2s, 4s), max 3 attempts | Monitor sender module (persistence path) |
-| **Phase 3**: **Edge Function Auth** | Ed25519 + bearer tokens | `supabase/functions/_shared/auth.ts` |
+| **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs` (real-time), `monitor/src/persistence.rs` (batch, Phase 4) |
+| **Persistence** | Optional, async to real-time | Monitor: PersistenceManager + EventBatcher (Phase 4), Client: independent query fetches |
+| **NEW Phase 4**: **Batch Retry** | Exponential backoff (1s, 2s, 4s), max configurable (1-10) | EventBatcher in `monitor/src/persistence.rs` |
+| **NEW Phase 4**: **Channel Backpressure** | mpsc channel capacity (MAX_BATCH_SIZE * 2) | PersistenceManager receives from channel with non-blocking try_send in main loop |
+| **Edge Function Auth** | Ed25519 + bearer tokens | `supabase/functions/_shared/auth.ts` |
 
 ## Design Decisions
 
@@ -361,6 +389,21 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **Independent failure domains**: Persistence failures don't block real-time event delivery
 - **Configurable batch interval**: Allows tuning latency vs. throughput (default 60s)
 - **Idempotency**: Duplicate batch submissions handled via `ON CONFLICT DO NOTHING`
+
+### Why PersistenceManager as Async Background Task (Phase 4)?
+
+- **Non-blocking event routing**: Main event loop uses try_send, never blocks on persistence channel
+- **Decoupled lifecycle**: Persistence manager runs independently, shutdown via channel close
+- **Clear separation of concerns**: Batch management isolated in background task
+- **Testable in isolation**: Can mock channel sender/receiver for unit tests
+- **Future extensibility**: Easy to add multiple persistence targets (different channels)
+
+### Why EventBatcher in Separate Module (Phase 4)?
+
+- **Single Responsibility**: Handles only buffering, flushes, and retry logic
+- **Reusable**: Can be used by multiple managers or in tests without tokio runtime
+- **Clear interface**: Public methods for queue, flush, status checks
+- **Flexible timing**: Timer and size-based triggers are independent
 
 ### Why Edge Functions for Database Access?
 

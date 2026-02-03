@@ -1,15 +1,15 @@
 # External Integrations
 
-**Status**: Phase 3 Implementation - Supabase Edge Functions with authentication and validation
+**Status**: Phase 4 Implementation - Event Batching with Async Persistence Manager
 **Last Updated**: 2026-02-03
 
 ## Summary
 
 VibeTea is designed as a distributed event system with four main components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server or Supabase
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server or Supabase (with optional async event batching)
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket and optionally queries historical data from Supabase
-- **Supabase**: Managed backend with PostgreSQL database for persistence, Edge Functions for authentication and data aggregation (Phase 3)
+- **Supabase**: Managed backend with PostgreSQL database for persistence, Edge Functions for authentication and data aggregation (Phase 3), and ingest endpoint for event persistence (Phase 4)
 
 All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication and privacy-by-design data handling.
 
@@ -517,6 +517,94 @@ Functions exported:
 }
 ```
 
+### Monitor → Supabase Persistence (Phase 4)
+
+**Module Location**: `monitor/src/persistence.rs` (1898 lines)
+
+**Architecture Overview**:
+- **EventBatcher**: Low-level buffering and HTTP transmission
+- **PersistenceManager**: Async background task wrapping EventBatcher with timer-based flushing
+
+**EventBatcher Implementation**:
+- Buffered event collection with max capacity (1000 events)
+- FIFO eviction when buffer full (rare condition with monitoring)
+- Single HTTP POST per flush to Supabase ingest endpoint
+- Exponential backoff retry with configurable limits
+- Tracks consecutive failures for intelligent error handling
+- Signature generation and header management
+
+**PersistenceManager Runtime**:
+- Spawned as independent tokio task: `tokio::spawn(manager.run())`
+- Receives events via mpsc channel from main event loop
+- Timer-based flushing on configurable interval (default 60 seconds)
+- Immediate flush on buffer reaching capacity (MAX_BATCH_SIZE = 1000)
+- Graceful shutdown: flushes remaining events when channel closes
+- Non-blocking event queue: accepts events without waiting for transmission
+
+**Event Flow**:
+1. Main event loop queues event to persistence sender channel
+2. PersistenceManager receives event via channel receiver
+3. EventBatcher adds event to buffer
+4. Check triggers flush if needed:
+   - Buffer full: Immediate flush
+   - Timer tick: Flush if buffer not empty
+   - Channel closed: Flush remaining on shutdown
+5. Flush sends batch to Supabase via HTTPS POST
+6. Failed flushes use exponential backoff and retry
+7. Max retries exceeded: Batch dropped, error logged
+
+**Configuration**:
+```rust
+PersistenceConfig {
+    supabase_url: "https://xyz.supabase.co/functions/v1",
+    batch_interval_secs: 60,
+    retry_limit: 3,
+}
+```
+
+**Retry Strategy** (FR-015):
+- Initial delay: 1000ms
+- Backoff multiplier: 2x per retry
+- Sequence: 1s, 2s, 4s, 8s, 16s...
+- Limit: 3 retries by default (configurable 1-10)
+- Non-retriable: 401 Unauthorized (auth failures)
+- Behavior: Auth errors fail immediately, batch retained
+- Max retries: Batch dropped, failure counter reset
+
+**Error Handling**:
+- `PersistenceError` enum with variants:
+  - `Http` - Network/client errors
+  - `AuthFailed` - 401 unauthorized (non-retriable)
+  - `ServerError` - 5xx responses (retriable)
+  - `MaxRetriesExceeded` - All retries exhausted
+  - `Serialization` - JSON encoding failures
+  - `InvalidHeader` - Header value format errors
+
+**Testing Infrastructure**:
+- Unit tests (77 tests in persistence.rs)
+- Integration tests using wiremock mock server
+- PersistenceManager integration tests with tokio
+- Retry behavior validation with timing checks
+- Graceful shutdown and final flush testing
+- Full-buffer flushing verification
+
+**Environment Configuration** (`monitor/src/config.rs`):
+```rust
+// Optional persistence config
+pub persistence: Option<PersistenceConfig>
+
+// Environment variables:
+// VIBETEA_SUPABASE_URL - Base URL for edge function (enables persistence)
+// VIBETEA_SUPABASE_BATCH_INTERVAL_SECS - Flush interval (default 60)
+// VIBETEA_SUPABASE_RETRY_LIMIT - Max retries (default 3, range 1-10)
+```
+
+**Interaction with Sender Module**:
+- Persistence is independent parallel path
+- Does not interfere with real-time server transmission (sender module)
+- Both can be active simultaneously
+- Monitor sends to server for real-time + persistence buffer for Supabase
+
 ### Client → Supabase Query (Phase 3)
 
 **Endpoint**: `https://<supabase-url>/functions/v1/query`
@@ -815,6 +903,9 @@ pub struct SenderConfig {
 | `VIBETEA_CLAUDE_DIR` | No | ~/.claude | run |
 | `VIBETEA_BUFFER_SIZE` | No | 1000 | run |
 | `VIBETEA_BASENAME_ALLOWLIST` | No | - | run |
+| `VIBETEA_SUPABASE_URL` | No | - | run |
+| `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | No | 60 | run |
+| `VIBETEA_SUPABASE_RETRY_LIMIT` | No | 3 | run |
 | `RUST_LOG` | No | info | all |
 
 **Logging**:
@@ -952,7 +1043,6 @@ deno test --allow-env --allow-net supabase/functions/_tests/rls.test.ts
 ### Planned (Not Yet Integrated)
 
 - **Client Supabase Integration**: Query historical event aggregates via `get_hourly_aggregates()` function
-- **Monitor Supabase Integration**: Target ingest endpoint as alternative to custom server
 - **Database Retention Policies**: Automated event archival and purging
 - **Backup & Disaster Recovery**: Automated backups and point-in-time recovery
 - **Background Job Scheduling**: Data aggregation jobs
@@ -963,7 +1053,7 @@ deno test --allow-env --allow-net supabase/functions/_tests/rls.test.ts
 
 ## Configuration Quick Reference
 
-### Supabase Environment Variables (Phase 3)
+### Supabase Environment Variables (Phase 3+)
 
 | Variable | Type | Default | Required | Purpose |
 |----------|------|---------|----------|---------|
@@ -973,4 +1063,12 @@ deno test --allow-env --allow-net supabase/functions/_tests/rls.test.ts
 | `VIBETEA_SUBSCRIBER_TOKEN` | string | - | Yes* | Client query endpoint token |
 
 *Used by Supabase Edge Functions for authentication
+
+### Monitor Persistence Configuration (Phase 4)
+
+| Variable | Type | Default | Required | Purpose |
+|----------|------|---------|----------|---------|
+| `VIBETEA_SUPABASE_URL` | string | - | No | Supabase edge function base URL |
+| `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | integer | 60 | No | Seconds between batch submissions (min 1) |
+| `VIBETEA_SUPABASE_RETRY_LIMIT` | integer | 3 | No | Max retry attempts (1-10 range) |
 

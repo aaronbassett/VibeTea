@@ -1,13 +1,13 @@
 # Technology Stack
 
-**Status**: Phase 3 Implementation - Supabase Edge Functions with authentication and validation
+**Status**: Phase 4 Implementation - Event Batching with Async Persistence Manager
 **Last Updated**: 2026-02-03
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, event batching |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 | Supabase Functions | TypeScript | (Deno 2) | Edge Functions for event ingestion and querying |
@@ -60,7 +60,7 @@
 | @noble/ed25519             | ^2.0.0   | Ed25519 signature verification in Edge Functions (RFC 8032 compliant, Phase 3) |
 | @supabase/supabase-js      | 2        | Supabase JavaScript client for Edge Functions (Phase 3) |
 
-### Supabase & PostgreSQL (Phase 3)
+### Supabase & PostgreSQL (Phase 3+)
 
 | Component | Version | Purpose |
 |-----------|---------|---------|
@@ -125,7 +125,7 @@
 |--------|---------|
 | Server Runtime | Rust binary (tokio async) |
 | Client Runtime | Browser (ES2020+) |
-| Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI |
+| Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI and async persistence manager |
 | Supabase Functions | Deno 2 JavaScript runtime (Phase 3) |
 | Database Runtime | PostgreSQL 17 with PostgREST API |
 | Node.js | Required for development and client build only |
@@ -134,6 +134,7 @@
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
 | CLI Support | Manual command parsing in monitor main.rs (init, run, help, version) |
+| Event Persistence | Async batching with timer-based and capacity-based flushing (Phase 4) |
 | Local Supabase | Docker-based with PostgreSQL, PostgREST, Deno runtime, Auth (port 54321) |
 
 ## Communication Protocols & Formats
@@ -146,6 +147,7 @@
 | Monitor → File System | Native | JSONL | N/A (local file access) |
 | Client → Supabase Functions | HTTPS POST/GET | JSON | Bearer token (query endpoint) |
 | Monitor → Supabase Functions | HTTPS POST | JSON | Ed25519 signature (ingest endpoint, Phase 3) |
+| Monitor Persistence → Supabase | HTTPS POST | JSON | Ed25519 signature (Phase 4) |
 | Supabase Functions → PostgreSQL | SQL | JSON | Service role key |
 
 ## Data Serialization
@@ -159,6 +161,7 @@
 | Cryptographic Keys | Base64 + Raw bytes | Public keys base64 encoded, private keys raw 32-byte seeds |
 | Database Events | JSONB (PostgreSQL) | Full event payload stored as JSON in `events.payload` column |
 | Edge Function Auth | Base64 + Base64 | Ed25519 signatures and public keys encoded base64 |
+| Event Persistence | serde_json + Vec | Batched events serialized to JSON for Supabase ingest |
 
 ## Build Output
 
@@ -202,7 +205,7 @@
 - `main.rs` - Server entry point
 
 ### Monitor (`monitor/src`)
-- `config.rs` - Configuration from environment variables (server URL, source ID, key path, buffer size)
+- `config.rs` - Configuration from environment variables (server URL, source ID, key path, buffer size, persistence config)
 - `error.rs` - Error types
 - `types.rs` - Event types
 - `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction)
@@ -210,6 +213,7 @@
 - `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
 - `crypto.rs` - **Phase 6**: Ed25519 keypair generation, loading, saving, and event signing
 - `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
+- `persistence.rs` - **Phase 4**: Event batching and async persistence manager for Supabase edge function
 - `main.rs` - **Phase 6**: CLI entry point with init and run commands
 - `lib.rs` - Public interface
 
@@ -236,62 +240,79 @@
 | Supabase Functions | Supabase Hosted | Deno Container | Auto-deployed from `supabase/functions/` (Phase 3) |
 | Database | Supabase Hosted | PostgreSQL Container | Managed PostgreSQL 17 instance |
 
-## Phase 3 Additions (Supabase Edge Functions & Authentication)
+## Phase 4 Additions (Event Batching with Async Persistence Manager)
 
-**Phase 3 Edge Function Infrastructure** (`supabase/functions/`):
-- **ingest/index.ts**: Event batch ingestion endpoint with full request/response validation
-  - Accepts POST requests with up to 1000 events per batch
-  - Event schema validation: id (evt_*), source, timestamp (RFC 3339), eventType, payload
-  - Source matching validation (event.source must match X-Source-ID)
-  - CORS support with configurable methods and headers
-  - Response types: success (200) with inserted count, validation errors (400/422), auth errors (401), server errors (500)
+**Phase 4 Persistence Infrastructure** (`monitor/src/persistence.rs`):
+- **EventBatcher**: Collects events into a buffer and sends them to Supabase ingest endpoint
+  - Capacity: 1000 events max per batch (MAX_BATCH_SIZE constant)
+  - HTTP client with connection pooling (5 max idle per host)
+  - Request timeout: 30 seconds
+  - Event buffer with FIFO eviction when full
+  - Consecutive failure tracking for retry logic
+  - Batch size and fullness status queries
 
-- **query/index.ts**: Historical event aggregates query endpoint
-  - Accepts GET requests with query parameters (days: 7|30, source: optional)
-  - Bearer token authentication required
-  - Returns hourly aggregates from database via `get_hourly_aggregates()` RPC
-  - Metadata response: totalCount, daysRequested, fetchedAt timestamp
+- **PersistenceManager**: Wraps EventBatcher with async timer-based and capacity-based flushing
+  - Created via `PersistenceManager::new(config, crypto)` returning (manager, mpsc sender)
+  - Runs in background via `manager.run()` (async function)
+  - Configurable batch interval (default 60 seconds)
+  - Automatic flush triggers on:
+    - Interval timer tick (if buffer not empty)
+    - Buffer reaches MAX_BATCH_SIZE events (immediate flush)
+    - Sender channel closed (final shutdown flush)
+  - Channel-based event queue with backpressure (capacity: MAX_BATCH_SIZE * 2)
+  - Graceful shutdown: flushes remaining events before exiting
+  - Flush error handling: logs warnings but continues running
+  - Skips missed ticks to prevent burst flushes
 
-- **_shared/auth.ts**: Shared authentication utilities (173 lines)
-  - `verifySignature()`: @noble/ed25519 signature verification (RFC 8032 compliant)
-  - `getPublicKeyForSource()`: Environment-based public key lookup
-  - `validateBearerToken()`: Constant-time token comparison
-  - `verifyIngestAuth()`: Combined X-Source-ID + X-Signature verification
-  - `verifyQueryAuth()`: Bearer token validation for query endpoint
-  - Key/signature format validation (32-byte keys, 64-byte signatures)
+**PersistenceConfig** (in `monitor/src/config.rs`):
+- `supabase_url`: Supabase edge function base URL
+- `batch_interval_secs`: Seconds between batch submissions (min 1, max 3600)
+- `retry_limit`: Max retry attempts on failure (1-10 range)
 
-**Phase 3 Test Infrastructure** (Deno test framework):
-- **ingest/index.test.ts**: Authentication tests with test keypairs
-  - Ed25519 test key generation and usage
-  - Request body validation test data
-  - Source ID and signature header testing
+**Authentication & Signing**:
+- Uses Ed25519 signing via Crypto module
+- Signature in X-Signature header (base64-encoded)
+- Source ID in X-Source-ID header
+- Batch is array of events sent as JSON body
 
-- **query/index.test.ts**: Bearer token tests with environment isolation
-  - EnvGuard RAII pattern for test environment variable management
-  - BDD-style test suite (describe/it/beforeEach/afterEach)
-  - Token validation and missing header testing
+**Retry Behavior** (FR-015):
+- Initial delay: 1000ms (INITIAL_RETRY_DELAY_MS)
+- Backoff multiplier: 2x (RETRY_BACKOFF_MULTIPLIER)
+- Exponential backoff sequence: 1s, 2s, 4s, 8s...
+- Auth errors (401): Not retried, fail immediately
+- Server errors (5xx): Retried until retry_limit exceeded
+- Max retries exceeded: Batch dropped, failure counter reset
+- Consecutive failure counter tracks failed flush attempts
 
-- **_tests/rls.test.ts**: Row-level security policy tests
-  - Negative tests verifying RLS enforcement
-  - Unauthenticated access prevention
-  - Service role bypass verification
+**HTTP Client Features**:
+- reqwest Client with connection pooling
+- Timeout: 30 seconds per request
+- Pool: 5 max idle connections per host
+- Supports 200, 201, 202 success status codes
+- Handles 401 (AuthFailed), 5xx (ServerError), other (ServerError)
 
-**@noble/ed25519 Integration** (Phase 3):
-- RFC 8032 compliant Ed25519 verification
-- Async verification via `ed.verifyAsync(signature, message, publicKey)`
-- Base64 key/signature encoding for HTTP headers
-- Compatible with monitor's `ed25519-dalek` signing
-- Deno runtime support via esm.sh CDN import
+**Dependencies** (Phase 4 additions):
+- Uses existing `reqwest` crate (already in workspace)
+- Uses existing `tokio` crate for async runtime and timers
+- Uses existing crypto module for Ed25519 signing
 
-**Dependencies** (Phase 3 additions):
-- `@noble/ed25519@2.0.0` - RFC 8032 compliant Ed25519 (Deno via esm.sh)
-- `@supabase/supabase-js@2` - Supabase client for RPC calls in Edge Functions
-- `deno.land/std@0.224.0` - Deno standard library for testing (assert, BDD, etc.)
+**Environment Variables** (in `monitor/src/config.rs`):
+| Variable | Required | Default | Purpose |
+|----------|----------|---------|---------|
+| `VIBETEA_SUPABASE_URL` | No | - | Supabase edge function URL (enables persistence) |
+| `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | No | 60 | Seconds between batch submissions |
+| `VIBETEA_SUPABASE_RETRY_LIMIT` | No | 3 | Max retry attempts (1-10) |
+
+**Test Coverage** (Phase 4):
+- Unit tests for EventBatcher: buffer operations, flush behavior, retry logic, capacity management
+- Integration tests using wiremock: HTTP mocking for success/error scenarios
+- PersistenceManager tests: timer-based flushing, full buffer flushing, graceful shutdown
+- Retry behavior tests: exponential backoff timing, max retries, failure recovery
+- Error handling tests: auth failures, server errors, network timeouts
 
 ## Not Yet Integrated
 
 - Client-side Supabase edge function integration (query endpoint consumption)
-- Monitor → Supabase ingest endpoint integration (alternative to server)
 - Database connection pooling from server/monitor
 - Background job scheduling for data aggregation
 - Event archival/retention policies
