@@ -57,6 +57,7 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use reqwest::{Client, StatusCode};
 use thiserror::Error;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::config::PersistenceConfig;
@@ -467,6 +468,201 @@ impl EventBatcher {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
+    }
+
+    /// Returns a reference to the persistence configuration.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::persistence::EventBatcher;
+    /// use vibetea_monitor::config::PersistenceConfig;
+    /// use vibetea_monitor::crypto::Crypto;
+    ///
+    /// let config = PersistenceConfig {
+    ///     supabase_url: "https://example.supabase.co/functions/v1".to_string(),
+    ///     batch_interval_secs: 60,
+    ///     retry_limit: 3,
+    /// };
+    /// let batcher = EventBatcher::new(config, Crypto::generate());
+    /// assert_eq!(batcher.config().batch_interval_secs, 60);
+    /// ```
+    #[must_use]
+    pub fn config(&self) -> &PersistenceConfig {
+        &self.config
+    }
+}
+
+/// Manages event persistence with timer-based and capacity-based flushing.
+///
+/// The `PersistenceManager` wraps an [`EventBatcher`] and provides an async runtime
+/// that flushes events to the Supabase edge function when either:
+/// - The configurable interval elapses (default: 60 seconds)
+/// - The batch reaches [`MAX_BATCH_SIZE`] events (1000)
+///
+/// Whichever condition occurs first triggers a flush.
+///
+/// # Example
+///
+/// ```no_run
+/// use vibetea_monitor::persistence::PersistenceManager;
+/// use vibetea_monitor::config::PersistenceConfig;
+/// use vibetea_monitor::crypto::Crypto;
+/// use vibetea_monitor::types::{Event, EventType, EventPayload, SessionAction};
+/// use uuid::Uuid;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let config = PersistenceConfig {
+///         supabase_url: "https://xyz.supabase.co/functions/v1".to_string(),
+///         batch_interval_secs: 60,
+///         retry_limit: 3,
+///     };
+///     let crypto = Crypto::generate();
+///     let (manager, sender) = PersistenceManager::new(config, crypto);
+///
+///     // Spawn the manager to run in the background
+///     let handle = tokio::spawn(manager.run());
+///
+///     // Send events through the channel
+///     let event = Event::new(
+///         "my-monitor".to_string(),
+///         EventType::Session,
+///         EventPayload::Session {
+///             session_id: Uuid::new_v4(),
+///             action: SessionAction::Started,
+///             project: "my-project".to_string(),
+///         },
+///     );
+///     sender.send(event).await.unwrap();
+///
+///     // Drop sender to trigger shutdown
+///     drop(sender);
+///     handle.await.unwrap();
+/// }
+/// ```
+pub struct PersistenceManager {
+    /// The event batcher for buffering and sending events.
+    batcher: EventBatcher,
+
+    /// Receiver for incoming events.
+    receiver: mpsc::Receiver<Event>,
+}
+
+impl PersistenceManager {
+    /// Creates a new persistence manager and returns the event sender.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Persistence configuration (URL, batch interval, retry limit)
+    /// * `crypto` - Cryptographic context for signing requests
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the manager and an `mpsc::Sender<Event>` for sending events.
+    /// The channel capacity is set to `MAX_BATCH_SIZE * 2` to provide backpressure.
+    #[must_use]
+    pub fn new(config: PersistenceConfig, crypto: Crypto) -> (Self, mpsc::Sender<Event>) {
+        let (tx, rx) = mpsc::channel(MAX_BATCH_SIZE * 2);
+        let batcher = EventBatcher::new(config, crypto);
+        (
+            Self {
+                batcher,
+                receiver: rx,
+            },
+            tx,
+        )
+    }
+
+    /// Runs the persistence manager, processing events and flushing periodically.
+    ///
+    /// This method runs until the sender is dropped (signaling shutdown). On shutdown,
+    /// any remaining buffered events are flushed before returning.
+    ///
+    /// # Flush Triggers
+    ///
+    /// Events are flushed when either:
+    /// - The configured batch interval elapses (and buffer is not empty)
+    /// - The buffer reaches [`MAX_BATCH_SIZE`] events
+    ///
+    /// Whichever condition occurs first triggers the flush.
+    ///
+    /// # Error Handling
+    ///
+    /// Flush errors are logged but do not cause the manager to exit. The manager
+    /// continues running and will retry failed batches according to the configured
+    /// retry policy.
+    pub async fn run(mut self) {
+        let interval_secs = self.batcher.config().batch_interval_secs;
+        let interval = Duration::from_secs(interval_secs);
+        let mut timer = tokio::time::interval(interval);
+
+        // Skip missed ticks to avoid bursts of flushes after delays
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        // First tick fires immediately, skip it
+        timer.tick().await;
+
+        info!(
+            interval_secs = interval_secs,
+            max_batch_size = MAX_BATCH_SIZE,
+            "persistence manager started"
+        );
+
+        loop {
+            tokio::select! {
+                // Receive events from the channel
+                maybe_event = self.receiver.recv() => {
+                    match maybe_event {
+                        Some(event) => {
+                            debug!(event_id = %event.id, "received event for persistence");
+                            let needs_flush = self.batcher.queue(event);
+
+                            if needs_flush {
+                                debug!(
+                                    buffer_size = self.batcher.buffer_len(),
+                                    "buffer full, triggering immediate flush"
+                                );
+                                if let Err(e) = self.batcher.flush().await {
+                                    warn!(error = %e, "persistence flush failed (buffer full)");
+                                }
+                            }
+                        }
+                        None => {
+                            // Channel closed - sender dropped, initiate shutdown
+                            info!("event channel closed, shutting down persistence manager");
+                            break;
+                        }
+                    }
+                }
+
+                // Periodic timer tick
+                _ = timer.tick() => {
+                    if !self.batcher.is_empty() {
+                        debug!(
+                            buffer_size = self.batcher.buffer_len(),
+                            "timer tick, flushing events"
+                        );
+                        if let Err(e) = self.batcher.flush().await {
+                            warn!(error = %e, "periodic persistence flush failed");
+                        }
+                    }
+                }
+            }
+        }
+
+        // Flush remaining events on shutdown
+        if !self.batcher.is_empty() {
+            info!(
+                remaining_events = self.batcher.buffer_len(),
+                "flushing remaining events before shutdown"
+            );
+            if let Err(e) = self.batcher.flush().await {
+                warn!(error = %e, "final persistence flush failed");
+            }
+        }
+
+        info!("persistence manager stopped");
     }
 }
 
@@ -1337,5 +1533,365 @@ mod integration_tests {
         assert_eq!(result.unwrap(), 1);
         assert!(batcher.is_empty());
         assert_eq!(batcher.consecutive_failures, 0);
+    }
+}
+
+/// Tests for PersistenceManager timer-based batching (FR-002).
+#[cfg(test)]
+mod persistence_manager_tests {
+    use super::*;
+    use crate::types::{EventPayload, EventType, SessionAction};
+    use std::time::Duration;
+    use uuid::Uuid;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn create_test_crypto() -> Crypto {
+        Crypto::generate()
+    }
+
+    fn create_test_event_with_source(source: &str) -> Event {
+        Event::new(
+            source.to_string(),
+            EventType::Session,
+            EventPayload::Session {
+                session_id: Uuid::new_v4(),
+                action: SessionAction::Started,
+                project: "test-project".to_string(),
+            },
+        )
+    }
+
+    #[test]
+    fn test_persistence_manager_new_creates_channel() {
+        let config = PersistenceConfig {
+            supabase_url: "https://test.supabase.co/functions/v1".to_string(),
+            batch_interval_secs: 60,
+            retry_limit: 3,
+        };
+        let (manager, sender) = PersistenceManager::new(config, create_test_crypto());
+
+        // Channel should be open
+        assert!(!sender.is_closed());
+
+        // Manager's batcher should be empty
+        assert!(manager.batcher.is_empty());
+    }
+
+    #[test]
+    fn test_persistence_manager_config_accessor() {
+        let config = PersistenceConfig {
+            supabase_url: "https://test.supabase.co/functions/v1".to_string(),
+            batch_interval_secs: 120,
+            retry_limit: 5,
+        };
+        let (manager, _sender) = PersistenceManager::new(config, create_test_crypto());
+
+        assert_eq!(manager.batcher.config().batch_interval_secs, 120);
+        assert_eq!(manager.batcher.config().retry_limit, 5);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_manager_flushes_on_full_buffer() {
+        let mock_server = MockServer::start().await;
+
+        // Mock expects exactly 1 batch request
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Use a very long interval so timer doesn't trigger
+        let config = PersistenceConfig {
+            supabase_url: mock_server.uri(),
+            batch_interval_secs: 3600, // 1 hour - won't trigger
+            retry_limit: 3,
+        };
+        let (manager, sender) = PersistenceManager::new(config, create_test_crypto());
+
+        // Spawn manager
+        let handle = tokio::spawn(manager.run());
+
+        // Send exactly MAX_BATCH_SIZE events to trigger immediate flush
+        for _ in 0..MAX_BATCH_SIZE {
+            sender
+                .send(create_test_event_with_source("test-monitor"))
+                .await
+                .unwrap();
+        }
+
+        // Give time for the flush to complete
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Drop sender to trigger shutdown
+        drop(sender);
+
+        // Wait for manager to finish
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("manager should shut down within timeout")
+            .expect("manager task should complete successfully");
+
+        // Verify exactly 1 batch was sent
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+
+        // Verify batch contained MAX_BATCH_SIZE events
+        let body: Vec<serde_json::Value> = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body.len(), MAX_BATCH_SIZE);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_manager_flushes_on_interval() {
+        let mock_server = MockServer::start().await;
+
+        // Mock expects at least 1 batch request
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1..)
+            .mount(&mock_server)
+            .await;
+
+        // Use 1 second interval (minimum allowed)
+        let config = PersistenceConfig {
+            supabase_url: mock_server.uri(),
+            batch_interval_secs: 1,
+            retry_limit: 3,
+        };
+        let (manager, sender) = PersistenceManager::new(config, create_test_crypto());
+
+        // Spawn manager
+        let handle = tokio::spawn(manager.run());
+
+        // Send a few events (far below MAX_BATCH_SIZE)
+        for _ in 0..5 {
+            sender
+                .send(create_test_event_with_source("test-monitor"))
+                .await
+                .unwrap();
+        }
+
+        // Wait for timer to trigger (1 second + buffer)
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // Drop sender to trigger shutdown
+        drop(sender);
+
+        // Wait for manager to finish
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("manager should shut down within timeout")
+            .expect("manager task should complete successfully");
+
+        // Verify at least 1 batch was sent by timer
+        let requests = mock_server.received_requests().await.unwrap();
+        assert!(
+            !requests.is_empty(),
+            "Expected at least 1 request from timer flush"
+        );
+
+        // Verify batch contained 5 events
+        let body: Vec<serde_json::Value> = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_manager_shuts_down_cleanly() {
+        let mock_server = MockServer::start().await;
+
+        // Mock expects 1 batch request (from shutdown flush)
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Use a very long interval so timer doesn't trigger
+        let config = PersistenceConfig {
+            supabase_url: mock_server.uri(),
+            batch_interval_secs: 3600,
+            retry_limit: 3,
+        };
+        let (manager, sender) = PersistenceManager::new(config, create_test_crypto());
+
+        // Spawn manager
+        let handle = tokio::spawn(manager.run());
+
+        // Send a few events (below threshold for immediate flush)
+        for _ in 0..10 {
+            sender
+                .send(create_test_event_with_source("test-monitor"))
+                .await
+                .unwrap();
+        }
+
+        // Small delay to ensure events are received
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        // Drop sender to trigger shutdown
+        drop(sender);
+
+        // Wait for manager to finish (should flush remaining events)
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("manager should shut down within timeout")
+            .expect("manager task should complete successfully");
+
+        // Verify the remaining events were flushed on shutdown
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+
+        let body: Vec<serde_json::Value> = serde_json::from_slice(&requests[0].body).unwrap();
+        assert_eq!(body.len(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_persistence_manager_handles_flush_errors_gracefully() {
+        let mock_server = MockServer::start().await;
+
+        // Mock returns 500 errors for all requests
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Server Error"))
+            .mount(&mock_server)
+            .await;
+
+        // Use short retry limit to speed up test
+        let config = PersistenceConfig {
+            supabase_url: mock_server.uri(),
+            batch_interval_secs: 3600, // Long interval
+            retry_limit: 1,            // Fail quickly
+        };
+        let (manager, sender) = PersistenceManager::new(config, create_test_crypto());
+
+        // Spawn manager
+        let handle = tokio::spawn(manager.run());
+
+        // Send MAX_BATCH_SIZE events to trigger immediate flush
+        for _ in 0..MAX_BATCH_SIZE {
+            sender
+                .send(create_test_event_with_source("test-monitor"))
+                .await
+                .unwrap();
+        }
+
+        // Give time for the (failing) flush
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Manager should still be running despite error
+        assert!(
+            !handle.is_finished(),
+            "Manager should continue running after flush error"
+        );
+
+        // Drop sender to trigger shutdown
+        drop(sender);
+
+        // Manager should shut down gracefully even after errors
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("manager should shut down within timeout")
+            .expect("manager task should complete successfully");
+    }
+
+    #[tokio::test]
+    async fn test_persistence_manager_no_flush_when_empty() {
+        let mock_server = MockServer::start().await;
+
+        // Mock should NOT receive any requests
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        let config = PersistenceConfig {
+            supabase_url: mock_server.uri(),
+            batch_interval_secs: 1, // Short interval
+            retry_limit: 3,
+        };
+        let (manager, sender) = PersistenceManager::new(config, create_test_crypto());
+
+        // Spawn manager
+        let handle = tokio::spawn(manager.run());
+
+        // Wait for timer to tick (but buffer is empty)
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+
+        // Drop sender without sending any events
+        drop(sender);
+
+        // Wait for manager to finish
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("manager should shut down within timeout")
+            .expect("manager task should complete successfully");
+
+        // Verify no requests were made (empty buffer shouldn't trigger flush)
+        let requests = mock_server.received_requests().await.unwrap();
+        assert!(requests.is_empty(), "Should not flush empty buffer");
+    }
+
+    #[tokio::test]
+    async fn test_persistence_manager_multiple_batches() {
+        let mock_server = MockServer::start().await;
+
+        // Mock expects 2 batch requests
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+
+        let config = PersistenceConfig {
+            supabase_url: mock_server.uri(),
+            batch_interval_secs: 3600, // Long interval
+            retry_limit: 3,
+        };
+        let (manager, sender) = PersistenceManager::new(config, create_test_crypto());
+
+        // Spawn manager
+        let handle = tokio::spawn(manager.run());
+
+        // Send first batch (triggers immediate flush)
+        for _ in 0..MAX_BATCH_SIZE {
+            sender
+                .send(create_test_event_with_source("test-monitor"))
+                .await
+                .unwrap();
+        }
+
+        // Give time for first flush
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Send second batch (triggers immediate flush)
+        for _ in 0..MAX_BATCH_SIZE {
+            sender
+                .send(create_test_event_with_source("test-monitor"))
+                .await
+                .unwrap();
+        }
+
+        // Give time for second flush
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Drop sender to trigger shutdown
+        drop(sender);
+
+        // Wait for manager to finish
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("manager should shut down within timeout")
+            .expect("manager task should complete successfully");
+
+        // Verify 2 batches were sent
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 2);
     }
 }
