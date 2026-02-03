@@ -522,7 +522,7 @@ Deno.test("verifySignature: returns true for valid signature", async () => {
 
 Deno.test("verifySignature: returns false for invalid signature", async () => {
   const testPublicKey = await getPublicKey(TEST_PRIVATE_KEY);
-  const altPublicKey = await getPublicKey(ALT_PRIVATE_KEY);
+  const _altPublicKey = await getPublicKey(ALT_PRIVATE_KEY);
   const message = "test message";
   // Sign with alt key but verify with test key
   const signature = await signMessage(ALT_PRIVATE_KEY, message);

@@ -369,7 +369,7 @@ describe("Query Parameter Validation", () => {
  * Simulated request handler for integration testing
  * Mirrors the auth and validation logic from index.ts without database access
  */
-async function simulateRequestHandler(request: Request): Promise<Response> {
+function simulateRequestHandler(request: Request): Response {
   // Only allow GET requests
   if (request.method !== "GET") {
     return new Response(
