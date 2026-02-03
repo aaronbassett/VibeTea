@@ -32,12 +32,12 @@
 //! - [`widgets`]: Reusable TUI components (logo, forms, event stream, etc.)
 
 // TODO: Uncomment these module declarations as implementations are added
-// pub mod app;
+pub mod app;
 // pub mod input;
 pub mod terminal;
 // pub mod ui;
 pub mod widgets;
 
-// Re-exports will be added as modules are implemented
-// pub use app::App;
+// Re-exports for convenient access to core TUI types
+pub use app::{ConnectionStatus, EventStats, TuiEvent};
 pub use terminal::{install_panic_hook, Tui};

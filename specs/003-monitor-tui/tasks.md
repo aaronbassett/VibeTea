@@ -67,10 +67,10 @@
 - [x] T020 Implement Tui struct with RAII terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
 - [x] T021 [GIT] Commit: add terminal wrapper with RAII restoration
 - [x] T022 Implement panic hook for terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
-- [ ] T023 [GIT] Commit: add panic hook for terminal safety
+- [x] T023 [GIT] Commit: add panic hook for terminal safety
 
 ### Event Handler Infrastructure
-- [ ] T024 Implement TuiEvent enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T024 Implement TuiEvent enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T025 [GIT] Commit: add TuiEvent enum
 - [ ] T026 Implement EventHandler with tokio::select! pattern in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T027 [GIT] Commit: add EventHandler with async event loop
