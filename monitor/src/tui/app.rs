@@ -41,6 +41,7 @@
 //! }
 //! ```
 
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -1549,6 +1550,257 @@ impl From<&Event> for DisplayEvent {
             event_type: DisplayEventType::from(event.event_type),
             message,
         }
+    }
+}
+
+// =============================================================================
+// Event Buffer
+// =============================================================================
+
+/// Default maximum capacity for the event buffer (FR-011).
+pub const DEFAULT_EVENT_BUFFER_CAPACITY: usize = 1000;
+
+/// A bounded FIFO buffer for storing display events.
+///
+/// The `EventBuffer` maintains a fixed-capacity queue of [`DisplayEvent`] items,
+/// automatically evicting the oldest events when the capacity is reached. This
+/// implements the FR-011 requirement for limiting the event stream to the 1000
+/// most recent events.
+///
+/// # FIFO Eviction
+///
+/// When a new event is pushed and the buffer is at capacity, the oldest event
+/// (at the front of the queue) is removed before the new event is added to the
+/// back. This ensures constant memory usage regardless of how many events are
+/// received over time.
+///
+/// # Iteration Order
+///
+/// Events are stored and iterated in chronological order (oldest to newest),
+/// which matches the natural display order for an event stream where older
+/// events appear at the top and newer events at the bottom.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::{EventBuffer, DisplayEvent, DisplayEventType};
+///
+/// // Create a buffer with small capacity for demonstration
+/// let mut buffer = EventBuffer::new(3);
+///
+/// // Push some events
+/// buffer.push(DisplayEvent::new("evt_1".into(), DisplayEventType::Session, "First".into()));
+/// buffer.push(DisplayEvent::new("evt_2".into(), DisplayEventType::Tool, "Second".into()));
+/// buffer.push(DisplayEvent::new("evt_3".into(), DisplayEventType::Activity, "Third".into()));
+///
+/// assert_eq!(buffer.len(), 3);
+///
+/// // Adding a fourth event evicts the oldest
+/// buffer.push(DisplayEvent::new("evt_4".into(), DisplayEventType::Session, "Fourth".into()));
+/// assert_eq!(buffer.len(), 3);
+///
+/// // The first event was evicted
+/// assert_eq!(buffer.get(0).unwrap().id, "evt_2");
+/// ```
+#[derive(Debug)]
+pub struct EventBuffer {
+    /// Internal storage using VecDeque for efficient front/back operations.
+    events: VecDeque<DisplayEvent>,
+    /// Maximum number of events to retain.
+    max_capacity: usize,
+}
+
+impl EventBuffer {
+    /// Creates a new `EventBuffer` with the specified capacity.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Maximum number of events to store before eviction begins
+    ///
+    /// # Panics
+    ///
+    /// Panics if `capacity` is 0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::EventBuffer;
+    ///
+    /// let buffer = EventBuffer::new(500);
+    /// assert!(buffer.is_empty());
+    /// ```
+    #[must_use]
+    pub fn new(capacity: usize) -> Self {
+        assert!(capacity > 0, "EventBuffer capacity must be greater than 0");
+        Self {
+            events: VecDeque::with_capacity(capacity),
+            max_capacity: capacity,
+        }
+    }
+
+    /// Pushes a new event into the buffer.
+    ///
+    /// If the buffer is at capacity, the oldest event (at the front) is
+    /// removed before the new event is added to the back. This ensures
+    /// FIFO eviction behavior.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The display event to add
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{EventBuffer, DisplayEvent, DisplayEventType};
+    ///
+    /// let mut buffer = EventBuffer::new(2);
+    /// buffer.push(DisplayEvent::new("evt_1".into(), DisplayEventType::Session, "One".into()));
+    /// buffer.push(DisplayEvent::new("evt_2".into(), DisplayEventType::Tool, "Two".into()));
+    ///
+    /// // Buffer is at capacity, next push evicts oldest
+    /// buffer.push(DisplayEvent::new("evt_3".into(), DisplayEventType::Activity, "Three".into()));
+    ///
+    /// assert_eq!(buffer.len(), 2);
+    /// assert_eq!(buffer.get(0).unwrap().id, "evt_2"); // evt_1 was evicted
+    /// ```
+    pub fn push(&mut self, event: DisplayEvent) {
+        if self.events.len() >= self.max_capacity {
+            self.events.pop_front();
+        }
+        self.events.push_back(event);
+    }
+
+    /// Returns an iterator over the events from oldest to newest.
+    ///
+    /// This iteration order matches the typical display layout where
+    /// older events appear at the top of the list.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{EventBuffer, DisplayEvent, DisplayEventType};
+    ///
+    /// let mut buffer = EventBuffer::new(10);
+    /// buffer.push(DisplayEvent::new("evt_1".into(), DisplayEventType::Session, "First".into()));
+    /// buffer.push(DisplayEvent::new("evt_2".into(), DisplayEventType::Tool, "Second".into()));
+    ///
+    /// let ids: Vec<_> = buffer.iter().map(|e| e.id.as_str()).collect();
+    /// assert_eq!(ids, vec!["evt_1", "evt_2"]);
+    /// ```
+    pub fn iter(&self) -> impl Iterator<Item = &DisplayEvent> {
+        self.events.iter()
+    }
+
+    /// Returns the current number of events in the buffer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::EventBuffer;
+    ///
+    /// let buffer = EventBuffer::new(100);
+    /// assert_eq!(buffer.len(), 0);
+    /// ```
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.events.len()
+    }
+
+    /// Returns `true` if the buffer contains no events.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{EventBuffer, DisplayEvent, DisplayEventType};
+    ///
+    /// let mut buffer = EventBuffer::new(10);
+    /// assert!(buffer.is_empty());
+    ///
+    /// buffer.push(DisplayEvent::new("evt_1".into(), DisplayEventType::Session, "Test".into()));
+    /// assert!(!buffer.is_empty());
+    /// ```
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.events.is_empty()
+    }
+
+    /// Removes all events from the buffer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{EventBuffer, DisplayEvent, DisplayEventType};
+    ///
+    /// let mut buffer = EventBuffer::new(10);
+    /// buffer.push(DisplayEvent::new("evt_1".into(), DisplayEventType::Session, "Test".into()));
+    /// assert!(!buffer.is_empty());
+    ///
+    /// buffer.clear();
+    /// assert!(buffer.is_empty());
+    /// ```
+    pub fn clear(&mut self) {
+        self.events.clear();
+    }
+
+    /// Returns a reference to the event at the given index.
+    ///
+    /// Index 0 is the oldest event, and `len() - 1` is the newest.
+    /// Returns `None` if the index is out of bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - Zero-based index where 0 is the oldest event
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{EventBuffer, DisplayEvent, DisplayEventType};
+    ///
+    /// let mut buffer = EventBuffer::new(10);
+    /// buffer.push(DisplayEvent::new("evt_1".into(), DisplayEventType::Session, "First".into()));
+    /// buffer.push(DisplayEvent::new("evt_2".into(), DisplayEventType::Tool, "Second".into()));
+    ///
+    /// assert_eq!(buffer.get(0).unwrap().id, "evt_1"); // oldest
+    /// assert_eq!(buffer.get(1).unwrap().id, "evt_2"); // newest
+    /// assert!(buffer.get(2).is_none()); // out of bounds
+    /// ```
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&DisplayEvent> {
+        self.events.get(index)
+    }
+
+    /// Returns the maximum capacity of the buffer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::EventBuffer;
+    ///
+    /// let buffer = EventBuffer::new(500);
+    /// assert_eq!(buffer.capacity(), 500);
+    /// ```
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.max_capacity
+    }
+}
+
+impl Default for EventBuffer {
+    /// Creates an `EventBuffer` with the default capacity of 1000 events.
+    ///
+    /// This default satisfies FR-011 which specifies that the event buffer
+    /// should be limited to the 1000 most recent events.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{EventBuffer, DEFAULT_EVENT_BUFFER_CAPACITY};
+    ///
+    /// let buffer = EventBuffer::default();
+    /// assert_eq!(buffer.capacity(), DEFAULT_EVENT_BUFFER_CAPACITY);
+    /// ```
+    fn default() -> Self {
+        Self::new(DEFAULT_EVENT_BUFFER_CAPACITY)
     }
 }
 

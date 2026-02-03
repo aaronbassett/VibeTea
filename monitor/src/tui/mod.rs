@@ -42,8 +42,9 @@ pub mod widgets;
 pub use app::{
     default_session_name, detect_existing_keys, detect_existing_keys_in_dir,
     setup_form_with_detected_defaults, setup_form_with_detected_defaults_in_dir, AppState,
-    ConnectionStatus, DashboardState, EventHandler, EventStats, KeyOption, Screen, SetupField,
-    SetupFormState, Symbols, Theme, TuiEvent, ASCII_SYMBOLS, DEFAULT_TICK_RATE_MS, UNICODE_SYMBOLS,
+    ConnectionStatus, DashboardState, EventBuffer, EventHandler, EventStats, KeyOption, Screen,
+    SetupField, SetupFormState, Symbols, Theme, TuiEvent, ASCII_SYMBOLS,
+    DEFAULT_EVENT_BUFFER_CAPACITY, DEFAULT_TICK_RATE_MS, UNICODE_SYMBOLS,
 };
 pub use input::{handle_setup_key, SetupAction};
 pub use terminal::{install_panic_hook, Tui};

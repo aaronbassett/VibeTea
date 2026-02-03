@@ -189,8 +189,8 @@
 - [x] T088 [GIT] Commit: add display event types
 
 ### Event Buffer
-- [ ] T089 [US2] Implement EventBuffer with VecDeque and FIFO eviction in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T090 [GIT] Commit: add bounded event buffer
+- [x] T089 [US2] Implement EventBuffer with VecDeque and FIFO eviction in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T090 [GIT] Commit: add bounded event buffer
 
 ### Event Stream Widget
 - [ ] T091 [US2] Implement event_stream widget in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
