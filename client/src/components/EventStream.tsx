@@ -7,8 +7,13 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { m } from 'framer-motion';
 
 import { selectFilteredEvents, useEventStore } from '../hooks/useEventStore';
+import { useAnimationThrottle } from '../hooks/useAnimationThrottle';
+import { useReducedMotion } from '../hooks/useReducedMotion';
+import { EVENT_TYPE_ICONS } from './icons/EventIcons';
+import { ANIMATION_TIMING, SPRING_CONFIGS } from '../constants/design-tokens';
 
 import type { EventType, VibeteaEvent } from '../types/events';
 
@@ -21,16 +26,6 @@ const ESTIMATED_ROW_HEIGHT = 64;
 
 /** Distance from bottom (in pixels) to disable auto-scroll when user scrolls up */
 const AUTO_SCROLL_THRESHOLD = 50;
-
-/** Icon mapping for each event type */
-const EVENT_TYPE_ICONS: Record<EventType, string> = {
-  tool: '\u{1F527}', // 🔧
-  activity: '\u{1F4AC}', // 💬
-  session: '\u{1F680}', // 🚀
-  summary: '\u{1F4CB}', // 📋
-  error: '\u{26A0}\u{FE0F}', // ⚠️
-  agent: '\u{1F916}', // 🤖
-};
 
 /** Color classes for event type badges */
 const EVENT_TYPE_COLORS: Record<EventType, string> = {
@@ -241,27 +236,36 @@ function getEventDescription(event: VibeteaEvent): string {
 // -----------------------------------------------------------------------------
 
 /**
- * Renders a single event row.
+ * Props for the EventRow component.
  */
-function EventRow({ event }: { readonly event: VibeteaEvent }) {
-  const icon = EVENT_TYPE_ICONS[event.type];
+interface EventRowProps {
+  /** The event to render. */
+  readonly event: VibeteaEvent;
+  /** Whether the row should animate on entrance. */
+  readonly shouldAnimate: boolean;
+  /** Whether user prefers reduced motion. */
+  readonly prefersReducedMotion: boolean;
+}
+
+/**
+ * Renders a single event row with optional entrance animation.
+ */
+function EventRow({ event, shouldAnimate, prefersReducedMotion }: EventRowProps) {
+  const Icon = EVENT_TYPE_ICONS[event.type];
   const colorClass = EVENT_TYPE_COLORS[event.type];
   const description = getEventDescription(event);
   const formattedTime = formatTimestamp(event.timestamp);
 
-  return (
-    <div
-      className="group flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors border-b border-gray-800/50"
-      role="listitem"
-      aria-label={`${event.type} event at ${formattedTime}: ${description}`}
-    >
+  // Determine if we should actually animate
+  const animate = shouldAnimate && !prefersReducedMotion;
+
+  const content = (
+    <>
       {/* Event type icon and badge */}
       <div
         className={`flex items-center gap-2 px-2 py-1 rounded-md border ${colorClass}`}
       >
-        <span className="text-base" aria-hidden="true">
-          {icon}
-        </span>
+        <Icon className="w-4 h-4" aria-hidden="true" />
         <span className="text-xs font-medium capitalize">{event.type}</span>
       </div>
 
@@ -280,6 +284,33 @@ function EventRow({ event }: { readonly event: VibeteaEvent }) {
       >
         {formattedTime}
       </time>
+    </>
+  );
+
+  // If animating, use framer-motion's m.div
+  if (animate) {
+    return (
+      <m.div
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={SPRING_CONFIGS.standard}
+        className="group flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors border-b border-gray-800/50"
+        role="listitem"
+        aria-label={`${event.type} event at ${formattedTime}: ${description}`}
+      >
+        {content}
+      </m.div>
+    );
+  }
+
+  // No animation - render plain div
+  return (
+    <div
+      className="group flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors border-b border-gray-800/50"
+      role="listitem"
+      aria-label={`${event.type} event at ${formattedTime}: ${description}`}
+    >
+      {content}
     </div>
   );
 }
@@ -378,13 +409,28 @@ export function EventStream({ className = '' }: EventStreamProps) {
   // Selective subscription: only re-render when filtered events change
   const events = useEventStore(selectFilteredEvents);
 
+  // Animation hooks
+  const shouldAnimateThrottle = useAnimationThrottle();
+  const prefersReducedMotion = useReducedMotion();
+
   // Refs
   const parentRef = useRef<HTMLDivElement>(null);
   const previousEventCountRef = useRef<number>(events.length);
 
+  // Track event IDs present on initial mount (these should not animate)
+  const initialEventIdsRef = useRef<Set<string> | null>(null);
+
+  // Track which event IDs have already been animated (to avoid re-animating on re-render)
+  const animatedEventIdsRef = useRef<Set<string>>(new Set());
+
   // State
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState<boolean>(true);
   const [newEventCount, setNewEventCount] = useState<number>(0);
+
+  // Initialize the set of initial event IDs on first render
+  if (initialEventIdsRef.current === null) {
+    initialEventIdsRef.current = new Set(events.map((e) => e.id));
+  }
 
   // Since events are stored newest-first (index 0 is most recent),
   // we reverse the order for display so newest appears at the bottom
@@ -509,6 +555,30 @@ export function EventStream({ className = '' }: EventStreamProps) {
               return null;
             }
 
+            // Determine if this event should animate
+            // An event should animate if:
+            // 1. It was NOT present on initial load
+            // 2. It's within the age threshold (< 5 seconds old)
+            // 3. It hasn't already been animated
+            // 4. Animation throttle allows it
+            let eventShouldAnimate = false;
+            const isInitialEvent = initialEventIdsRef.current?.has(event.id) ?? true;
+            const hasBeenAnimated = animatedEventIdsRef.current.has(event.id);
+
+            if (!isInitialEvent && !hasBeenAnimated) {
+              const isWithinAgeThreshold = shouldEventAnimate(
+                event.timestamp,
+                Date.now(),
+                ANIMATION_TIMING.eventAnimationMaxAgeMs
+              );
+
+              if (isWithinAgeThreshold && shouldAnimateThrottle()) {
+                eventShouldAnimate = true;
+                // Mark this event as animated so we don't re-animate on re-render
+                animatedEventIdsRef.current.add(event.id);
+              }
+            }
+
             return (
               <div
                 key={event.id}
@@ -521,7 +591,11 @@ export function EventStream({ className = '' }: EventStreamProps) {
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
               >
-                <EventRow event={event} />
+                <EventRow
+                  event={event}
+                  shouldAnimate={eventShouldAnimate}
+                  prefersReducedMotion={prefersReducedMotion}
+                />
               </div>
             );
           })}
