@@ -3,6 +3,8 @@
 //! This module contains the core application state, event types, and business logic
 //! that drive the TUI. The main types are:
 //!
+//! - [`AppState`]: Application state machine managing screens and quit state
+//! - [`Screen`]: Current screen being displayed (Setup or Dashboard)
 //! - [`TuiEvent`]: Events that drive the TUI event loop
 //! - [`EventHandler`]: Async event loop using `tokio::select!` to multiplex event sources
 //! - [`EventStats`]: Metrics for sender event throughput (placeholder)
@@ -45,6 +47,255 @@ use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::types::Event;
+
+// =============================================================================
+// Screen and Application State Types
+// =============================================================================
+
+/// Current screen being displayed in the TUI.
+///
+/// The monitor TUI operates as a simple state machine with two main screens:
+///
+/// - **Setup**: Initial configuration screen where users can specify server URL,
+///   session path, and other connection parameters
+/// - **Dashboard**: Main monitoring view showing real-time session events,
+///   connection status, and metrics
+///
+/// # Default
+///
+/// The default screen is [`Screen::Setup`], as users typically need to configure
+/// the monitor before viewing the dashboard.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::Screen;
+///
+/// let screen = Screen::default();
+/// assert_eq!(screen, Screen::Setup);
+///
+/// let screen = Screen::Dashboard;
+/// assert_ne!(screen, Screen::Setup);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Screen {
+    /// Setup screen for initial configuration.
+    ///
+    /// Displayed when the application starts, allowing users to configure
+    /// server URL, session path, and other connection parameters.
+    #[default]
+    Setup,
+
+    /// Main dashboard screen for monitoring.
+    ///
+    /// Shows real-time session events, connection status, and metrics
+    /// once the monitor is configured and connected.
+    Dashboard,
+}
+
+/// State for the setup form screen.
+///
+/// Contains form field values and validation state for the configuration form.
+///
+/// # Note
+///
+/// This is a placeholder type. The full implementation will be added in a later
+/// task with fields for server URL, session path, form focus state, and validation.
+#[derive(Debug, Clone, Default)]
+pub struct SetupFormState {
+    // Placeholder - fields will be added in future tasks
+}
+
+/// State for the dashboard screen.
+///
+/// Contains all state needed to render and update the dashboard view,
+/// including event streams, metrics, and UI state.
+///
+/// # Note
+///
+/// This is a placeholder type. The full implementation will be added in a later
+/// task with fields for event history, scroll position, metrics, and panel state.
+#[derive(Debug, Clone, Default)]
+pub struct DashboardState {
+    // Placeholder - fields will be added in future tasks
+}
+
+/// Theme configuration for the TUI.
+///
+/// Defines colors and styles used throughout the interface for consistent
+/// visual presentation.
+///
+/// # Note
+///
+/// This is a placeholder type. The full implementation will be added in a later
+/// task with color definitions for various UI elements.
+#[derive(Debug, Clone, Default)]
+pub struct Theme {
+    // Placeholder - color definitions will be added in future tasks
+}
+
+/// Symbol set for the TUI (unicode or ASCII).
+///
+/// Provides a consistent set of symbols for rendering UI elements.
+/// Unicode symbols provide a richer visual experience on modern terminals,
+/// while ASCII symbols ensure compatibility with limited terminals.
+///
+/// # Note
+///
+/// This is a placeholder type. The full implementation will be added in a later
+/// task with symbol definitions for borders, icons, and decorations.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Symbols {
+    // Placeholder - symbol definitions will be added in future tasks
+}
+
+/// Application state machine for the VibeTea Monitor TUI.
+///
+/// Manages the current screen, form state, dashboard state, and application-wide
+/// settings like theme and symbol set. This is the central state container that
+/// gets updated in response to [`TuiEvent`]s and drives the rendering logic.
+///
+/// # State Machine
+///
+/// The application operates as a simple state machine:
+///
+/// ```text
+/// +-------+     user confirms     +-----------+
+/// | Setup | ------------------->  | Dashboard |
+/// +-------+                       +-----------+
+///     ^                                |
+///     |       user goes back           |
+///     +--------------------------------+
+/// ```
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::AppState;
+///
+/// let mut state = AppState::new();
+/// assert!(state.is_setup());
+/// assert!(!state.should_quit());
+///
+/// state.quit();
+/// assert!(state.should_quit());
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct AppState {
+    /// Current screen being displayed.
+    pub screen: Screen,
+
+    /// Setup form state (populated when screen == Setup).
+    pub setup: SetupFormState,
+
+    /// Dashboard state (populated when screen == Dashboard).
+    pub dashboard: DashboardState,
+
+    /// Flag indicating user requested exit.
+    pub should_quit: bool,
+
+    /// Theme configuration.
+    pub theme: Theme,
+
+    /// Symbol set (unicode or ASCII).
+    pub symbols: Symbols,
+}
+
+impl AppState {
+    /// Creates a new `AppState` with default values.
+    ///
+    /// The application starts on the Setup screen with default theme and symbols.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let state = AppState::new();
+    /// assert!(state.is_setup());
+    /// ```
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns `true` if the current screen is Setup.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{AppState, Screen};
+    ///
+    /// let mut state = AppState::new();
+    /// assert!(state.is_setup());
+    ///
+    /// state.screen = Screen::Dashboard;
+    /// assert!(!state.is_setup());
+    /// ```
+    #[must_use]
+    pub fn is_setup(&self) -> bool {
+        self.screen == Screen::Setup
+    }
+
+    /// Returns `true` if the current screen is Dashboard.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{AppState, Screen};
+    ///
+    /// let mut state = AppState::new();
+    /// assert!(!state.is_dashboard());
+    ///
+    /// state.screen = Screen::Dashboard;
+    /// assert!(state.is_dashboard());
+    /// ```
+    #[must_use]
+    pub fn is_dashboard(&self) -> bool {
+        self.screen == Screen::Dashboard
+    }
+
+    /// Returns `true` if the application should quit.
+    ///
+    /// The main event loop should check this flag to determine when to exit.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let state = AppState::new();
+    /// assert!(!state.should_quit());
+    /// ```
+    #[must_use]
+    pub fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    /// Signals that the application should quit.
+    ///
+    /// Sets the `should_quit` flag to `true`. The main event loop should
+    /// check this flag and initiate graceful shutdown.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let mut state = AppState::new();
+    /// assert!(!state.should_quit());
+    ///
+    /// state.quit();
+    /// assert!(state.should_quit());
+    /// ```
+    pub fn quit(&mut self) {
+        self.should_quit = true;
+    }
+}
+
+// =============================================================================
+// Event Types and Statistics
+// =============================================================================
 
 /// Statistics for event sending throughput.
 ///
@@ -761,5 +1012,218 @@ mod tests {
         // Clean shutdown
         let _ = shutdown_tx.send(());
         let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
+    }
+
+    // =============================================================================
+    // Screen Tests
+    // =============================================================================
+
+    #[test]
+    fn screen_default_is_setup() {
+        let screen = Screen::default();
+        assert_eq!(screen, Screen::Setup);
+    }
+
+    #[test]
+    fn screen_variants_are_distinct() {
+        assert_ne!(Screen::Setup, Screen::Dashboard);
+    }
+
+    #[test]
+    fn screen_is_copy() {
+        let screen = Screen::Dashboard;
+        let copied = screen;
+        assert_eq!(screen, copied); // Both still accessible because Screen is Copy
+    }
+
+    #[test]
+    fn screen_is_debug() {
+        let setup = Screen::Setup;
+        let dashboard = Screen::Dashboard;
+
+        let setup_debug = format!("{:?}", setup);
+        let dashboard_debug = format!("{:?}", dashboard);
+
+        assert!(setup_debug.contains("Setup"));
+        assert!(dashboard_debug.contains("Dashboard"));
+    }
+
+    #[test]
+    fn screen_is_clone() {
+        let screen = Screen::Dashboard;
+        let cloned = screen.clone();
+        assert_eq!(screen, cloned);
+    }
+
+    // =============================================================================
+    // Placeholder Type Tests
+    // =============================================================================
+
+    #[test]
+    fn setup_form_state_default() {
+        let state = SetupFormState::default();
+        // Just ensure it can be created with default
+        let _ = format!("{:?}", state);
+    }
+
+    #[test]
+    fn setup_form_state_is_clone() {
+        let state = SetupFormState::default();
+        let cloned = state.clone();
+        let _ = format!("{:?}", cloned);
+    }
+
+    #[test]
+    fn dashboard_state_default() {
+        let state = DashboardState::default();
+        // Just ensure it can be created with default
+        let _ = format!("{:?}", state);
+    }
+
+    #[test]
+    fn dashboard_state_is_clone() {
+        let state = DashboardState::default();
+        let cloned = state.clone();
+        let _ = format!("{:?}", cloned);
+    }
+
+    #[test]
+    fn theme_default() {
+        let theme = Theme::default();
+        // Just ensure it can be created with default
+        let _ = format!("{:?}", theme);
+    }
+
+    #[test]
+    fn theme_is_clone() {
+        let theme = Theme::default();
+        let cloned = theme.clone();
+        let _ = format!("{:?}", cloned);
+    }
+
+    #[test]
+    fn symbols_default() {
+        let symbols = Symbols::default();
+        // Just ensure it can be created with default
+        let _ = format!("{:?}", symbols);
+    }
+
+    #[test]
+    fn symbols_is_copy() {
+        let symbols = Symbols::default();
+        let copied = symbols;
+        // Both still accessible because Symbols is Copy
+        let _ = format!("{:?}", symbols);
+        let _ = format!("{:?}", copied);
+    }
+
+    // =============================================================================
+    // AppState Tests
+    // =============================================================================
+
+    #[test]
+    fn app_state_new_starts_on_setup_screen() {
+        let state = AppState::new();
+        assert_eq!(state.screen, Screen::Setup);
+    }
+
+    #[test]
+    fn app_state_default_matches_new() {
+        let from_new = AppState::new();
+        let from_default = AppState::default();
+
+        assert_eq!(from_new.screen, from_default.screen);
+        assert_eq!(from_new.should_quit, from_default.should_quit);
+    }
+
+    #[test]
+    fn app_state_new_does_not_start_quit() {
+        let state = AppState::new();
+        assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn app_state_is_setup_returns_true_on_setup_screen() {
+        let state = AppState::new();
+        assert!(state.is_setup());
+    }
+
+    #[test]
+    fn app_state_is_setup_returns_false_on_dashboard_screen() {
+        let mut state = AppState::new();
+        state.screen = Screen::Dashboard;
+        assert!(!state.is_setup());
+    }
+
+    #[test]
+    fn app_state_is_dashboard_returns_false_on_setup_screen() {
+        let state = AppState::new();
+        assert!(!state.is_dashboard());
+    }
+
+    #[test]
+    fn app_state_is_dashboard_returns_true_on_dashboard_screen() {
+        let mut state = AppState::new();
+        state.screen = Screen::Dashboard;
+        assert!(state.is_dashboard());
+    }
+
+    #[test]
+    fn app_state_should_quit_returns_false_initially() {
+        let state = AppState::new();
+        assert!(!state.should_quit());
+    }
+
+    #[test]
+    fn app_state_quit_sets_should_quit_to_true() {
+        let mut state = AppState::new();
+        assert!(!state.should_quit());
+
+        state.quit();
+        assert!(state.should_quit());
+    }
+
+    #[test]
+    fn app_state_quit_is_idempotent() {
+        let mut state = AppState::new();
+
+        state.quit();
+        assert!(state.should_quit());
+
+        // Calling quit again should still be true
+        state.quit();
+        assert!(state.should_quit());
+    }
+
+    #[test]
+    fn app_state_is_debug() {
+        let state = AppState::new();
+        let debug_str = format!("{:?}", state);
+        assert!(debug_str.contains("AppState"));
+        assert!(debug_str.contains("screen"));
+        assert!(debug_str.contains("should_quit"));
+    }
+
+    #[test]
+    fn app_state_is_clone() {
+        let mut state = AppState::new();
+        state.screen = Screen::Dashboard;
+        state.quit();
+
+        let cloned = state.clone();
+        assert_eq!(cloned.screen, Screen::Dashboard);
+        assert!(cloned.should_quit());
+    }
+
+    #[test]
+    fn app_state_screen_can_be_changed() {
+        let mut state = AppState::new();
+        assert!(state.is_setup());
+
+        state.screen = Screen::Dashboard;
+        assert!(state.is_dashboard());
+
+        state.screen = Screen::Setup;
+        assert!(state.is_setup());
     }
 }

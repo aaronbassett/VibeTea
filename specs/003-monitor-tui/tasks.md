@@ -73,11 +73,11 @@
 - [x] T024 Implement TuiEvent enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [x] T025 [GIT] Commit: add TuiEvent enum
 - [x] T026 Implement EventHandler with tokio::select! pattern in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T027 [GIT] Commit: add EventHandler with async event loop
+- [x] T027 [GIT] Commit: add EventHandler with async event loop
 
 ### State Types
-- [ ] T028 [P] Implement AppState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T029 [P] Implement Screen enum (Setup, Dashboard) in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T028 [P] Implement AppState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T029 [P] Implement Screen enum (Setup, Dashboard) in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T030 [GIT] Commit: add AppState and Screen types
 - [ ] T031 [P] Implement Theme struct with default and monochrome variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T032 [P] Implement Symbols struct with unicode and ascii variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
