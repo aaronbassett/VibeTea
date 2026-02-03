@@ -14,9 +14,11 @@
 
 import type React from 'react';
 import { useCallback, useMemo } from 'react';
+import { m, AnimatePresence } from 'framer-motion';
 
 import { useEventStore } from '../hooks/useEventStore';
 import { formatDuration, formatRelativeTime } from '../utils/formatting';
+import { SPRING_CONFIGS } from '../constants/design-tokens';
 
 import type { Session, SessionStatus, VibeteaEvent } from '../types/events';
 
@@ -124,6 +126,30 @@ export interface SessionCardAnimationState {
   /** Whether hover state is active */
   readonly isHovered: boolean;
 }
+
+// -----------------------------------------------------------------------------
+// Animation Variants
+// -----------------------------------------------------------------------------
+
+/**
+ * Animation variants for session card entry/exit/layout transitions.
+ * Uses the expressive spring config (stiffness: 260, damping: 20) from design tokens.
+ */
+const cardVariants = {
+  initial: { opacity: 0, y: 20, scale: 0.95 },
+  animate: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: SPRING_CONFIGS.expressive,
+  },
+  exit: {
+    opacity: 0,
+    y: -10,
+    scale: 0.95,
+    transition: { duration: 0.2 },
+  },
+};
 
 // -----------------------------------------------------------------------------
 // Helper Functions
@@ -338,14 +364,19 @@ function SessionCard({
       : '';
 
   return (
-    <div
+    <m.div
       role="listitem"
       tabIndex={onClick !== undefined ? 0 : undefined}
       aria-label={`${session.project} session, ${STATUS_CONFIG[session.status].label}, duration ${formattedDuration}${isSelected ? ', selected' : ''}`}
       aria-selected={isSelected}
-      className={`border rounded-lg p-4 transition-all ${selectedClass} ${opacityClass} ${hoverClass} ${glowClass}`}
+      className={`border rounded-lg p-4 transition-colors ${selectedClass} ${opacityClass} ${hoverClass} ${glowClass}`}
       onClick={onClick !== undefined ? handleClick : undefined}
       onKeyDown={onClick !== undefined ? handleKeyDown : undefined}
+      variants={cardVariants}
+      initial="initial"
+      animate="animate"
+      exit="exit"
+      layout
     >
       {/* Header row: Project name and status badge */}
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -384,7 +415,7 @@ function SessionCard({
           </span>
         )}
       </div>
-    </div>
+    </m.div>
   );
 }
 
@@ -503,17 +534,19 @@ export function SessionOverview({
       {/* Sessions list or empty state */}
       {hasSessions ? (
         <div role="list" aria-label="Active sessions" className="space-y-3">
-          {sortedSessions.map((session) => (
-            <SessionCard
-              key={session.sessionId}
-              session={session}
-              recentEventCount={recentEventCounts.get(session.sessionId) ?? 0}
-              onClick={
-                onSessionClick !== undefined ? handleSessionClick : undefined
-              }
-              isSelected={selectedSessionId === session.sessionId}
-            />
-          ))}
+          <AnimatePresence mode="popLayout">
+            {sortedSessions.map((session) => (
+              <SessionCard
+                key={session.sessionId}
+                session={session}
+                recentEventCount={recentEventCounts.get(session.sessionId) ?? 0}
+                onClick={
+                  onSessionClick !== undefined ? handleSessionClick : undefined
+                }
+                isSelected={selectedSessionId === session.sessionId}
+              />
+            ))}
+          </AnimatePresence>
         </div>
       ) : (
         <EmptyState />
