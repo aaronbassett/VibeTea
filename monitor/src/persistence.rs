@@ -54,9 +54,10 @@
 
 use std::time::Duration;
 
-use reqwest::Client;
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use reqwest::{Client, StatusCode};
 use thiserror::Error;
-use tracing::warn;
+use tracing::{debug, error, info, warn};
 
 use crate::config::PersistenceConfig;
 use crate::crypto::Crypto;
@@ -98,6 +99,10 @@ pub enum PersistenceError {
         /// Number of attempts made.
         attempts: u8,
     },
+
+    /// Invalid header value.
+    #[error("invalid header value: {0}")]
+    InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
 }
 
 /// Batches events and sends them to the Supabase ingest edge function.
@@ -112,22 +117,18 @@ pub enum PersistenceError {
 /// appropriate synchronization primitives (e.g., `Mutex`).
 pub struct EventBatcher {
     /// Persistence configuration.
-    #[allow(dead_code)] // Used by flush() implementation (coming later)
     config: PersistenceConfig,
 
     /// Cryptographic context for signing requests.
-    #[allow(dead_code)] // Used by flush() implementation (coming later)
     crypto: Crypto,
 
     /// Buffered events awaiting transmission.
     buffer: Vec<Event>,
 
     /// HTTP client with connection pooling.
-    #[allow(dead_code)] // Used by flush() implementation (coming later)
     client: Client,
 
     /// Count of consecutive failed flush attempts.
-    #[allow(dead_code)] // Used by flush() implementation (coming later)
     consecutive_failures: u8,
 }
 
@@ -259,12 +260,13 @@ impl EventBatcher {
 
     /// Flushes all buffered events to the Supabase edge function.
     ///
-    /// This method is a stub that returns `Ok(0)` for now. Implementation
-    /// will be added in a later task.
+    /// Serializes the buffered events to JSON, signs the payload using Ed25519,
+    /// and sends it to the ingest endpoint with authentication headers.
     ///
     /// # Returns
     ///
-    /// The number of events successfully sent.
+    /// The number of events successfully sent. Returns `Ok(0)` if the buffer
+    /// is empty (no request is made).
     ///
     /// # Errors
     ///
@@ -275,8 +277,100 @@ impl EventBatcher {
     /// - The server returns an error status
     /// - Maximum retry attempts are exceeded
     pub async fn flush(&mut self) -> Result<usize, PersistenceError> {
-        // Stub: implementation coming in later task
-        Ok(0)
+        if self.buffer.is_empty() {
+            debug!("flush called with empty buffer, skipping");
+            return Ok(0);
+        }
+
+        let count = self.buffer.len();
+        debug!(event_count = count, "flushing event buffer");
+
+        match self.send_batch(&self.buffer.clone()).await {
+            Ok(sent) => {
+                self.buffer.clear();
+                self.consecutive_failures = 0;
+                info!(event_count = sent, "successfully flushed events");
+                Ok(sent)
+            }
+            Err(e) => {
+                self.consecutive_failures += 1;
+                error!(
+                    error = %e,
+                    consecutive_failures = self.consecutive_failures,
+                    "failed to flush events"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Sends a batch of events to the Supabase ingest endpoint.
+    ///
+    /// Signs the JSON payload with Ed25519 and includes authentication headers.
+    ///
+    /// # Arguments
+    ///
+    /// * `events` - Slice of events to send
+    ///
+    /// # Returns
+    ///
+    /// The number of events sent on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns `PersistenceError` if the request fails or server returns an error.
+    async fn send_batch(&self, events: &[Event]) -> Result<usize, PersistenceError> {
+        let count = events.len();
+
+        // Serialize events to JSON
+        let body = serde_json::to_string(events)?;
+
+        // Sign the JSON body
+        let signature = self.crypto.sign(body.as_bytes());
+
+        // Get source_id from first event
+        let source_id = &events[0].source;
+
+        // Build headers
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert("X-Source-ID", HeaderValue::from_str(source_id)?);
+        headers.insert("X-Signature", HeaderValue::from_str(&signature)?);
+
+        // Build URL for ingest endpoint
+        let url = format!("{}/ingest", self.config.supabase_url);
+
+        debug!(
+            url = %url,
+            source_id = %source_id,
+            event_count = count,
+            "sending batch to ingest endpoint"
+        );
+
+        // Send request
+        let response = self
+            .client
+            .post(&url)
+            .headers(headers)
+            .body(body)
+            .send()
+            .await?;
+
+        // Handle response
+        match response.status() {
+            StatusCode::OK | StatusCode::CREATED | StatusCode::ACCEPTED => Ok(count),
+            StatusCode::UNAUTHORIZED => Err(PersistenceError::AuthFailed),
+            status => {
+                let message = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "unknown error".to_string());
+                Err(PersistenceError::ServerError {
+                    status: status.as_u16(),
+                    message,
+                })
+            }
+        }
     }
 
     /// Returns the number of events currently buffered.
@@ -392,9 +486,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_flush_returns_zero_for_stub() {
+    async fn test_flush_returns_zero_when_empty() {
         let mut batcher = EventBatcher::new(create_test_config(), create_test_crypto());
 
+        // Flush with empty buffer should return 0 without making a request
         let result = batcher.flush().await;
 
         assert!(result.is_ok());
@@ -566,5 +661,331 @@ mod tests {
 
         batcher.queue(create_test_event());
         assert_eq!(batcher.buffer_len(), 3);
+    }
+
+    #[test]
+    fn test_invalid_header_error_display() {
+        // Create an invalid header value to test the error type
+        let result = HeaderValue::from_str("invalid\nheader");
+        assert!(result.is_err());
+
+        // Verify the error can be converted to PersistenceError
+        let persistence_err: PersistenceError = result.unwrap_err().into();
+        assert!(persistence_err.to_string().contains("invalid header value"));
+    }
+}
+
+/// Integration tests using wiremock for HTTP mocking.
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use crate::types::{EventPayload, EventType, SessionAction};
+    use uuid::Uuid;
+    use wiremock::matchers::{header, header_exists, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn create_test_crypto() -> Crypto {
+        Crypto::generate()
+    }
+
+    fn create_test_event_with_source(source: &str) -> Event {
+        Event::new(
+            source.to_string(),
+            EventType::Session,
+            EventPayload::Session {
+                session_id: Uuid::new_v4(),
+                action: SessionAction::Started,
+                project: "test-project".to_string(),
+            },
+        )
+    }
+
+    fn create_config_with_url(url: &str) -> PersistenceConfig {
+        PersistenceConfig {
+            supabase_url: url.to_string(),
+            batch_interval_secs: 60,
+            retry_limit: 3,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_flush_sends_request_with_correct_headers() {
+        // Start mock server
+        let mock_server = MockServer::start().await;
+
+        // Set up mock to verify headers
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .and(header("Content-Type", "application/json"))
+            .and(header("X-Source-ID", "test-monitor"))
+            .and(header_exists("X-Signature"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Create batcher with mock server URL
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        // Queue an event and flush
+        batcher.queue(create_test_event_with_source("test-monitor"));
+        let result = batcher.flush().await;
+
+        // Verify success
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_flush_clears_buffer_on_success() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        // Queue multiple events
+        batcher.queue(create_test_event_with_source("monitor"));
+        batcher.queue(create_test_event_with_source("monitor"));
+        batcher.queue(create_test_event_with_source("monitor"));
+        assert_eq!(batcher.buffer_len(), 3);
+
+        // Flush should clear buffer
+        let result = batcher.flush().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 3);
+        assert!(batcher.is_empty());
+        assert_eq!(batcher.consecutive_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn test_flush_returns_error_on_401() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        let result = batcher.flush().await;
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), PersistenceError::AuthFailed));
+
+        // Buffer should NOT be cleared on error
+        assert_eq!(batcher.buffer_len(), 1);
+        assert_eq!(batcher.consecutive_failures, 1);
+    }
+
+    #[tokio::test]
+    async fn test_flush_returns_error_on_500() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        let result = batcher.flush().await;
+        assert!(result.is_err());
+
+        match result.unwrap_err() {
+            PersistenceError::ServerError { status, message } => {
+                assert_eq!(status, 500);
+                assert_eq!(message, "Internal Server Error");
+            }
+            other => panic!("Expected ServerError, got {:?}", other),
+        }
+
+        // Buffer should NOT be cleared on error
+        assert_eq!(batcher.buffer_len(), 1);
+        assert_eq!(batcher.consecutive_failures, 1);
+    }
+
+    #[tokio::test]
+    async fn test_flush_does_nothing_when_empty() {
+        let mock_server = MockServer::start().await;
+
+        // Should NOT receive any requests
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        // Flush empty buffer
+        let result = batcher.flush().await;
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_flush_accepts_201_status() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+        let result = batcher.flush().await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        assert!(batcher.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_flush_accepts_202_status() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(202))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+        let result = batcher.flush().await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 1);
+        assert!(batcher.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_flush_resets_consecutive_failures_on_success() {
+        let mock_server = MockServer::start().await;
+
+        // First mock: return error
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("error"))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+
+        // First flush fails
+        let _ = batcher.flush().await;
+        assert_eq!(batcher.consecutive_failures, 1);
+
+        // Reset mocks and add success response
+        mock_server.reset().await;
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        // Second flush succeeds
+        let result = batcher.flush().await;
+        assert!(result.is_ok());
+        assert_eq!(batcher.consecutive_failures, 0);
+    }
+
+    #[tokio::test]
+    async fn test_flush_sends_correct_json_body() {
+        let mock_server = MockServer::start().await;
+
+        // Use a custom matcher to capture and verify the body
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .and(header("Content-Type", "application/json"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        let event = create_test_event_with_source("my-source");
+        let event_id = event.id.clone();
+        batcher.queue(event);
+
+        let result = batcher.flush().await;
+        assert!(result.is_ok());
+
+        // Verify request was made
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+
+        // Verify body is valid JSON array
+        let body: Vec<serde_json::Value> =
+            serde_json::from_slice(&requests[0].body).expect("body should be valid JSON array");
+        assert_eq!(body.len(), 1);
+        assert_eq!(body[0]["id"], event_id);
+        assert_eq!(body[0]["source"], "my-source");
+    }
+
+    #[tokio::test]
+    async fn test_flush_signature_is_valid_base64() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/ingest"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&mock_server)
+            .await;
+
+        let config = create_config_with_url(&mock_server.uri());
+        let mut batcher = EventBatcher::new(config, create_test_crypto());
+
+        batcher.queue(create_test_event_with_source("monitor"));
+        batcher.flush().await.unwrap();
+
+        let requests = mock_server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1);
+
+        // Get signature header
+        let signature = requests[0]
+            .headers
+            .get("X-Signature")
+            .expect("X-Signature header should exist")
+            .to_str()
+            .unwrap();
+
+        // Verify it's valid base64
+        use base64::prelude::*;
+        let decoded = BASE64_STANDARD.decode(signature);
+        assert!(decoded.is_ok(), "Signature should be valid base64");
+        assert_eq!(
+            decoded.unwrap().len(),
+            64,
+            "Ed25519 signature should be 64 bytes"
+        );
     }
 }
