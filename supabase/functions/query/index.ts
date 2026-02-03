@@ -12,8 +12,11 @@
  * Response: Array of HourlyAggregate records with metadata
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyQueryAuth, type AuthResult } from "../_shared/auth.ts";
+import {
+  createClient,
+  SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2";
+import { type AuthResult, verifyQueryAuth } from "../_shared/auth.ts";
 
 /**
  * Hourly aggregate record returned by the query
@@ -71,7 +74,11 @@ function jsonResponse<T>(data: T, status: number): Response {
 /**
  * Create an error response
  */
-function errorResponse(error: string, message: string, status: number): Response {
+function errorResponse(
+  error: string,
+  message: string,
+  status: number,
+): Response {
   const body: ErrorResponse = { error, message };
   return jsonResponse(body, status);
 }
@@ -97,8 +104,11 @@ function createSupabaseClient(): SupabaseClient {
  * @returns Parsed parameters or an error object
  */
 function parseQueryParams(
-  url: URL
-): { days: ValidDays; source: string | null } | { error: string; message: string } {
+  url: URL,
+): { days: ValidDays; source: string | null } | {
+  error: string;
+  message: string;
+} {
   const daysParam = url.searchParams.get("days");
   const source = url.searchParams.get("source");
 
@@ -142,8 +152,10 @@ interface HourlyAggregateRow {
 async function queryAggregates(
   client: SupabaseClient,
   days: ValidDays,
-  source: string | null
-): Promise<{ aggregates: HourlyAggregate[] } | { error: string; message: string }> {
+  source: string | null,
+): Promise<
+  { aggregates: HourlyAggregate[] } | { error: string; message: string }
+> {
   const { data, error } = await client.rpc("get_hourly_aggregates", {
     days_back: days,
     source_filter: source,
@@ -164,7 +176,7 @@ async function queryAggregates(
       date: row.date,
       hour: row.hour,
       eventCount: row.event_count,
-    })
+    }),
   );
 
   return { aggregates };
@@ -179,7 +191,7 @@ async function handleRequest(request: Request): Promise<Response> {
     return errorResponse(
       "method_not_allowed",
       "Only GET method is allowed",
-      405
+      405,
     );
   }
 
@@ -189,7 +201,11 @@ async function handleRequest(request: Request): Promise<Response> {
     // Determine specific error type for response
     const authHeader = request.headers.get("Authorization");
     if (!authHeader) {
-      return errorResponse("missing_auth", "Authorization header is required", 401);
+      return errorResponse(
+        "missing_auth",
+        "Authorization header is required",
+        401,
+      );
     }
     return errorResponse("invalid_token", "Bearer token is invalid", 401);
   }

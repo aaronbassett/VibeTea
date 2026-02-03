@@ -28,7 +28,7 @@ function base64Decode(base64: string): Uint8Array {
 export async function verifySignature(
   publicKeyBase64: string,
   signatureBase64: string,
-  message: Uint8Array
+  message: Uint8Array,
 ): Promise<boolean> {
   try {
     const publicKey = base64Decode(publicKeyBase64);
@@ -36,11 +36,15 @@ export async function verifySignature(
 
     // Validate key/signature lengths
     if (publicKey.length !== 32) {
-      console.error(`Invalid public key length: ${publicKey.length}, expected 32`);
+      console.error(
+        `Invalid public key length: ${publicKey.length}, expected 32`,
+      );
       return false;
     }
     if (signature.length !== 64) {
-      console.error(`Invalid signature length: ${signature.length}, expected 64`);
+      console.error(
+        `Invalid signature length: ${signature.length}, expected 64`,
+      );
       return false;
     }
 
@@ -127,7 +131,7 @@ export interface AuthResult {
  */
 export async function verifyIngestAuth(
   request: Request,
-  body: string
+  body: string,
 ): Promise<AuthResult> {
   const sourceId = request.headers.get("X-Source-ID");
   const signature = request.headers.get("X-Signature");

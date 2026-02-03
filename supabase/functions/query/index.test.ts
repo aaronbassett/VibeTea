@@ -198,8 +198,11 @@ const VALID_DAYS = [7, 30] as const;
 type ValidDays = (typeof VALID_DAYS)[number];
 
 function parseQueryParams(
-  url: URL
-): { days: ValidDays; source: string | null } | { error: string; message: string } {
+  url: URL,
+): { days: ValidDays; source: string | null } | {
+  error: string;
+  message: string;
+} {
   const daysParam = url.searchParams.get("days");
   const source = url.searchParams.get("source");
 
@@ -374,7 +377,7 @@ async function simulateRequestHandler(request: Request): Promise<Response> {
         error: "method_not_allowed",
         message: "Only GET method is allowed",
       }),
-      { status: 405, headers: { "Content-Type": "application/json" } }
+      { status: 405, headers: { "Content-Type": "application/json" } },
     );
   }
 
@@ -388,7 +391,7 @@ async function simulateRequestHandler(request: Request): Promise<Response> {
           error: "missing_auth",
           message: "Authorization header is required",
         }),
-        { status: 401, headers: { "Content-Type": "application/json" } }
+        { status: 401, headers: { "Content-Type": "application/json" } },
       );
     }
     return new Response(
@@ -396,7 +399,7 @@ async function simulateRequestHandler(request: Request): Promise<Response> {
         error: "invalid_token",
         message: "Bearer token is invalid",
       }),
-      { status: 401, headers: { "Content-Type": "application/json" } }
+      { status: 401, headers: { "Content-Type": "application/json" } },
     );
   }
 
@@ -421,7 +424,7 @@ async function simulateRequestHandler(request: Request): Promise<Response> {
         fetchedAt: new Date().toISOString(),
       },
     }),
-    { status: 200, headers: { "Content-Type": "application/json" } }
+    { status: 200, headers: { "Content-Type": "application/json" } },
   );
 }
 
@@ -682,7 +685,7 @@ describe("Security and Edge Cases", () => {
 
   it("is case-sensitive for token comparison", () => {
     const result = validateBearerToken(
-      `Bearer ${TEST_SUBSCRIBER_TOKEN.toUpperCase()}`
+      `Bearer ${TEST_SUBSCRIBER_TOKEN.toUpperCase()}`,
     );
     assertEquals(result, false);
   });

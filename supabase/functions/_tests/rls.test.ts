@@ -20,7 +20,10 @@ import {
   assertEquals,
   assertExists,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  createClient,
+  SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2";
 
 /**
  * Environment variables for Supabase connection
@@ -129,7 +132,8 @@ Deno.test({
     const client = createAnonClient();
 
     // Attempt to INSERT into events table
-    const { data, error } = await client.from("events").insert(TEST_EVENT).select();
+    const { data, error } = await client.from("events").insert(TEST_EVENT)
+      .select();
 
     // RLS should return an error for INSERT when no policies allow access
     assertExists(error, "Expected error due to RLS deny on INSERT");
@@ -178,7 +182,11 @@ Deno.test({
       .select();
 
     // RLS should return empty result for UPDATE when no rows match policies
-    assertEquals(error, null, "Expected no error, RLS returns empty result for UPDATE");
+    assertEquals(
+      error,
+      null,
+      "Expected no error, RLS returns empty result for UPDATE",
+    );
     assertExists(data, "Expected data to be defined");
     assertEquals(data.length, 0, "Expected no rows updated due to RLS deny");
   },
@@ -202,7 +210,11 @@ Deno.test({
       .select();
 
     // RLS should return empty result for DELETE when no rows match policies
-    assertEquals(error, null, "Expected no error, RLS returns empty result for DELETE");
+    assertEquals(
+      error,
+      null,
+      "Expected no error, RLS returns empty result for DELETE",
+    );
     assertExists(data, "Expected data to be defined");
     assertEquals(data.length, 0, "Expected no rows deleted due to RLS deny");
   },
@@ -241,7 +253,11 @@ Deno.test({
       assertEquals(selectError, null, "Service role SELECT should succeed");
       assertExists(selectData, "Expected select data to be returned");
       assertEquals(selectData.length, 1, "Expected one row selected");
-      assertEquals(selectData[0].source, TEST_EVENT.source, "Expected correct source");
+      assertEquals(
+        selectData[0].source,
+        TEST_EVENT.source,
+        "Expected correct source",
+      );
     } finally {
       // Clean up: delete the test event
       await client.from("events").delete().eq("id", testId);
@@ -272,7 +288,11 @@ Deno.test({
       assertEquals(updateError, null, "Service role UPDATE should succeed");
       assertExists(updateData, "Expected update data to be returned");
       assertEquals(updateData.length, 1, "Expected one row updated");
-      assertEquals(updateData[0].source, updatedSource, "Expected updated source");
+      assertEquals(
+        updateData[0].source,
+        updatedSource,
+        "Expected updated source",
+      );
     } finally {
       // Clean up
       await client.from("events").delete().eq("id", testId);

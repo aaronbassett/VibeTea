@@ -15,10 +15,10 @@ import * as ed from "https://esm.sh/@noble/ed25519@2.0.0";
 
 // Import the auth utilities for direct testing
 import {
+  type AuthResult,
+  getPublicKeyForSource,
   verifyIngestAuth,
   verifySignature,
-  getPublicKeyForSource,
-  type AuthResult,
 } from "../_shared/auth.ts";
 
 /**
@@ -26,10 +26,38 @@ import {
  * Generated using @noble/ed25519
  */
 const TEST_PRIVATE_KEY = new Uint8Array([
-  0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
-  0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
-  0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
-  0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+  0x9d,
+  0x61,
+  0xb1,
+  0x9d,
+  0xef,
+  0xfd,
+  0x5a,
+  0x60,
+  0xba,
+  0x84,
+  0x4a,
+  0xf4,
+  0x92,
+  0xec,
+  0x2c,
+  0xc4,
+  0x44,
+  0x49,
+  0xc5,
+  0x69,
+  0x7b,
+  0x32,
+  0x69,
+  0x19,
+  0x70,
+  0x3b,
+  0xac,
+  0x03,
+  0x1c,
+  0xae,
+  0x7f,
+  0x60,
 ]);
 
 /**
@@ -42,10 +70,38 @@ const TEST_SOURCE_ID = "test-monitor";
  */
 const ALT_SOURCE_ID = "alt-monitor";
 const ALT_PRIVATE_KEY = new Uint8Array([
-  0x4c, 0xcd, 0x08, 0x9b, 0x28, 0xff, 0x96, 0xda,
-  0x9d, 0xb6, 0xc3, 0x46, 0xec, 0x11, 0x4e, 0x0f,
-  0x5b, 0x8a, 0x31, 0x9f, 0x35, 0xab, 0xa6, 0x24,
-  0xda, 0x8c, 0xf6, 0xed, 0x4f, 0xb8, 0xa6, 0xfb,
+  0x4c,
+  0xcd,
+  0x08,
+  0x9b,
+  0x28,
+  0xff,
+  0x96,
+  0xda,
+  0x9d,
+  0xb6,
+  0xc3,
+  0x46,
+  0xec,
+  0x11,
+  0x4e,
+  0x0f,
+  0x5b,
+  0x8a,
+  0x31,
+  0x9f,
+  0x35,
+  0xab,
+  0xa6,
+  0x24,
+  0xda,
+  0x8c,
+  0xf6,
+  0xed,
+  0x4f,
+  0xb8,
+  0xa6,
+  0xfb,
 ]);
 
 /**
@@ -82,7 +138,7 @@ async function getPublicKey(privateKey: Uint8Array): Promise<Uint8Array> {
  */
 async function signMessage(
   privateKey: Uint8Array,
-  message: string
+  message: string,
 ): Promise<string> {
   const messageBytes = new TextEncoder().encode(message);
   const signature = await ed.signAsync(messageBytes, privateKey);
@@ -95,7 +151,9 @@ async function signMessage(
 async function setupTestKeys(): Promise<void> {
   const testPublicKey = await getPublicKey(TEST_PRIVATE_KEY);
   const altPublicKey = await getPublicKey(ALT_PRIVATE_KEY);
-  const keysConfig = `${TEST_SOURCE_ID}:${base64Encode(testPublicKey)},${ALT_SOURCE_ID}:${base64Encode(altPublicKey)}`;
+  const keysConfig = `${TEST_SOURCE_ID}:${
+    base64Encode(testPublicKey)
+  },${ALT_SOURCE_ID}:${base64Encode(altPublicKey)}`;
   Deno.env.set("VIBETEA_PUBLIC_KEYS", keysConfig);
 }
 
@@ -114,7 +172,7 @@ function createMockRequest(
     sourceId?: string;
     signature?: string;
     body?: string;
-  }
+  },
 ): Request {
   const headers = new Headers();
   if (options.sourceId !== undefined) {
@@ -264,7 +322,10 @@ Deno.test("ingest auth: returns error when signature does not match body", async
     const signature = await signMessage(TEST_PRIVATE_KEY, originalBody);
 
     // But send a different body
-    const tamperedBody = JSON.stringify([{ ...TEST_EVENT, id: "evt_tampereddata00000000" }]);
+    const tamperedBody = JSON.stringify([{
+      ...TEST_EVENT,
+      id: "evt_tampereddata00000000",
+    }]);
     const request = createMockRequest({
       sourceId: TEST_SOURCE_ID,
       signature,
@@ -453,7 +514,7 @@ Deno.test("verifySignature: returns true for valid signature", async () => {
   const result = await verifySignature(
     base64Encode(testPublicKey),
     signature,
-    messageBytes
+    messageBytes,
   );
 
   assertEquals(result, true);
@@ -470,7 +531,7 @@ Deno.test("verifySignature: returns false for invalid signature", async () => {
   const result = await verifySignature(
     base64Encode(testPublicKey),
     signature,
-    messageBytes
+    messageBytes,
   );
 
   assertEquals(result, false);
@@ -498,7 +559,7 @@ Deno.test("verifySignature: returns false for invalid signature length", async (
   const result = await verifySignature(
     base64Encode(testPublicKey),
     invalidSignature,
-    messageBytes
+    messageBytes,
   );
 
   assertEquals(result, false);
@@ -589,7 +650,10 @@ Deno.test("ingest auth: handles special characters in body", async () => {
   try {
     const event = {
       ...TEST_EVENT,
-      payload: { path: "/foo/bar?baz=qux&x=1", special: '<script>alert("xss")</script>' },
+      payload: {
+        path: "/foo/bar?baz=qux&x=1",
+        special: '<script>alert("xss")</script>',
+      },
     };
     const body = JSON.stringify([event]);
     const signature = await signMessage(TEST_PRIVATE_KEY, body);

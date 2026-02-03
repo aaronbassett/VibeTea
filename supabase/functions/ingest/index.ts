@@ -11,8 +11,11 @@
  * @see specs/001-supabase-persistence/contracts/ingest.yaml
  */
 
-import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { verifyIngestAuth, type AuthResult } from "../_shared/auth.ts";
+import {
+  createClient,
+  SupabaseClient,
+} from "https://esm.sh/@supabase/supabase-js@2";
+import { type AuthResult, verifyIngestAuth } from "../_shared/auth.ts";
 
 /** Maximum number of events allowed per batch */
 const MAX_BATCH_SIZE = 1000;
@@ -93,7 +96,7 @@ function createSupabaseClient(): SupabaseClient {
 function errorResponse(
   status: number,
   error: string,
-  message: string
+  message: string,
 ): Response {
   const body: ErrorResponse = { error, message };
   return new Response(JSON.stringify(body), {
@@ -107,7 +110,11 @@ function errorResponse(
  */
 type EventValidationResult =
   | { readonly isValid: true; readonly event: Event }
-  | { readonly isValid: false; readonly error: string; readonly errorCode: string };
+  | {
+    readonly isValid: false;
+    readonly error: string;
+    readonly errorCode: string;
+  };
 
 /**
  * Validate a single event against the Event schema
@@ -166,7 +173,8 @@ function validateEvent(value: unknown, index: number): EventValidationResult {
   if (!RFC3339_PATTERN.test(obj.timestamp)) {
     return {
       isValid: false,
-      error: `Event at index ${index} has invalid timestamp format '${obj.timestamp}'`,
+      error:
+        `Event at index ${index} has invalid timestamp format '${obj.timestamp}'`,
       errorCode: "invalid_event",
     };
   }
@@ -191,7 +199,8 @@ function validateEvent(value: unknown, index: number): EventValidationResult {
   if (typeof obj.payload !== "object" || obj.payload === null) {
     return {
       isValid: false,
-      error: `Event at index ${index} missing required field 'payload' or payload is not an object`,
+      error:
+        `Event at index ${index} missing required field 'payload' or payload is not an object`,
       errorCode: "invalid_event",
     };
   }
@@ -213,12 +222,16 @@ function validateEvent(value: unknown, index: number): EventValidationResult {
  */
 function validateSourceMatch(
   event: Event,
-  authenticatedSourceId: string
-): { readonly isValid: true } | { readonly isValid: false; readonly error: string } {
+  authenticatedSourceId: string,
+): { readonly isValid: true } | {
+  readonly isValid: false;
+  readonly error: string;
+} {
   if (event.source !== authenticatedSourceId) {
     return {
       isValid: false,
-      error: `Event source '${event.source}' does not match authenticated source '${authenticatedSourceId}'`,
+      error:
+        `Event source '${event.source}' does not match authenticated source '${authenticatedSourceId}'`,
     };
   }
   return { isValid: true };
@@ -229,10 +242,9 @@ function validateSourceMatch(
  */
 function successResponse(inserted: number, total: number): Response {
   const duplicates = total - inserted;
-  const message =
-    duplicates > 0
-      ? `Successfully processed ${total} events (${duplicates} duplicates skipped)`
-      : `Successfully processed ${total} events`;
+  const message = duplicates > 0
+    ? `Successfully processed ${total} events (${duplicates} duplicates skipped)`
+    : `Successfully processed ${total} events`;
 
   const body: IngestResponse = { inserted, message };
   return new Response(JSON.stringify(body), {
@@ -268,11 +280,17 @@ async function handleRequest(request: Request): Promise<Response> {
     ) {
       return errorResponse(
         401,
-        authResult.error.includes("Missing") ? "missing_auth" : "unknown_source",
-        authResult.error
+        authResult.error.includes("Missing")
+          ? "missing_auth"
+          : "unknown_source",
+        authResult.error,
       );
     }
-    return errorResponse(401, "invalid_signature", authResult.error ?? "Authentication failed");
+    return errorResponse(
+      401,
+      "invalid_signature",
+      authResult.error ?? "Authentication failed",
+    );
   }
 
   const sourceId = authResult.sourceId;
@@ -285,24 +303,32 @@ async function handleRequest(request: Request): Promise<Response> {
       return errorResponse(
         400,
         "invalid_request",
-        "Request body must be a JSON array"
+        "Request body must be a JSON array",
       );
     }
     events = parsed;
   } catch {
-    return errorResponse(400, "invalid_request", "Request body is not valid JSON");
+    return errorResponse(
+      400,
+      "invalid_request",
+      "Request body is not valid JSON",
+    );
   }
 
   // Validate batch constraints
   if (events.length === 0) {
-    return errorResponse(400, "empty_batch", "Request body must be a non-empty array");
+    return errorResponse(
+      400,
+      "empty_batch",
+      "Request body must be a non-empty array",
+    );
   }
 
   if (events.length > MAX_BATCH_SIZE) {
     return errorResponse(
       400,
       "batch_too_large",
-      `Maximum batch size is ${MAX_BATCH_SIZE} events`
+      `Maximum batch size is ${MAX_BATCH_SIZE} events`,
     );
   }
 
@@ -312,8 +338,14 @@ async function handleRequest(request: Request): Promise<Response> {
     const validationResult = validateEvent(events[i], i);
     if (!validationResult.isValid) {
       // Use 422 for invalid_event_type per contract, 400 for other validation errors
-      const status = validationResult.errorCode === "invalid_event_type" ? 422 : 400;
-      return errorResponse(status, validationResult.errorCode, validationResult.error);
+      const status = validationResult.errorCode === "invalid_event_type"
+        ? 422
+        : 400;
+      return errorResponse(
+        status,
+        validationResult.errorCode,
+        validationResult.error,
+      );
     }
 
     // Verify event source matches authenticated sourceId
@@ -336,7 +368,11 @@ async function handleRequest(request: Request): Promise<Response> {
 
   if (rpcError) {
     console.error("Database insert error:", rpcError);
-    return errorResponse(500, "internal_error", "Failed to insert events into database");
+    return errorResponse(
+      500,
+      "internal_error",
+      "Failed to insert events into database",
+    );
   }
 
   // The RPC function returns a table with one row containing inserted_count
@@ -358,7 +394,8 @@ Deno.serve(async (request: Request): Promise<Response> => {
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, X-Source-ID, X-Signature",
+        "Access-Control-Allow-Headers":
+          "Content-Type, X-Source-ID, X-Signature",
         "Access-Control-Max-Age": "86400",
       },
     });
@@ -378,7 +415,7 @@ Deno.serve(async (request: Request): Promise<Response> => {
     return errorResponse(
       500,
       "internal_error",
-      "An unexpected error occurred"
+      "An unexpected error occurred",
     );
   }
 });
