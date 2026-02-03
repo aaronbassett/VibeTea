@@ -267,6 +267,10 @@ impl Sender {
     }
 
     /// Chunks events into batches that fit within the size limit.
+    ///
+    /// Events larger than `MAX_CHUNK_SIZE` are placed in their own chunk with a
+    /// warning logged, as they may fail to send. The server should reject payloads
+    /// over its limit, and the retry logic will eventually drop them.
     fn chunk_events(&self, events: &[Event]) -> Vec<Vec<Event>> {
         let mut chunks = Vec::new();
         let mut current_chunk = Vec::new();
@@ -277,6 +281,24 @@ impl Sender {
             let event_size = serde_json::to_string(event)
                 .map(|s| s.len())
                 .unwrap_or(1000);
+
+            // Check if single event exceeds chunk size
+            if event_size > MAX_CHUNK_SIZE {
+                warn!(
+                    event_id = %event.id,
+                    event_size = event_size,
+                    max_size = MAX_CHUNK_SIZE,
+                    "Event exceeds maximum chunk size, placing in separate chunk"
+                );
+                // Flush current chunk first if non-empty
+                if !current_chunk.is_empty() {
+                    chunks.push(std::mem::take(&mut current_chunk));
+                    current_size = 2;
+                }
+                // Put oversized event in its own chunk
+                chunks.push(vec![event.clone()]);
+                continue;
+            }
 
             // Account for comma separator
             let separator_size = if current_chunk.is_empty() { 0 } else { 1 };
@@ -660,6 +682,108 @@ mod tests {
         for chunk in &chunks {
             let size = serde_json::to_string(chunk).unwrap().len();
             assert!(size <= MAX_CHUNK_SIZE + 1000, "Chunk too large: {} bytes", size);
+        }
+    }
+
+    #[test]
+    fn test_chunk_events_handles_oversized_single_event() {
+        let sender = create_test_sender();
+
+        // Create an event larger than MAX_CHUNK_SIZE (900KB)
+        // Each character in JSON string takes ~1 byte plus escaping overhead
+        let oversized_context = "x".repeat(MAX_CHUNK_SIZE + 1000);
+        let oversized_event = Event::new(
+            "test-monitor".to_string(),
+            EventType::Tool,
+            EventPayload::Tool {
+                session_id: Uuid::new_v4(),
+                tool: "Read".to_string(),
+                status: crate::types::ToolStatus::Completed,
+                context: Some(oversized_context),
+                project: Some("test".to_string()),
+            },
+        );
+
+        // Verify the event is actually oversized
+        let event_size = serde_json::to_string(&oversized_event).unwrap().len();
+        assert!(
+            event_size > MAX_CHUNK_SIZE,
+            "Test event should be larger than MAX_CHUNK_SIZE, got {} bytes",
+            event_size
+        );
+
+        // Mix oversized event with normal events
+        let normal_event = create_test_event();
+        let events = vec![
+            normal_event.clone(),
+            oversized_event.clone(),
+            normal_event.clone(),
+        ];
+
+        let chunks = sender.chunk_events(&events);
+
+        // Should have at least 2 chunks: one for normal events, one for oversized
+        assert!(
+            chunks.len() >= 2,
+            "Expected at least 2 chunks, got {}",
+            chunks.len()
+        );
+
+        // Total events should match
+        let total: usize = chunks.iter().map(|c| c.len()).sum();
+        assert_eq!(total, 3, "All events should be included");
+
+        // Find the chunk with the oversized event
+        let oversized_chunk = chunks.iter().find(|c| {
+            c.len() == 1 && {
+                let size = serde_json::to_string(&c[0]).unwrap().len();
+                size > MAX_CHUNK_SIZE
+            }
+        });
+        assert!(
+            oversized_chunk.is_some(),
+            "Oversized event should be in its own chunk"
+        );
+    }
+
+    #[test]
+    fn test_chunk_events_oversized_only() {
+        let sender = create_test_sender();
+
+        // Create only oversized events
+        let oversized_context = "y".repeat(MAX_CHUNK_SIZE + 500);
+        let events: Vec<Event> = (0..3)
+            .map(|_| {
+                Event::new(
+                    "test-monitor".to_string(),
+                    EventType::Tool,
+                    EventPayload::Tool {
+                        session_id: Uuid::new_v4(),
+                        tool: "Write".to_string(),
+                        status: crate::types::ToolStatus::Completed,
+                        context: Some(oversized_context.clone()),
+                        project: Some("test".to_string()),
+                    },
+                )
+            })
+            .collect();
+
+        let chunks = sender.chunk_events(&events);
+
+        // Each oversized event should be in its own chunk
+        assert_eq!(
+            chunks.len(),
+            3,
+            "Each oversized event should be in its own chunk"
+        );
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            assert_eq!(
+                chunk.len(),
+                1,
+                "Chunk {} should contain exactly 1 event",
+                i
+            );
         }
     }
 }
