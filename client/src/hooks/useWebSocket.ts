@@ -15,7 +15,7 @@ import { useEventStore } from './useEventStore';
 // -----------------------------------------------------------------------------
 
 /** localStorage key for authentication token */
-const TOKEN_STORAGE_KEY = 'vibetea_token';
+export const TOKEN_STORAGE_KEY = 'vibetea_token';
 
 /** Initial reconnection delay in milliseconds */
 const INITIAL_BACKOFF_MS = 1000;

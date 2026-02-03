@@ -72,6 +72,8 @@ interface SessionOverviewProps {
   readonly className?: string;
   /** Callback when a session card is clicked */
   readonly onSessionClick?: (sessionId: string) => void;
+  /** Currently selected session ID for filtering */
+  readonly selectedSessionId?: string | null;
 }
 
 /**
@@ -84,6 +86,8 @@ interface SessionCardProps {
   readonly recentEventCount: number;
   /** Callback when the card is clicked */
   readonly onClick?: (sessionId: string) => void;
+  /** Whether this session is currently selected for filtering */
+  readonly isSelected?: boolean;
 }
 
 /**
@@ -261,10 +265,15 @@ function StatusBadge({ status }: { readonly status: SessionStatus }) {
  * Displays project name, source, duration, activity indicator, and status.
  * For inactive sessions, shows "Last active: X minutes ago".
  */
-function SessionCard({ session, recentEventCount, onClick }: SessionCardProps) {
+function SessionCard({
+  session,
+  recentEventCount,
+  onClick,
+  isSelected = false,
+}: SessionCardProps) {
   const isActive = session.status === 'active';
   const isEnded = session.status === 'ended';
-  const isDimmed = !isActive;
+  const isDimmed = !isActive && !isSelected;
 
   // Calculate display values
   const duration = getSessionDuration(session.startedAt);
@@ -294,6 +303,11 @@ function SessionCard({ session, recentEventCount, onClick }: SessionCardProps) {
   // Card opacity based on status
   const opacityClass = isDimmed ? 'opacity-70' : 'opacity-100';
 
+  // Border and background styling for selected state
+  const selectedClass = isSelected
+    ? 'border-purple-500 bg-purple-900/20'
+    : 'border-gray-700 bg-gray-800';
+
   // Hover styling only when clickable
   const hoverClass =
     onClick !== undefined
@@ -304,8 +318,9 @@ function SessionCard({ session, recentEventCount, onClick }: SessionCardProps) {
     <div
       role="listitem"
       tabIndex={onClick !== undefined ? 0 : undefined}
-      aria-label={`${session.project} session, ${STATUS_CONFIG[session.status].label}, duration ${formattedDuration}`}
-      className={`bg-gray-800 border border-gray-700 rounded-lg p-4 transition-all ${opacityClass} ${hoverClass}`}
+      aria-label={`${session.project} session, ${STATUS_CONFIG[session.status].label}, duration ${formattedDuration}${isSelected ? ', selected' : ''}`}
+      aria-selected={isSelected}
+      className={`border rounded-lg p-4 transition-all ${selectedClass} ${opacityClass} ${hoverClass}`}
       onClick={onClick !== undefined ? handleClick : undefined}
       onKeyDown={onClick !== undefined ? handleKeyDown : undefined}
     >
@@ -414,6 +429,7 @@ function EmptyState() {
 export function SessionOverview({
   className = '',
   onSessionClick,
+  selectedSessionId,
 }: SessionOverviewProps) {
   // Subscribe to sessions from the store
   const sessions = useEventStore((state) => state.sessions);
@@ -472,6 +488,7 @@ export function SessionOverview({
               onClick={
                 onSessionClick !== undefined ? handleSessionClick : undefined
               }
+              isSelected={selectedSessionId === session.sessionId}
             />
           ))}
         </div>

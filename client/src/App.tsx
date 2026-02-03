@@ -12,16 +12,9 @@ import { EventStream } from './components/EventStream';
 import { Heatmap } from './components/Heatmap';
 import { SessionOverview } from './components/SessionOverview';
 import { TokenForm } from './components/TokenForm';
-import { useEventStore } from './hooks/useEventStore';
+import { hasActiveFilters, useEventStore } from './hooks/useEventStore';
 import { useSessionTimeouts } from './hooks/useSessionTimeouts';
-import { useWebSocket } from './hooks/useWebSocket';
-
-// -----------------------------------------------------------------------------
-// Constants
-// -----------------------------------------------------------------------------
-
-/** localStorage key for authentication token (must match useWebSocket) */
-const TOKEN_STORAGE_KEY = 'vibetea_token';
+import { TOKEN_STORAGE_KEY, useWebSocket } from './hooks/useWebSocket';
 
 // -----------------------------------------------------------------------------
 // Helper Functions
@@ -51,6 +44,14 @@ export default function App() {
   // Connection status from store
   const status = useEventStore((state) => state.status);
 
+  // Filter state and actions
+  const filters = useEventStore((state) => state.filters);
+  const setSessionFilter = useEventStore((state) => state.setSessionFilter);
+  const setTimeRangeFilter = useEventStore((state) => state.setTimeRangeFilter);
+  const clearFilters = useEventStore((state) => state.clearFilters);
+  const filtersActive = useEventStore(hasActiveFilters);
+  const sessions = useEventStore((state) => state.sessions);
+
   // Connect when token becomes available
   useEffect(() => {
     if (hasToken) {
@@ -76,22 +77,30 @@ export default function App() {
   }, [connect, disconnect]);
 
   /**
-   * Handle session card click for filtering (placeholder for future feature).
+   * Handle session card click for filtering.
+   * Clicking the same session again clears the filter.
    */
-  const handleSessionClick = useCallback((sessionId: string) => {
-    console.log(`Session clicked: ${sessionId}`);
-    // Future: filter event stream to show only events from this session
-  }, []);
+  const handleSessionClick = useCallback(
+    (sessionId: string) => {
+      if (filters.sessionId === sessionId) {
+        // Toggle off if clicking the same session
+        setSessionFilter(null);
+      } else {
+        setSessionFilter(sessionId);
+      }
+    },
+    [filters.sessionId, setSessionFilter]
+  );
 
   /**
-   * Handle heatmap cell click for filtering (placeholder for future feature).
+   * Handle heatmap cell click for filtering.
+   * Clicking sets the time range filter.
    */
   const handleHeatmapCellClick = useCallback(
     (startTime: Date, endTime: Date) => {
-      console.log(`Heatmap cell clicked: ${startTime} - ${endTime}`);
-      // Future: filter event stream to show only events in this time range
+      setTimeRangeFilter({ start: startTime, end: endTime });
     },
-    []
+    [setTimeRangeFilter]
   );
 
   // Show token form if no token is saved
@@ -140,7 +149,10 @@ export default function App() {
           <div className="lg:col-span-1 space-y-6">
             {/* Session Overview */}
             <section className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-              <SessionOverview onSessionClick={handleSessionClick} />
+              <SessionOverview
+                onSessionClick={handleSessionClick}
+                selectedSessionId={filters.sessionId}
+              />
             </section>
 
             {/* Activity Heatmap */}
@@ -161,9 +173,60 @@ export default function App() {
           <div className="lg:col-span-2">
             <section className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden h-[calc(100vh-8rem)]">
               <div className="p-4 border-b border-gray-700">
-                <h2 className="text-lg font-semibold text-gray-100">
-                  Event Stream
-                </h2>
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-gray-100">
+                    Event Stream
+                  </h2>
+                  {filtersActive && (
+                    <div className="flex items-center gap-2">
+                      {filters.sessionId !== null && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-purple-600/20 text-purple-400 border border-purple-500/30 rounded-md">
+                          Session:{' '}
+                          {sessions.get(filters.sessionId)?.project ??
+                            filters.sessionId.slice(0, 8)}
+                          <button
+                            type="button"
+                            onClick={() => setSessionFilter(null)}
+                            className="ml-1 hover:text-purple-200"
+                            aria-label="Clear session filter"
+                          >
+                            &times;
+                          </button>
+                        </span>
+                      )}
+                      {filters.timeRange !== null && (
+                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 rounded-md">
+                          {filters.timeRange.start.toLocaleTimeString('en-US', {
+                            hour12: false,
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}{' '}
+                          -{' '}
+                          {filters.timeRange.end.toLocaleTimeString('en-US', {
+                            hour12: false,
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                          <button
+                            type="button"
+                            onClick={() => setTimeRangeFilter(null)}
+                            className="ml-1 hover:text-cyan-200"
+                            aria-label="Clear time range filter"
+                          >
+                            &times;
+                          </button>
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={clearFilters}
+                        className="text-xs text-gray-400 hover:text-gray-200"
+                      >
+                        Clear all
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
               <EventStream className="h-[calc(100%-4rem)]" />
             </section>

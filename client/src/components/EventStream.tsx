@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
-import { useEventStore } from '../hooks/useEventStore';
+import { selectFilteredEvents, useEventStore } from '../hooks/useEventStore';
 
 import type { EventType, VibeteaEvent } from '../types/events';
 
@@ -259,8 +259,8 @@ function EmptyState() {
  * ```
  */
 export function EventStream({ className = '' }: EventStreamProps) {
-  // Selective subscription: only re-render when events change
-  const events = useEventStore((state) => state.events);
+  // Selective subscription: only re-render when filtered events change
+  const events = useEventStore(selectFilteredEvents);
 
   // Refs
   const parentRef = useRef<HTMLDivElement>(null);

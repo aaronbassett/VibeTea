@@ -31,6 +31,24 @@ export type ConnectionStatus =
   | 'reconnecting';
 
 /**
+ * Time range filter for events.
+ */
+export interface TimeRangeFilter {
+  readonly start: Date;
+  readonly end: Date;
+}
+
+/**
+ * Active filters for the event stream.
+ */
+export interface EventFilters {
+  /** Filter by session ID (null = no filter) */
+  readonly sessionId: string | null;
+  /** Filter by time range (null = no filter) */
+  readonly timeRange: TimeRangeFilter | null;
+}
+
+/**
  * Event store state and actions.
  */
 export interface EventStore {
@@ -40,6 +58,8 @@ export interface EventStore {
   readonly events: readonly VibeteaEvent[];
   /** Active sessions keyed by sessionId */
   readonly sessions: Map<string, Session>;
+  /** Active filters for the event stream */
+  readonly filters: EventFilters;
 
   /** Add an event to the store (handles FIFO eviction and session updates) */
   readonly addEvent: (event: VibeteaEvent) => void;
@@ -49,6 +69,12 @@ export interface EventStore {
   readonly clearEvents: () => void;
   /** Update session states based on time thresholds (called periodically) */
   readonly updateSessionStates: () => void;
+  /** Set session filter (null to clear) */
+  readonly setSessionFilter: (sessionId: string | null) => void;
+  /** Set time range filter (null to clear) */
+  readonly setTimeRangeFilter: (timeRange: TimeRangeFilter | null) => void;
+  /** Clear all filters */
+  readonly clearFilters: () => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -86,11 +112,18 @@ export const SESSION_CHECK_INTERVAL_MS = 30 * 1000;
  * const addEvent = useEventStore((state) => state.addEvent);
  * ```
  */
+/** Default filter state (no filters active) */
+const DEFAULT_FILTERS: EventFilters = {
+  sessionId: null,
+  timeRange: null,
+};
+
 export const useEventStore = create<EventStore>()((set) => ({
   // Initial state
   status: 'disconnected',
   events: [],
   sessions: new Map<string, Session>(),
+  filters: DEFAULT_FILTERS,
 
   addEvent: (event: VibeteaEvent) => {
     set((state) => {
@@ -206,6 +239,22 @@ export const useEventStore = create<EventStore>()((set) => ({
       return state;
     });
   },
+
+  setSessionFilter: (sessionId: string | null) => {
+    set((state) => ({
+      filters: { ...state.filters, sessionId },
+    }));
+  },
+
+  setTimeRangeFilter: (timeRange: TimeRangeFilter | null) => {
+    set((state) => ({
+      filters: { ...state.filters, timeRange },
+    }));
+  },
+
+  clearFilters: () => {
+    set({ filters: DEFAULT_FILTERS });
+  },
 }));
 
 // -----------------------------------------------------------------------------
@@ -239,4 +288,49 @@ export function selectSession(
   sessionId: string
 ): Session | undefined {
   return state.sessions.get(sessionId);
+}
+
+/**
+ * Check if any filters are currently active.
+ */
+export function hasActiveFilters(state: EventStore): boolean {
+  return state.filters.sessionId !== null || state.filters.timeRange !== null;
+}
+
+/**
+ * Get events filtered by current filter criteria.
+ * Returns all events if no filters are active.
+ */
+export function selectFilteredEvents(
+  state: EventStore
+): readonly VibeteaEvent[] {
+  const { events, filters } = state;
+
+  // Early return if no filters active
+  if (filters.sessionId === null && filters.timeRange === null) {
+    return events;
+  }
+
+  return events.filter((event) => {
+    // Session filter
+    if (
+      filters.sessionId !== null &&
+      event.payload.sessionId !== filters.sessionId
+    ) {
+      return false;
+    }
+
+    // Time range filter
+    if (filters.timeRange !== null) {
+      const eventTime = new Date(event.timestamp);
+      if (
+        eventTime < filters.timeRange.start ||
+        eventTime > filters.timeRange.end
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 }
