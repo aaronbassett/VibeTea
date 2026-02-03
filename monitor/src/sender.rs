@@ -387,7 +387,9 @@ impl Sender {
             // Account for comma separator
             let separator_size = if current_chunk.is_empty() { 0 } else { 1 };
 
-            if current_size + separator_size + event_size > MAX_CHUNK_SIZE && !current_chunk.is_empty() {
+            if current_size + separator_size + event_size > MAX_CHUNK_SIZE
+                && !current_chunk.is_empty()
+            {
                 // Start a new chunk
                 chunks.push(std::mem::take(&mut current_chunk));
                 current_size = 2;
@@ -723,7 +725,10 @@ mod tests {
         sender.increase_retry_delay();
 
         // Result should be capped at max_delay_ms
-        assert_eq!(sender.current_retry_delay_ms, sender.config.retry_policy.max_delay_ms);
+        assert_eq!(
+            sender.current_retry_delay_ms,
+            sender.config.retry_policy.max_delay_ms
+        );
     }
 
     #[test]
@@ -774,24 +779,30 @@ mod tests {
 
         // Create events with large context to force chunking
         let large_context = "x".repeat(10000); // 10KB per event context
-        let events: Vec<Event> = (0..200).map(|_| {
-            Event::new(
-                "test-monitor".to_string(),
-                EventType::Tool,
-                EventPayload::Tool {
-                    session_id: Uuid::new_v4(),
-                    tool: "Read".to_string(),
-                    status: crate::types::ToolStatus::Completed,
-                    context: Some(large_context.clone()),
-                    project: Some("test".to_string()),
-                },
-            )
-        }).collect();
+        let events: Vec<Event> = (0..200)
+            .map(|_| {
+                Event::new(
+                    "test-monitor".to_string(),
+                    EventType::Tool,
+                    EventPayload::Tool {
+                        session_id: Uuid::new_v4(),
+                        tool: "Read".to_string(),
+                        status: crate::types::ToolStatus::Completed,
+                        context: Some(large_context.clone()),
+                        project: Some("test".to_string()),
+                    },
+                )
+            })
+            .collect();
 
         let chunks = sender.chunk_events(&events);
 
         // Should have multiple chunks
-        assert!(chunks.len() > 1, "Expected multiple chunks, got {}", chunks.len());
+        assert!(
+            chunks.len() > 1,
+            "Expected multiple chunks, got {}",
+            chunks.len()
+        );
 
         // Total events should match
         let total: usize = chunks.iter().map(|c| c.len()).sum();
@@ -800,7 +811,11 @@ mod tests {
         // Each chunk should serialize to under the limit
         for chunk in &chunks {
             let size = serde_json::to_string(chunk).unwrap().len();
-            assert!(size <= MAX_CHUNK_SIZE + 1000, "Chunk too large: {} bytes", size);
+            assert!(
+                size <= MAX_CHUNK_SIZE + 1000,
+                "Chunk too large: {} bytes",
+                size
+            );
         }
     }
 
@@ -897,12 +912,7 @@ mod tests {
         );
 
         for (i, chunk) in chunks.iter().enumerate() {
-            assert_eq!(
-                chunk.len(),
-                1,
-                "Chunk {} should contain exactly 1 event",
-                i
-            );
+            assert_eq!(chunk.len(), 1, "Chunk {} should contain exactly 1 event", i);
         }
     }
 
@@ -990,16 +1000,14 @@ mod tests {
 
     #[test]
     fn test_with_retry_policy_validates() {
-        let config = SenderConfig::with_defaults(
-            "https://example.com".to_string(),
-            "test".to_string(),
-        )
-        .with_retry_policy(RetryPolicy {
-            initial_delay_ms: 0,
-            max_delay_ms: 0,
-            max_attempts: 0,
-            jitter_factor: -1.0,
-        });
+        let config =
+            SenderConfig::with_defaults("https://example.com".to_string(), "test".to_string())
+                .with_retry_policy(RetryPolicy {
+                    initial_delay_ms: 0,
+                    max_delay_ms: 0,
+                    max_attempts: 0,
+                    jitter_factor: -1.0,
+                });
 
         // Values should be clamped by validation
         assert_eq!(config.retry_policy.initial_delay_ms, 1);
