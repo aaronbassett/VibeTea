@@ -171,10 +171,10 @@
 - [x] T081 [US2] Run /sdd:map incremental for Phase 4 changes
 - [x] T082 [GIT] Commit: update codebase documents for phase 4
 - [x] T083 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T084 [GIT] Commit: finalize phase 4 retro
+- [x] T084 [GIT] Commit: finalize phase 4 retro
 
 ### Phase Completion
-- [ ] T085 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T085 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [ ] T086 [GIT] Create/update PR to main with phase summary
 - [ ] T087 [GIT] Verify all CI checks pass
 - [ ] T088 [GIT] Report PR ready status

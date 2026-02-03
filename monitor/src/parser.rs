@@ -1215,7 +1215,10 @@ mod tests {
 
         // Should only have ToolStarted, no AgentSpawned
         assert_eq!(events.len(), 1);
-        assert!(matches!(events[0].kind, ParsedEventKind::ToolStarted { .. }));
+        assert!(matches!(
+            events[0].kind,
+            ParsedEventKind::ToolStarted { .. }
+        ));
     }
 
     #[test]
