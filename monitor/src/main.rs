@@ -29,6 +29,7 @@ use uuid::Uuid;
 use vibetea_monitor::config::Config;
 use vibetea_monitor::crypto::Crypto;
 use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
+use vibetea_monitor::persistence::PersistenceManager;
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
 use vibetea_monitor::types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
@@ -65,6 +66,12 @@ ENVIRONMENT VARIABLES:
     VIBETEA_BUFFER_SIZE        Event buffer size (default: 1000)
     VIBETEA_BASENAME_ALLOWLIST Comma-separated file extensions to include
 
+    VIBETEA_SUPABASE_URL       Supabase edge function URL (enables persistence)
+    VIBETEA_SUPABASE_BATCH_INTERVAL_SECS
+                               Batch submission interval (default: 60)
+    VIBETEA_SUPABASE_RETRY_LIMIT
+                               Max retry attempts 1-10 (default: 3)
+
 EXAMPLES:
     # Generate a new keypair
     vibetea-monitor init
@@ -74,6 +81,11 @@ EXAMPLES:
 
     # Start the monitor
     export VIBETEA_SERVER_URL=https://vibetea.fly.dev
+    vibetea-monitor run
+
+    # Start with persistence enabled
+    export VIBETEA_SERVER_URL=https://vibetea.fly.dev
+    export VIBETEA_SUPABASE_URL=https://xyz.supabase.co/functions/v1
     vibetea-monitor run
 ")]
 struct Cli {
@@ -190,6 +202,35 @@ async fn run_monitor() -> Result<()> {
         "Cryptographic keys loaded"
     );
 
+    // Optional persistence setup
+    let persistence_tx = if let Some(ref persistence_config) = config.persistence {
+        // We need to clone the crypto for persistence since Crypto doesn't implement Clone
+        // Load a fresh copy from the same path
+        let persistence_crypto = Crypto::load(&config.key_path)
+            .context("Failed to load keys for persistence")?;
+
+        let (manager, tx) = PersistenceManager::new(
+            persistence_config.clone(),
+            persistence_crypto,
+        );
+
+        // Spawn persistence manager as background task
+        tokio::spawn(async move {
+            manager.run().await;
+        });
+
+        info!(
+            supabase_url = %persistence_config.supabase_url,
+            batch_interval_secs = persistence_config.batch_interval_secs,
+            "Persistence enabled"
+        );
+
+        Some(tx)
+    } else {
+        info!("Persistence disabled (VIBETEA_SUPABASE_URL not set)");
+        None
+    };
+
     // Create sender
     let sender_config = SenderConfig::new(
         config.server_url.clone(),
@@ -250,6 +291,7 @@ async fn run_monitor() -> Result<()> {
                     &mut session_parsers,
                     &privacy_pipeline,
                     &mut sender,
+                    &persistence_tx,
                     &config.source_id,
                 ).await;
             }
@@ -281,6 +323,7 @@ async fn process_watch_event(
     session_parsers: &mut HashMap<PathBuf, SessionParser>,
     privacy_pipeline: &PrivacyPipeline,
     sender: &mut Sender,
+    persistence_tx: &Option<mpsc::Sender<Event>>,
     source_id: &str,
 ) {
     match watch_event {
@@ -342,10 +385,18 @@ async fn process_watch_event(
                         source_id,
                         privacy_pipeline,
                     ) {
-                        // Queue event for sending
-                        let evicted = sender.queue(event);
+                        // Queue event for real-time sending
+                        let evicted = sender.queue(event.clone());
                         if evicted > 0 {
                             warn!(evicted, "Buffer overflow, events evicted");
+                        }
+
+                        // Also queue for persistence if enabled
+                        if let Some(ref tx) = persistence_tx {
+                            // Non-blocking send - if channel is full, log and continue
+                            if tx.try_send(event).is_err() {
+                                debug!("Persistence channel full, event will be batched later");
+                            }
                         }
                     }
                 }
