@@ -30,6 +30,16 @@ const EVENT_TYPE_ICONS: Record<EventType, string> = {
   summary: '\u{1F4CB}', // 📋
   error: '\u{26A0}\u{FE0F}', // ⚠️
   agent: '\u{1F916}', // 🤖
+  // Enhanced tracking event icons
+  agent_spawn: '\u{1F331}', // 🌱
+  skill_invocation: '\u{2728}', // ✨
+  token_usage: '\u{1F4B0}', // 💰
+  session_metrics: '\u{1F4CA}', // 📊
+  activity_pattern: '\u{1F4C8}', // 📈
+  model_distribution: '\u{1F916}', // 🤖
+  todo_progress: '\u{2705}', // ✅
+  file_change: '\u{1F4DD}', // 📝
+  project_activity: '\u{1F4C1}', // 📁
 };
 
 /** Color classes for event type badges */
@@ -40,6 +50,16 @@ const EVENT_TYPE_COLORS: Record<EventType, string> = {
   summary: 'bg-cyan-600/20 text-cyan-400 border-cyan-500/30',
   error: 'bg-red-600/20 text-red-400 border-red-500/30',
   agent: 'bg-amber-600/20 text-amber-400 border-amber-500/30',
+  // Enhanced tracking event colors
+  agent_spawn: 'bg-emerald-600/20 text-emerald-400 border-emerald-500/30',
+  skill_invocation: 'bg-violet-600/20 text-violet-400 border-violet-500/30',
+  token_usage: 'bg-yellow-600/20 text-yellow-400 border-yellow-500/30',
+  session_metrics: 'bg-indigo-600/20 text-indigo-400 border-indigo-500/30',
+  activity_pattern: 'bg-teal-600/20 text-teal-400 border-teal-500/30',
+  model_distribution: 'bg-orange-600/20 text-orange-400 border-orange-500/30',
+  todo_progress: 'bg-lime-600/20 text-lime-400 border-lime-500/30',
+  file_change: 'bg-pink-600/20 text-pink-400 border-pink-500/30',
+  project_activity: 'bg-sky-600/20 text-sky-400 border-sky-500/30',
 };
 
 // -----------------------------------------------------------------------------
@@ -57,6 +77,20 @@ interface EventStreamProps {
 // -----------------------------------------------------------------------------
 // Helper Functions
 // -----------------------------------------------------------------------------
+
+/**
+ * Get the session ID from an event payload if present.
+ *
+ * @param event - The VibeTea event
+ * @returns Session ID or undefined if not present
+ */
+function getSessionId(event: VibeteaEvent): string | undefined {
+  const payload = event.payload;
+  if ('sessionId' in payload && typeof payload.sessionId === 'string') {
+    return payload.sessionId;
+  }
+  return undefined;
+}
 
 /**
  * Format RFC 3339 timestamp for display.
@@ -115,6 +149,47 @@ function getEventDescription(event: VibeteaEvent): string {
       const errorPayload = payload as VibeteaEvent<'error'>['payload'];
       return `Error: ${errorPayload.category}`;
     }
+    // Enhanced tracking event descriptions
+    case 'agent_spawn': {
+      const agentSpawnPayload = payload as VibeteaEvent<'agent_spawn'>['payload'];
+      return `Agent spawned: ${agentSpawnPayload.agentType} - ${agentSpawnPayload.description.slice(0, 50)}${agentSpawnPayload.description.length > 50 ? '...' : ''}`;
+    }
+    case 'skill_invocation': {
+      const skillPayload = payload as VibeteaEvent<'skill_invocation'>['payload'];
+      return `Skill invoked: ${skillPayload.skillName} in ${skillPayload.project}`;
+    }
+    case 'token_usage': {
+      const tokenPayload = payload as VibeteaEvent<'token_usage'>['payload'];
+      const totalTokens = tokenPayload.inputTokens + tokenPayload.outputTokens;
+      return `Token usage: ${totalTokens.toLocaleString()} tokens (${tokenPayload.model})`;
+    }
+    case 'session_metrics': {
+      const metricsPayload = payload as VibeteaEvent<'session_metrics'>['payload'];
+      return `Metrics: ${metricsPayload.totalSessions} sessions, ${metricsPayload.totalMessages} messages`;
+    }
+    case 'activity_pattern': {
+      const patternPayload = payload as VibeteaEvent<'activity_pattern'>['payload'];
+      const hourCount = Object.keys(patternPayload.hourCounts).length;
+      return `Activity pattern: ${hourCount} hours tracked`;
+    }
+    case 'model_distribution': {
+      const distPayload = payload as VibeteaEvent<'model_distribution'>['payload'];
+      const modelCount = Object.keys(distPayload.modelUsage).length;
+      return `Model distribution: ${modelCount} model${modelCount !== 1 ? 's' : ''} used`;
+    }
+    case 'todo_progress': {
+      const todoPayload = payload as VibeteaEvent<'todo_progress'>['payload'];
+      const total = todoPayload.completed + todoPayload.inProgress + todoPayload.pending;
+      return `Todo progress: ${todoPayload.completed}/${total} completed${todoPayload.abandoned ? ' (abandoned)' : ''}`;
+    }
+    case 'file_change': {
+      const filePayload = payload as VibeteaEvent<'file_change'>['payload'];
+      return `File change: +${filePayload.linesAdded}/-${filePayload.linesRemoved} lines (v${filePayload.version})`;
+    }
+    case 'project_activity': {
+      const projectPayload = payload as VibeteaEvent<'project_activity'>['payload'];
+      return `Project ${projectPayload.isActive ? 'active' : 'inactive'}: ${projectPayload.projectPath}`;
+    }
     default:
       return 'Unknown event';
   }
@@ -153,7 +228,7 @@ function EventRow({ event }: { readonly event: VibeteaEvent }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm text-gray-100 truncate">{description}</p>
         <p className="text-xs text-gray-500 truncate">
-          {event.source} | {event.payload.sessionId.slice(0, 8)}...
+          {event.source}{getSessionId(event) !== undefined ? ` | ${getSessionId(event)?.slice(0, 8)}...` : ''}
         </p>
       </div>
 

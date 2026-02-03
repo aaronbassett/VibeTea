@@ -18,7 +18,17 @@ export type EventType =
   | 'tool'
   | 'agent'
   | 'summary'
-  | 'error';
+  | 'error'
+  // New event types for enhanced tracking
+  | 'agent_spawn'
+  | 'skill_invocation'
+  | 'token_usage'
+  | 'session_metrics'
+  | 'activity_pattern'
+  | 'model_distribution'
+  | 'todo_progress'
+  | 'file_change'
+  | 'project_activity';
 
 /**
  * Actions that can occur during a session lifecycle.
@@ -92,6 +102,108 @@ export interface ErrorPayload {
 }
 
 // -----------------------------------------------------------------------------
+// Enhanced Data Tracking Payload Interfaces
+// -----------------------------------------------------------------------------
+
+/**
+ * Payload for agent spawn events (Task tool invocations).
+ */
+export interface AgentSpawnPayload {
+  readonly sessionId: string;
+  readonly agentType: string;
+  readonly description: string;
+  readonly timestamp: string;
+}
+
+/**
+ * Payload for skill/slash command invocation events.
+ */
+export interface SkillInvocationPayload {
+  readonly sessionId: string;
+  readonly skillName: string;
+  readonly project: string;
+  readonly timestamp: string;
+}
+
+/**
+ * Payload for token usage events (per model).
+ */
+export interface TokenUsagePayload {
+  readonly model: string;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+}
+
+/**
+ * Payload for session metrics events.
+ */
+export interface SessionMetricsPayload {
+  readonly totalSessions: number;
+  readonly totalMessages: number;
+  readonly totalToolUsage: number;
+  readonly longestSession: string;
+}
+
+/**
+ * Payload for activity pattern events (hourly distribution).
+ */
+export interface ActivityPatternPayload {
+  readonly hourCounts: Record<string, number>;
+}
+
+/**
+ * Token usage summary for model distribution.
+ */
+export interface TokenUsageSummary {
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreationTokens: number;
+}
+
+/**
+ * Payload for model distribution events.
+ */
+export interface ModelDistributionPayload {
+  readonly modelUsage: Record<string, TokenUsageSummary>;
+}
+
+/**
+ * Payload for todo progress events.
+ */
+export interface TodoProgressPayload {
+  readonly sessionId: string;
+  readonly completed: number;
+  readonly inProgress: number;
+  readonly pending: number;
+  readonly abandoned: boolean;
+}
+
+/**
+ * Payload for file change events.
+ */
+export interface FileChangePayload {
+  readonly sessionId: string;
+  readonly fileHash: string;
+  readonly version: number;
+  readonly linesAdded: number;
+  readonly linesRemoved: number;
+  readonly linesModified: number;
+  readonly timestamp: string;
+}
+
+/**
+ * Payload for project activity events.
+ */
+export interface ProjectActivityPayload {
+  readonly projectPath: string;
+  readonly sessionId: string;
+  readonly isActive: boolean;
+}
+
+// -----------------------------------------------------------------------------
 // Discriminated Union for Event Payloads
 // -----------------------------------------------------------------------------
 
@@ -106,7 +218,17 @@ export type EventPayload =
   | { readonly type: 'tool'; readonly payload: ToolPayload }
   | { readonly type: 'agent'; readonly payload: AgentPayload }
   | { readonly type: 'summary'; readonly payload: SummaryPayload }
-  | { readonly type: 'error'; readonly payload: ErrorPayload };
+  | { readonly type: 'error'; readonly payload: ErrorPayload }
+  // Enhanced tracking payloads
+  | { readonly type: 'agent_spawn'; readonly payload: AgentSpawnPayload }
+  | { readonly type: 'skill_invocation'; readonly payload: SkillInvocationPayload }
+  | { readonly type: 'token_usage'; readonly payload: TokenUsagePayload }
+  | { readonly type: 'session_metrics'; readonly payload: SessionMetricsPayload }
+  | { readonly type: 'activity_pattern'; readonly payload: ActivityPatternPayload }
+  | { readonly type: 'model_distribution'; readonly payload: ModelDistributionPayload }
+  | { readonly type: 'todo_progress'; readonly payload: TodoProgressPayload }
+  | { readonly type: 'file_change'; readonly payload: FileChangePayload }
+  | { readonly type: 'project_activity'; readonly payload: ProjectActivityPayload };
 
 // -----------------------------------------------------------------------------
 // VibeTea Event Interface
@@ -122,6 +244,16 @@ export interface EventPayloadMap {
   readonly agent: AgentPayload;
   readonly summary: SummaryPayload;
   readonly error: ErrorPayload;
+  // Enhanced tracking
+  readonly agent_spawn: AgentSpawnPayload;
+  readonly skill_invocation: SkillInvocationPayload;
+  readonly token_usage: TokenUsagePayload;
+  readonly session_metrics: SessionMetricsPayload;
+  readonly activity_pattern: ActivityPatternPayload;
+  readonly model_distribution: ModelDistributionPayload;
+  readonly todo_progress: TodoProgressPayload;
+  readonly file_change: FileChangePayload;
+  readonly project_activity: ProjectActivityPayload;
 }
 
 /**
@@ -226,6 +358,87 @@ export function isErrorEvent(
 }
 
 /**
+ * Type guard to check if an event is an agent spawn event.
+ */
+export function isAgentSpawnEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'agent_spawn'> {
+  return event.type === 'agent_spawn';
+}
+
+/**
+ * Type guard to check if an event is a skill invocation event.
+ */
+export function isSkillInvocationEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'skill_invocation'> {
+  return event.type === 'skill_invocation';
+}
+
+/**
+ * Type guard to check if an event is a token usage event.
+ */
+export function isTokenUsageEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'token_usage'> {
+  return event.type === 'token_usage';
+}
+
+/**
+ * Type guard to check if an event is a session metrics event.
+ */
+export function isSessionMetricsEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'session_metrics'> {
+  return event.type === 'session_metrics';
+}
+
+/**
+ * Type guard to check if an event is an activity pattern event.
+ */
+export function isActivityPatternEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'activity_pattern'> {
+  return event.type === 'activity_pattern';
+}
+
+/**
+ * Type guard to check if an event is a model distribution event.
+ */
+export function isModelDistributionEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'model_distribution'> {
+  return event.type === 'model_distribution';
+}
+
+/**
+ * Type guard to check if an event is a todo progress event.
+ */
+export function isTodoProgressEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'todo_progress'> {
+  return event.type === 'todo_progress';
+}
+
+/**
+ * Type guard to check if an event is a file change event.
+ */
+export function isFileChangeEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'file_change'> {
+  return event.type === 'file_change';
+}
+
+/**
+ * Type guard to check if an event is a project activity event.
+ */
+export function isProjectActivityEvent(
+  event: VibeteaEvent
+): event is VibeteaEvent<'project_activity'> {
+  return event.type === 'project_activity';
+}
+
+/**
  * Valid event type values for runtime validation.
  */
 const VALID_EVENT_TYPES = [
@@ -235,6 +448,15 @@ const VALID_EVENT_TYPES = [
   'agent',
   'summary',
   'error',
+  'agent_spawn',
+  'skill_invocation',
+  'token_usage',
+  'session_metrics',
+  'activity_pattern',
+  'model_distribution',
+  'todo_progress',
+  'file_change',
+  'project_activity',
 ] as const;
 
 /**
