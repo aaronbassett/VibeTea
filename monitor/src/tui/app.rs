@@ -94,17 +94,206 @@ pub enum Screen {
     Dashboard,
 }
 
+/// Form field that can receive focus in the setup screen.
+///
+/// The setup form has three focusable fields that the user can navigate between
+/// using Tab/Shift+Tab or arrow keys. The focus state determines which field
+/// receives keyboard input and is visually highlighted.
+///
+/// # Field Order
+///
+/// The natural tab order is:
+/// 1. [`SetupField::SessionName`] - Session name text input
+/// 2. [`SetupField::KeyOption`] - Key generation option selector
+/// 3. [`SetupField::Submit`] - Submit button
+///
+/// # Default
+///
+/// The default focus is [`SetupField::SessionName`], as this is the first
+/// interactive element users encounter in the form.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::SetupField;
+///
+/// let field = SetupField::default();
+/// assert_eq!(field, SetupField::SessionName);
+///
+/// // All fields are distinct
+/// assert_ne!(SetupField::SessionName, SetupField::KeyOption);
+/// assert_ne!(SetupField::KeyOption, SetupField::Submit);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SetupField {
+    /// Session name text input field.
+    ///
+    /// When focused, keyboard input is captured as text for the session name.
+    /// This is the first field in tab order and the default focus.
+    #[default]
+    SessionName,
+
+    /// Key generation option selector.
+    ///
+    /// When focused, arrow keys or space toggle between key options.
+    /// This is the second field in tab order.
+    KeyOption,
+
+    /// Submit button.
+    ///
+    /// When focused, Enter or space activates the form submission.
+    /// This is the last field in tab order.
+    Submit,
+}
+
+/// Key generation option for the setup form.
+///
+/// Determines whether to use existing keys from `~/.vibetea` or generate a new
+/// keypair for this session. The default behavior follows FR-004: if existing
+/// keys are detected, default to [`KeyOption::UseExisting`]; otherwise default
+/// to [`KeyOption::GenerateNew`].
+///
+/// # Toggle Behavior
+///
+/// The [`KeyOption::toggle()`] method allows cycling between options, which is
+/// useful for keyboard-based selection in the TUI.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::KeyOption;
+///
+/// // Default is GenerateNew
+/// let option = KeyOption::default();
+/// assert_eq!(option, KeyOption::GenerateNew);
+///
+/// // Toggle switches between options
+/// let toggled = option.toggle();
+/// assert_eq!(toggled, KeyOption::UseExisting);
+///
+/// // Toggle again returns to original
+/// let toggled_again = toggled.toggle();
+/// assert_eq!(toggled_again, KeyOption::GenerateNew);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyOption {
+    /// Use existing keys from `~/.vibetea`.
+    ///
+    /// This option is available when the monitor detects existing key files
+    /// in the VibeTea configuration directory. Using existing keys maintains
+    /// session continuity and avoids unnecessary key regeneration.
+    UseExisting,
+
+    /// Generate a new keypair.
+    ///
+    /// Creates a fresh Ed25519 keypair for this session. This is the default
+    /// option when no existing keys are found (FR-004).
+    #[default]
+    GenerateNew,
+}
+
+impl KeyOption {
+    /// Toggles between key options.
+    ///
+    /// Switches [`KeyOption::UseExisting`] to [`KeyOption::GenerateNew`] and
+    /// vice versa. This is useful for keyboard-based selection where users
+    /// press space or arrow keys to change the option.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::KeyOption;
+    ///
+    /// let option = KeyOption::GenerateNew;
+    /// assert_eq!(option.toggle(), KeyOption::UseExisting);
+    ///
+    /// let option = KeyOption::UseExisting;
+    /// assert_eq!(option.toggle(), KeyOption::GenerateNew);
+    /// ```
+    #[must_use]
+    pub fn toggle(self) -> Self {
+        match self {
+            KeyOption::UseExisting => KeyOption::GenerateNew,
+            KeyOption::GenerateNew => KeyOption::UseExisting,
+        }
+    }
+}
+
 /// State for the setup form screen.
 ///
-/// Contains form field values and validation state for the configuration form.
+/// Contains form field values, validation state, and focus tracking for the
+/// initial configuration form. This form collects the session name and key
+/// generation preference before transitioning to the dashboard.
 ///
-/// # Note
+/// # Form Fields
 ///
-/// This is a placeholder type. The full implementation will be added in a later
-/// task with fields for server URL, session path, form focus state, and validation.
+/// - **Session Name**: Unique identifier for this monitoring session (FR-003).
+///   Defaults to the system hostname. Limited to 64 characters, alphanumeric
+///   plus `-` and `_` only (FR-026).
+/// - **Key Option**: Whether to use existing keys or generate new ones (FR-004).
+///   Defaults to "Use existing" if keys are found, otherwise "Generate new".
+///
+/// # Validation
+///
+/// The `session_name_error` field contains any validation error message for the
+/// session name. Validation is performed on input and before form submission.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::{SetupFormState, SetupField, KeyOption};
+///
+/// // Create default state
+/// let state = SetupFormState::default();
+/// assert!(state.session_name.is_empty());
+/// assert_eq!(state.focused_field, SetupField::SessionName);
+/// assert_eq!(state.key_option, KeyOption::GenerateNew);
+///
+/// // Create with specific values
+/// let state = SetupFormState {
+///     session_name: "my-session".to_string(),
+///     session_name_error: None,
+///     key_option: KeyOption::UseExisting,
+///     focused_field: SetupField::Submit,
+///     existing_keys_found: true,
+/// };
+/// assert_eq!(state.session_name, "my-session");
+/// assert!(state.existing_keys_found);
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct SetupFormState {
-    // Placeholder - fields will be added in future tasks
+    /// Current session name input value.
+    ///
+    /// Defaults to empty string initially; should be populated with hostname
+    /// during initialization (FR-003). Limited to 64 characters maximum,
+    /// containing only alphanumeric characters, hyphens, and underscores (FR-026).
+    pub session_name: String,
+
+    /// Validation error message for the session name, if any.
+    ///
+    /// Set when the session name fails validation (e.g., contains invalid
+    /// characters, exceeds 64 characters, or is empty). `None` indicates
+    /// the current value is valid or hasn't been validated yet.
+    pub session_name_error: Option<String>,
+
+    /// Selected key generation option.
+    ///
+    /// Determines whether to use existing keys from `~/.vibetea` or generate
+    /// a new keypair. Per FR-004, this defaults to [`KeyOption::UseExisting`]
+    /// if existing keys are detected, otherwise [`KeyOption::GenerateNew`].
+    pub key_option: KeyOption,
+
+    /// Currently focused form field.
+    ///
+    /// Determines which field receives keyboard input and is visually
+    /// highlighted. Defaults to [`SetupField::SessionName`].
+    pub focused_field: SetupField,
+
+    /// Whether existing keys were detected in `~/.vibetea`.
+    ///
+    /// Used to determine the default value for `key_option` (FR-004) and
+    /// whether to show the "Use existing" option as available.
+    pub existing_keys_found: bool,
 }
 
 /// State for the dashboard screen.
@@ -1407,22 +1596,8 @@ mod tests {
     }
 
     // =============================================================================
-    // Placeholder Type Tests
+    // DashboardState Placeholder Tests
     // =============================================================================
-
-    #[test]
-    fn setup_form_state_default() {
-        let state = SetupFormState::default();
-        // Just ensure it can be created with default
-        let _ = format!("{:?}", state);
-    }
-
-    #[test]
-    fn setup_form_state_is_clone() {
-        let state = SetupFormState::default();
-        let cloned = state.clone();
-        let _ = format!("{:?}", cloned);
-    }
 
     #[test]
     fn dashboard_state_default() {
@@ -1810,5 +1985,266 @@ mod tests {
 
         state.screen = Screen::Setup;
         assert!(state.is_setup());
+    }
+
+    // =============================================================================
+    // SetupField Tests (T053)
+    // =============================================================================
+
+    #[test]
+    fn setup_field_default_is_session_name() {
+        let field = SetupField::default();
+        assert_eq!(field, SetupField::SessionName);
+    }
+
+    #[test]
+    fn setup_field_variants_are_distinct() {
+        assert_ne!(SetupField::SessionName, SetupField::KeyOption);
+        assert_ne!(SetupField::KeyOption, SetupField::Submit);
+        assert_ne!(SetupField::SessionName, SetupField::Submit);
+    }
+
+    #[test]
+    fn setup_field_is_copy() {
+        let field = SetupField::KeyOption;
+        let copied = field;
+        assert_eq!(field, copied); // Both accessible because SetupField is Copy
+    }
+
+    #[test]
+    fn setup_field_is_clone() {
+        let field = SetupField::Submit;
+        let cloned = field.clone();
+        assert_eq!(field, cloned);
+    }
+
+    #[test]
+    fn setup_field_is_debug() {
+        let session_name = SetupField::SessionName;
+        let key_option = SetupField::KeyOption;
+        let submit = SetupField::Submit;
+
+        let debug1 = format!("{:?}", session_name);
+        let debug2 = format!("{:?}", key_option);
+        let debug3 = format!("{:?}", submit);
+
+        assert!(debug1.contains("SessionName"));
+        assert!(debug2.contains("KeyOption"));
+        assert!(debug3.contains("Submit"));
+    }
+
+    #[test]
+    fn setup_field_is_eq() {
+        let field1 = SetupField::SessionName;
+        let field2 = SetupField::SessionName;
+        let field3 = SetupField::KeyOption;
+
+        assert_eq!(field1, field2);
+        assert_ne!(field1, field3);
+    }
+
+    // =============================================================================
+    // KeyOption Tests (T054)
+    // =============================================================================
+
+    #[test]
+    fn key_option_default_is_generate_new() {
+        let option = KeyOption::default();
+        assert_eq!(option, KeyOption::GenerateNew);
+    }
+
+    #[test]
+    fn key_option_variants_are_distinct() {
+        assert_ne!(KeyOption::UseExisting, KeyOption::GenerateNew);
+    }
+
+    #[test]
+    fn key_option_toggle_from_generate_new_to_use_existing() {
+        let option = KeyOption::GenerateNew;
+        let toggled = option.toggle();
+        assert_eq!(toggled, KeyOption::UseExisting);
+    }
+
+    #[test]
+    fn key_option_toggle_from_use_existing_to_generate_new() {
+        let option = KeyOption::UseExisting;
+        let toggled = option.toggle();
+        assert_eq!(toggled, KeyOption::GenerateNew);
+    }
+
+    #[test]
+    fn key_option_toggle_is_reversible() {
+        let original = KeyOption::GenerateNew;
+        let toggled = original.toggle().toggle();
+        assert_eq!(toggled, original);
+
+        let original = KeyOption::UseExisting;
+        let toggled = original.toggle().toggle();
+        assert_eq!(toggled, original);
+    }
+
+    #[test]
+    fn key_option_is_copy() {
+        let option = KeyOption::UseExisting;
+        let copied = option;
+        assert_eq!(option, copied); // Both accessible because KeyOption is Copy
+    }
+
+    #[test]
+    fn key_option_is_clone() {
+        let option = KeyOption::GenerateNew;
+        let cloned = option.clone();
+        assert_eq!(option, cloned);
+    }
+
+    #[test]
+    fn key_option_is_debug() {
+        let use_existing = KeyOption::UseExisting;
+        let generate_new = KeyOption::GenerateNew;
+
+        let debug1 = format!("{:?}", use_existing);
+        let debug2 = format!("{:?}", generate_new);
+
+        assert!(debug1.contains("UseExisting"));
+        assert!(debug2.contains("GenerateNew"));
+    }
+
+    #[test]
+    fn key_option_is_eq() {
+        let option1 = KeyOption::UseExisting;
+        let option2 = KeyOption::UseExisting;
+        let option3 = KeyOption::GenerateNew;
+
+        assert_eq!(option1, option2);
+        assert_ne!(option1, option3);
+    }
+
+    // =============================================================================
+    // SetupFormState Tests (T052)
+    // =============================================================================
+
+    #[test]
+    fn setup_form_state_default_has_empty_session_name() {
+        let state = SetupFormState::default();
+        assert!(state.session_name.is_empty());
+    }
+
+    #[test]
+    fn setup_form_state_default_has_no_error() {
+        let state = SetupFormState::default();
+        assert!(state.session_name_error.is_none());
+    }
+
+    #[test]
+    fn setup_form_state_default_key_option_is_generate_new() {
+        let state = SetupFormState::default();
+        assert_eq!(state.key_option, KeyOption::GenerateNew);
+    }
+
+    #[test]
+    fn setup_form_state_default_focused_field_is_session_name() {
+        let state = SetupFormState::default();
+        assert_eq!(state.focused_field, SetupField::SessionName);
+    }
+
+    #[test]
+    fn setup_form_state_default_existing_keys_found_is_false() {
+        let state = SetupFormState::default();
+        assert!(!state.existing_keys_found);
+    }
+
+    #[test]
+    fn setup_form_state_can_be_constructed_with_values() {
+        let state = SetupFormState {
+            session_name: "test-session".to_string(),
+            session_name_error: Some("Invalid character".to_string()),
+            key_option: KeyOption::UseExisting,
+            focused_field: SetupField::Submit,
+            existing_keys_found: true,
+        };
+
+        assert_eq!(state.session_name, "test-session");
+        assert_eq!(
+            state.session_name_error,
+            Some("Invalid character".to_string())
+        );
+        assert_eq!(state.key_option, KeyOption::UseExisting);
+        assert_eq!(state.focused_field, SetupField::Submit);
+        assert!(state.existing_keys_found);
+    }
+
+    #[test]
+    fn setup_form_state_is_clone() {
+        let state = SetupFormState {
+            session_name: "my-session".to_string(),
+            session_name_error: None,
+            key_option: KeyOption::GenerateNew,
+            focused_field: SetupField::KeyOption,
+            existing_keys_found: false,
+        };
+
+        let cloned = state.clone();
+        assert_eq!(cloned.session_name, state.session_name);
+        assert_eq!(cloned.session_name_error, state.session_name_error);
+        assert_eq!(cloned.key_option, state.key_option);
+        assert_eq!(cloned.focused_field, state.focused_field);
+        assert_eq!(cloned.existing_keys_found, state.existing_keys_found);
+    }
+
+    #[test]
+    fn setup_form_state_is_debug() {
+        let state = SetupFormState::default();
+        let debug_str = format!("{:?}", state);
+
+        assert!(debug_str.contains("SetupFormState"));
+        assert!(debug_str.contains("session_name"));
+        assert!(debug_str.contains("key_option"));
+        assert!(debug_str.contains("focused_field"));
+        assert!(debug_str.contains("existing_keys_found"));
+    }
+
+    #[test]
+    fn setup_form_state_session_name_can_be_modified() {
+        let mut state = SetupFormState::default();
+        assert!(state.session_name.is_empty());
+
+        state.session_name = "modified-session".to_string();
+        assert_eq!(state.session_name, "modified-session");
+    }
+
+    #[test]
+    fn setup_form_state_error_can_be_set_and_cleared() {
+        let mut state = SetupFormState::default();
+        assert!(state.session_name_error.is_none());
+
+        state.session_name_error = Some("Error message".to_string());
+        assert_eq!(state.session_name_error, Some("Error message".to_string()));
+
+        state.session_name_error = None;
+        assert!(state.session_name_error.is_none());
+    }
+
+    #[test]
+    fn setup_form_state_key_option_can_be_toggled() {
+        let mut state = SetupFormState::default();
+        assert_eq!(state.key_option, KeyOption::GenerateNew);
+
+        state.key_option = state.key_option.toggle();
+        assert_eq!(state.key_option, KeyOption::UseExisting);
+
+        state.key_option = state.key_option.toggle();
+        assert_eq!(state.key_option, KeyOption::GenerateNew);
+    }
+
+    #[test]
+    fn setup_form_state_focused_field_can_be_changed() {
+        let mut state = SetupFormState::default();
+        assert_eq!(state.focused_field, SetupField::SessionName);
+
+        state.focused_field = SetupField::KeyOption;
+        assert_eq!(state.focused_field, SetupField::KeyOption);
+
+        state.focused_field = SetupField::Submit;
+        assert_eq!(state.focused_field, SetupField::Submit);
     }
 }

@@ -119,12 +119,12 @@
 - [x] T048 [GIT] Verify working tree is clean before starting Phase 3
 - [x] T049 [GIT] Pull and rebase on origin/main if needed
 - [x] T050 [US1] Create retro/P3.md for this phase
-- [ ] T051 [GIT] Commit: initialize phase 3 retro
+- [x] T051 [GIT] Commit: initialize phase 3 retro
 
 ### Setup Form State
-- [ ] T052 [P] [US1] Implement SetupFormState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T053 [P] [US1] Implement SetupField enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T054 [P] [US1] Implement KeyOption enum with toggle() method in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T052 [P] [US1] Implement SetupFormState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T053 [P] [US1] Implement SetupField enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T054 [P] [US1] Implement KeyOption enum with toggle() method in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T055 [GIT] Commit: add setup form state types
 
 ### Setup Form Widget
