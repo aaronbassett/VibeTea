@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 2 Enhancement - KeySource tracking and public key fingerprinting for crypto module
+**Status**: Phase 3 Enhancement - Zeroize memory safety, environment variable key loading, and key export
 **Last Updated**: 2026-02-03
 
 ## Languages & Runtimes
@@ -37,6 +37,7 @@
 | directories        | 6.0     | Standard directory paths | Monitor |
 | gethostname        | 1.0     | System hostname retrieval | Monitor |
 | subtle             | 2.6     | Constant-time comparison for cryptography | Server (auth) |
+| zeroize            | 1.8     | Secure memory wiping for cryptographic material | Monitor (Phase 3) |
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
 | clap               | 4.5     | CLI argument parsing with derive macros | Monitor |
@@ -176,7 +177,7 @@
 - `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction)
 - `watcher.rs` - File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
 - `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
-- `crypto.rs` - **Phase 6**: Ed25519 keypair generation, loading, saving, and event signing
+- `crypto.rs` - **Phase 3-6**: Ed25519 keypair generation, loading, saving, and event signing with memory safety
 - `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
 - `main.rs` - **Phase 6**: CLI entry point with init and run commands
 - `lib.rs` - Public interface
@@ -201,6 +202,47 @@
   - Always 8 characters long, prefix of full public key base64
 - **Enhanced logging**: Can now report KeySource at startup (INFO level)
 - **Backward compatible**: KeySource is for tracking only, doesn't affect signing/verification
+
+## Phase 3 Enhancements
+
+**Memory Safety & Key Loading Improvements** (`monitor/src/crypto.rs`):
+- **zeroize crate integration** (v1.8):
+  - Securely wipes sensitive memory (seed bytes, decoded buffers) after use
+  - Applied in key generation: seed zeroized after SigningKey construction
+  - Applied in load_from_env(): decoded buffer zeroized on both success and error paths
+  - Applied in load_with_fallback(): decoded buffer zeroized on error paths
+  - Prevents sensitive key material from remaining in memory dumps
+  - Complies with FR-020: Zero intermediate key material after key operations
+
+- **load_from_env() method**:
+  - Loads Ed25519 private key from `VIBETEA_PRIVATE_KEY` environment variable
+  - Expects base64-encoded 32-byte seed (RFC 4648 standard)
+  - Trims whitespace (including newlines) before decoding
+  - Returns tuple: (Crypto instance, KeySource::EnvironmentVariable)
+  - Validates decoded length is exactly 32 bytes
+  - Error on missing/empty/invalid base64/wrong length
+  - Uses zeroize on both success and error paths
+
+- **load_with_fallback() method**:
+  - Implements key precedence: environment variable first, then file
+  - If `VIBETEA_PRIVATE_KEY` is set, loads from it with NO fallback on error
+  - If env var not set, loads from `{dir}/key.priv` file
+  - Returns tuple: (Crypto instance, KeySource indicating source)
+  - Enables flexible key management without code changes
+  - Error handling: env var errors are terminal (no fallback)
+
+- **seed_base64() method**:
+  - Exports private key as base64-encoded string
+  - Inverse of load_from_env() for key migration workflows
+  - Suitable for storing in `VIBETEA_PRIVATE_KEY` environment variable
+  - Marked sensitive: handle with care, avoid logging
+  - Used for user-friendly key export workflows
+
+- **CryptoError::EnvVar variant**:
+  - New error variant for environment variable issues
+  - Returned when `VIBETEA_PRIVATE_KEY` is missing or empty
+  - Distinct from file-based key loading errors
+  - Enables precise error handling and logging
 
 ## Phase 4 Additions
 

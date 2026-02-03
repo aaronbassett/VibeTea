@@ -207,6 +207,73 @@ Claude Code → Monitor → Server → Client:
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
 | **Crypto Keys** | Loaded once at startup | KeySource tracked for logging, indicates origin (env var or file) |
 
+## Cryptographic Key Management
+
+### Key Loading Strategy
+
+The Monitor implements a flexible key loading mechanism with precedence rules:
+
+1. **Environment Variable (`VIBETEA_PRIVATE_KEY`)**
+   - Takes absolute precedence when set
+   - Must contain base64-encoded 32-byte Ed25519 seed (RFC 4648 standard base64)
+   - Whitespace trimmed before decoding (handles newlines, CRLF, spaces)
+   - Used via `Crypto::load_from_env()` for direct loading
+   - Used via `Crypto::load_with_fallback()` as primary source (no fallback on error)
+
+2. **File-based Key (`~/.vibetea/key.priv`)**
+   - Used as fallback when env var not set
+   - Contains raw 32-byte seed (binary format)
+   - Loaded via `Crypto::load()` or `Crypto::load_with_fallback()`
+   - File permissions enforced: `0600` (owner read/write only)
+
+3. **Key Precedence Rules**
+   - If `VIBETEA_PRIVATE_KEY` is set: use it (even if file exists and file would error)
+   - If `VIBETEA_PRIVATE_KEY` is set but invalid: error immediately (no fallback to file)
+   - If `VIBETEA_PRIVATE_KEY` not set: use file at `VIBETEA_KEY_PATH/key.priv`
+
+4. **Runtime Behavior in `run_monitor()`**
+   - Calls `Crypto::load_with_fallback(&config.key_path)`
+   - Returns tuple `(Crypto, KeySource)` indicating origin
+   - Logs key fingerprint and source at INFO level
+   - Logs warning if file key exists but env var takes precedence
+
+### Memory Safety & Zeroization
+
+The crypto module implements memory-safe key handling:
+
+- **Intermediate Buffers**: All decoded/processed key material is zeroed after use via `zeroize` crate
+- **Seed Array Zeroization**: `seed: [u8; SEED_LENGTH]` zeroed immediately after creating `SigningKey`
+- **Error Path Safety**: Decoded buffers zeroed even on error paths (e.g., invalid length)
+- **Key Derivation**: Signing key created from seed, then seed immediately zeroed
+- **Comment Tags**: All zeroization points marked with FR-020 (security feature reference)
+
+### Key Exposure Logging
+
+The Monitor logs key origin at startup to help users verify key loading:
+
+```rust
+// When loaded from environment variable
+info!(
+    source = "environment",
+    fingerprint = %crypto.public_key_fingerprint(),
+    "Cryptographic key loaded"
+);
+
+// When loaded from file
+info!(
+    source = "file",
+    path = %path.display(),
+    fingerprint = %crypto.public_key_fingerprint(),
+    "Cryptographic key loaded"
+);
+
+// Warning if both sources exist
+info!(
+    ignored_path = %config.key_path.display(),
+    "File key exists but VIBETEA_PRIVATE_KEY takes precedence"
+);
+```
+
 ## Cross-Cutting Concerns
 
 | Concern | Implementation | Location |
@@ -217,7 +284,7 @@ Claude Code → Monitor → Server → Client:
 | **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
-| **Key Management** | Ed25519 key generation, storage, signing | `monitor/src/crypto.rs` (with KeySource tracking) |
+| **Key Management** | Ed25519 key generation, storage, signing | `monitor/src/crypto.rs` (with KeySource tracking and memory zeroing) |
 
 ## Design Decisions
 
@@ -248,6 +315,14 @@ Claude Code → Monitor → Server → Client:
 - **Connection persistence**: Single connection replaces request/response overhead
 - **Native browser support**: No additional libraries needed for basic connectivity
 - **Standard protocol**: Works with existing proxies and load balancers
+
+### Why Environment Variable Precedence?
+
+- **Container-friendly**: Secrets in env vars are standard practice for containerized apps
+- **No file permissions required**: Works in restricted environments (CI, serverless)
+- **Emergency override**: Can temporarily use different key without file system changes
+- **Key rotation support**: Switch keys by changing env var without file I/O
+- **Explicit precedence rules**: Clear error handling (env var errors don't silently fallback)
 
 ---
 

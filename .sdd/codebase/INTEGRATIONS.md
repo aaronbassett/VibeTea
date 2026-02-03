@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 2 Enhancement - KeySource tracking and public key fingerprinting for crypto module
+**Status**: Phase 3 Enhancement - Zeroize memory safety, environment variable key loading, and key export
 **Last Updated**: 2026-02-03
 
 ## Summary
@@ -205,6 +205,56 @@ Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
 - Existing code continues to work without modification
 - New features are opt-in for enhanced observability
 
+### Phase 3: Memory Safety & Environment Variable Key Loading
+
+**Module Location**: `monitor/src/crypto.rs` (438+ lines)
+
+**zeroize Crate Integration** (v1.8):
+- Securely wipes sensitive memory (seed bytes, decoded buffers) after use
+- Applied in key generation: seed zeroized after SigningKey construction
+- Applied in load_from_env(): decoded buffer zeroized on both success and error paths
+- Applied in load_with_fallback(): decoded buffer zeroized on error paths
+- Prevents sensitive key material from remaining in memory dumps
+- Complies with FR-020: Zero intermediate key material after key operations
+
+**load_from_env() Method** (Phase 3 Addition):
+- Loads Ed25519 private key from `VIBETEA_PRIVATE_KEY` environment variable
+- Expects base64-encoded 32-byte seed (RFC 4648 standard)
+- Trims whitespace (including newlines) before decoding
+- Returns tuple: (Crypto instance, KeySource::EnvironmentVariable)
+- Validates decoded length is exactly 32 bytes
+- Error on missing/empty/invalid base64/wrong length
+- Uses zeroize on both success and error paths
+- Enables flexible key management without modifying code
+- Example usage:
+  ```bash
+  export VIBETEA_PRIVATE_KEY=$(vibetea-monitor seed-export)
+  # Monitor loads from env var on next run
+  ```
+
+**load_with_fallback() Method** (Phase 3 Addition):
+- Implements key precedence: environment variable first, then file
+- If `VIBETEA_PRIVATE_KEY` is set, loads from it with NO fallback on error
+- If env var not set, loads from `{dir}/key.priv` file
+- Returns tuple: (Crypto instance, KeySource indicating source)
+- Enables flexible key management without code changes
+- Error handling: env var errors are terminal (no fallback)
+- Useful for deployment workflows with different key sources
+
+**seed_base64() Method** (Phase 3 Addition):
+- Exports private key as base64-encoded string
+- Inverse of load_from_env() for key migration workflows
+- Suitable for storing in `VIBETEA_PRIVATE_KEY` environment variable
+- Marked sensitive: handle with care, avoid logging
+- Used for user-friendly key export workflows
+- Example: `vibetea-monitor export-seed` displays exportable key format
+
+**CryptoError::EnvVar Variant** (Phase 3 Addition):
+- New error variant for environment variable issues
+- Returned when `VIBETEA_PRIVATE_KEY` is missing or empty
+- Distinct from file-based key loading errors
+- Enables precise error handling and logging
+
 ### Phase 6: Monitor Cryptographic Operations
 
 **Module Location**: `monitor/src/crypto.rs` (438 lines)
@@ -249,12 +299,23 @@ Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
 - `InvalidKey` - Seed not 32 bytes or malformed
 - `Base64` - Public key decoding error
 - `KeyExists` - Files already present (can be overwritten)
+- `EnvVar` - Environment variable missing or empty (Phase 3)
 
 **File Locations** (configurable):
 - Default key directory: `~/.vibetea/`
 - Override with `VIBETEA_KEY_PATH` environment variable
 - Private key: `{key_dir}/key.priv`
 - Public key: `{key_dir}/key.pub`
+
+**Key Loading Workflow** (Phase 3):
+```
+Priority 1: Check VIBETEA_PRIVATE_KEY env var
+  - If set and valid: Use it
+  - If set but invalid: Error (no fallback)
+Priority 2: Load from {VIBETEA_KEY_PATH}/key.priv
+  - If exists and valid: Use it
+  - If missing or invalid: Error
+```
 
 ### Monitor → Server Authentication
 
@@ -417,7 +478,7 @@ pub struct SenderConfig {
    vibetea-monitor run
    ```
    - Loads configuration from environment variables
-   - Loads cryptographic keys from disk
+   - Loads cryptographic keys from disk or env var (Phase 3)
    - Creates sender with buffering and retry
    - Initializes file watcher (future: Phase 7)
    - Waits for shutdown signal
@@ -456,11 +517,14 @@ pub struct SenderConfig {
 |----------|----------|---------|---------|
 | `VIBETEA_SERVER_URL` | Yes | - | run |
 | `VIBETEA_SOURCE_ID` | No | hostname | run |
+| `VIBETEA_PRIVATE_KEY` | No* | - | run (Phase 3 - loads from env) |
 | `VIBETEA_KEY_PATH` | No | ~/.vibetea | init, run |
 | `VIBETEA_CLAUDE_DIR` | No | ~/.claude | run |
 | `VIBETEA_BUFFER_SIZE` | No | 1000 | run |
 | `VIBETEA_BASENAME_ALLOWLIST` | No | - | run |
 | `RUST_LOG` | No | info | all |
+
+*Either VIBETEA_PRIVATE_KEY (env) or VIBETEA_KEY_PATH/key.priv (file) required
 
 **Logging**:
 - Structured logging via `tracing` crate
@@ -481,6 +545,22 @@ pub struct SenderConfig {
 3. User copies to: `export VIBETEA_PUBLIC_KEYS="...:<public_key>"`
 4. User adds to server configuration
 5. User runs: `vibetea-monitor run`
+
+**Phase 3 Key Loading Workflow**:
+```bash
+# Option 1: Use environment variable (new in Phase 3)
+export VIBETEA_PRIVATE_KEY=$(vibetea-monitor export-seed)
+vibetea-monitor run
+
+# Option 2: Use file (Phase 2)
+vibetea-monitor init
+vibetea-monitor run
+
+# Option 3: Fallback behavior (both checked in order)
+export VIBETEA_PRIVATE_KEY=...  # Checked first
+# If not set, falls back to ~/.vibetea/key.priv
+vibetea-monitor run
+```
 
 ## Client-Side Integrations (Phase 7-10)
 
@@ -1239,6 +1319,7 @@ When `VIBETEA_UNSAFE_NO_AUTH=true`:
 VIBETEA_SERVER_URL=http://localhost:8080         # Server endpoint
 VIBETEA_SOURCE_ID=my-monitor                     # Custom source identifier
 VIBETEA_KEY_PATH=~/.vibetea                      # Directory with private/public keys
+VIBETEA_PRIVATE_KEY=<base64-seed>                # Env var key loading (Phase 3)
 VIBETEA_CLAUDE_DIR=~/.claude                     # Claude Code directory to watch
 VIBETEA_BUFFER_SIZE=1000                         # Event buffer capacity
 VIBETEA_BASENAME_ALLOWLIST=.ts,.tsx,.rs          # Optional file extension filter (Phase 5)
@@ -1253,12 +1334,14 @@ RUST_LOG=debug                                   # Logging level
 - Buffer size parsed as usize, validated for positive integers
 - Allowlist split by comma, whitespace trimmed, empty entries filtered
 
-**Key Management** (Phase 6):
+**Key Management** (Phase 3):
 - `vibetea-monitor init` generates Ed25519 keypair
+- `vibetea-monitor export-seed` exports private key as base64 (Phase 3 feature)
 - Keys stored in ~/.vibetea/ or VIBETEA_KEY_PATH
 - Private key: key.priv (0600 permissions)
 - Public key: key.pub (0644 permissions)
 - Public key must be registered with server via VIBETEA_PUBLIC_KEYS
+- Private key can be loaded from VIBETEA_PRIVATE_KEY env var (Phase 3)
 
 **Privacy Configuration** (Phase 5):
 - `VIBETEA_BASENAME_ALLOWLIST` loads into PrivacyConfig via `from_env()`
@@ -1398,11 +1481,12 @@ server: {
 - Io - File system I/O errors
 - DirectoryNotFound - Watch directory missing or inaccessible
 
-**Crypto Error Types** (`monitor/src/crypto.rs` - Phase 6):
+**Crypto Error Types** (`monitor/src/crypto.rs` - Phase 3):
 - Io - File system errors during key I/O
 - InvalidKey - Key format invalid or wrong size
 - Base64 - Public key base64 decoding error
 - KeyExists - Key files already present (can overwrite)
+- EnvVar - Environment variable missing or empty (Phase 3)
 
 **Sender Error Types** (`monitor/src/sender.rs` - Phase 6):
 - Http - Network/HTTP client error
@@ -1480,6 +1564,7 @@ server: {
 - Phase 5: Privacy pipeline logs filtering decisions and sensitive tool detection
 - Phase 6: Crypto logs key generation, loading, and signature operations
 - Phase 6: Sender logs buffering, retry, rate limit decisions
+- Phase 3: Key loading from environment variable or file with source tracking
 - Warning logged when VIBETEA_UNSAFE_NO_AUTH is enabled
 
 **No External Service Integration** (Phase 5):
@@ -1499,6 +1584,13 @@ server: {
 - Public key permissions: 0644 (owner read/write, others read)
 - Timing attack prevention: `subtle::ConstantTimeEq` for comparison
 
+**Memory Safety** (Phase 3):
+- zeroize crate securely wipes sensitive memory
+- Applied to seed bytes after key generation
+- Applied to decoded buffers in load_from_env()
+- Applied on error paths to prevent data leakage
+- Complies with FR-020 security requirement
+
 **Security Implications**:
 - Private keys must be protected with file permissions
 - Public keys registered on server must match monitor's keys
@@ -1506,6 +1598,7 @@ server: {
 - Constant-time comparison prevents timing attacks on verification
 - Ed25519 prevents signature forgery even if attacker has public key
 - Phase 6: Enables cryptographic proof of event origin
+- Phase 3: Memory safety prevents sensitive key material from lingering in memory
 
 ### Token-Based Client Authentication
 
@@ -1610,11 +1703,14 @@ server: {
 |----------|------|---------|----------|---------|
 | `VIBETEA_SERVER_URL` | string | - | Yes | Server endpoint (e.g., https://vibetea.fly.dev) |
 | `VIBETEA_SOURCE_ID` | string | hostname | No | Monitor identifier |
+| `VIBETEA_PRIVATE_KEY` | string | - | No* | Base64-encoded private key (Phase 3) |
 | `VIBETEA_KEY_PATH` | string | ~/.vibetea | No | Directory with key.priv/key.pub |
 | `VIBETEA_CLAUDE_DIR` | string | ~/.claude | No | Claude Code directory to watch |
 | `VIBETEA_BUFFER_SIZE` | number | 1000 | No | Event buffer capacity |
 | `VIBETEA_BASENAME_ALLOWLIST` | string | - | No | Comma-separated file extensions to watch (Phase 5) |
 | `RUST_LOG` | string | info | No | Logging level (debug, info, warn, error) |
+
+*Either VIBETEA_PRIVATE_KEY (env) or VIBETEA_KEY_PATH/key.priv (file) required
 
 ### Client Environment Variables
 
@@ -1627,22 +1723,29 @@ None required for production (future configuration planned).
 
 ## Phase Changes Summary
 
-### Phase 2: KeySource Tracking and Public Key Fingerprinting
+### Phase 3: Memory Safety & Environment Variable Key Loading
 
 **Crypto Module Enhancements** (`monitor/src/crypto.rs`):
-- **KeySource enum**: Tracks origin of private key (EnvironmentVariable or File path)
-- **public_key_fingerprint()**: Returns first 8 characters of public key for logging/verification
-- **No cryptographic impact**: Changes are for observability and tracking only
-- **Backward compatible**: Existing code continues to work without modification
+- **zeroize crate**: Securely wipes sensitive memory (seed bytes, decoded buffers)
+- **load_from_env()**: Loads Ed25519 private key from VIBETEA_PRIVATE_KEY environment variable
+- **load_with_fallback()**: Tries environment variable first, then file with proper error handling
+- **seed_base64()**: Exports private key as base64 for environment variable storage
+- **CryptoError::EnvVar**: New error variant for environment variable issues
+- **Memory safety**: Prevents sensitive key material from remaining in memory dumps
+- **Backward compatible**: File-based loading continues to work as before
 
 **Use Cases**:
-- Log key source at monitor startup for transparency
-- Display fingerprint for users to verify correct key registration
-- Quick visual identification of keys in logs and documentation
-- No performance or security impact on signing/verification
+- Load keys from environment variables in containerized deployments
+- Export keys for secure storage in secret management systems
+- Flexible key management without code changes
+- Memory-safe handling complies with FR-020 security requirement
 
-**Example Output**:
-```
-INFO: Loaded private key from ~/.vibetea/key.priv
-INFO: Public key fingerprint: dGVzdHB1 (first 8 chars for quick verification)
+**Example Workflow**:
+```bash
+# Export key from monitor
+export EXPORTED_KEY=$(vibetea-monitor export-seed)
+
+# Use in different environment
+export VIBETEA_PRIVATE_KEY=$EXPORTED_KEY
+vibetea-monitor run
 ```

@@ -22,7 +22,26 @@
 | WebSocket authentication | Bearer token (static string) | ?token query parameter |
 | Signing algorithm | Ed25519 (RFC 8032 strict) | Uses `verify_strict()` |
 | Key storage (monitor) | Ed25519 raw seed (32 bytes) | `~/.vibetea/key.priv` (mode 0600) |
-| Public key encoding | Base64 standard | Registered via `VIBETEA_PUBLIC_KEYS` |
+| Public key encoding | Base64 standard (RFC 4648) | Registered via `VIBETEA_PUBLIC_KEYS` |
+| Private key format (env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
+
+### Key Loading Strategy
+
+| Source | Priority | Behavior | Location |
+|--------|----------|----------|----------|
+| Environment variable | First (takes precedence) | `VIBETEA_PRIVATE_KEY` must be valid base64-encoded 32 bytes | `monitor/src/crypto.rs:143` |
+| File fallback | Second | `{VIBETEA_KEY_PATH}/key.priv` (defaults to `~/.vibetea`) | `monitor/src/crypto.rs:206` |
+| Auto-generation | N/A | Can generate new keypair if neither exists | `monitor/src/crypto.rs:108` |
+
+### Key Material Security
+
+| Aspect | Implementation | Location |
+|--------|----------------|----------|
+| Private key seed (32 bytes) | Zeroed after SigningKey creation (zeroize crate) | `monitor/src/crypto.rs:114,169,233,287` |
+| Decoded key buffer | Zeroed on error and success paths | `monitor/src/crypto.rs:157,221` |
+| Environment variable trimming | Whitespace/newlines removed before decoding | `monitor/src/crypto.rs:147` |
+| Key length validation | Exactly 32 bytes required, errors on mismatch | `monitor/src/crypto.rs:155,219,276` |
+| File permissions | Unix mode 0600 (owner read/write only) | `monitor/src/crypto.rs:329-335` |
 
 ### Signature Verification
 
@@ -76,6 +95,8 @@
 | Layer | Method | Implementation |
 |-------|--------|-----------------|
 | Event payload (API) | JSON deserialization | serde with custom Event types |
+| Private key (env var) | Base64 + length validation | Standard RFC 4648 base64, exactly 32 bytes |
+| Private key (file) | File size validation | Exactly 32 bytes required |
 | Headers | String length and format checks | Empty string rejection |
 | Request body | Size limit | 1 MB maximum (DefaultBodyLimit) |
 | Event fields | Type validation | Timestamp, UUID, enum types enforced by serde |
@@ -88,6 +109,7 @@
 | Headers | Whitespace trimming + empty check | `server/src/auth.rs:270-276` |
 | Source ID | Must not be empty | `server/src/config.rs:182-187` |
 | Public key | Must not be empty, must be valid base64 | `server/src/config.rs:189-193` |
+| Private key (env var) | Whitespace trimmed before base64 decode | `monitor/src/crypto.rs:147` |
 
 ## Data Protection
 
@@ -95,9 +117,10 @@
 
 | Data Type | Protection Method | Storage |
 |-----------|-------------------|---------|
-| Private keys (monitor) | Raw 32-byte seed file | `~/.vibetea/key.priv` (mode 0600, owner-only) |
+| Private keys (monitor file) | Raw 32-byte seed | `~/.vibetea/key.priv` (mode 0600, owner-only) |
+| Private keys (monitor env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
 | Public keys (server) | Base64-encoded format | Environment variable `VIBETEA_PUBLIC_KEYS` |
-| Subscriber token | Plain string comparison | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` |
+| Subscriber token | Plain string comparison (constant-time) | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` |
 | Event payload | No encryption at rest | In-memory broadcast channel |
 
 ### Encryption
@@ -115,8 +138,19 @@
 | Generation | Uses OS cryptographically secure RNG (`rand::rng()`) |
 | File permissions | Unix mode 0600 (owner read/write only) |
 | Format | Raw 32-byte seed, not PKCS#8 or other wrapper |
-| Loading | Fails if file size != 32 bytes |
-| Exposure | Monitored via `VIBETEA_PRIVATE_KEY` env var as alternative |
+| File validation | Fails if file size != 32 bytes |
+| Environment variable | Alternative loading via `VIBETEA_PRIVATE_KEY` (base64-encoded) |
+| Memory zeroing | All intermediate buffers zeroed after use (zeroize crate) |
+| Seed array | Explicitly zeroed after SigningKey construction |
+| Error paths | Key material zeroed on decode failures |
+
+### Logging and Secrets
+
+| Practice | Implementation | Location |
+|----------|-----------------|----------|
+| Private key logging | Never logged (no string conversion of seed) | Throughout `monitor/src/crypto.rs` |
+| Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:429` |
+| Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:42` |
 
 ## Rate Limiting
 
@@ -144,6 +178,7 @@
 |----------|--------|---------|----------|
 | Monitor auth | `VIBETEA_SOURCE_ID` | monitor-1 | No (defaults to hostname) |
 | Monitor keys | `VIBETEA_KEY_PATH` | ~/.vibetea | No (defaults) |
+| Monitor private key | `VIBETEA_PRIVATE_KEY` | base64-encoded-32-bytes | No (fallback to file) |
 | Server public keys | `VIBETEA_PUBLIC_KEYS` | source1:base64key,source2:base64key | Yes (unless unsafe_no_auth) |
 | WebSocket token | `VIBETEA_SUBSCRIBER_TOKEN` | secret-token-string | Yes (unless unsafe_no_auth) |
 | Server URL (monitor) | `VIBETEA_SERVER_URL` | https://vibetea.fly.dev | Yes (required) |
@@ -155,15 +190,18 @@
 | Development | `.env` files (gitignored) or export statements |
 | CI/CD | GitHub Secrets or equivalent |
 | Production | Environment variables via container orchestration |
-| Private keys | File-based (~/.vibetea/key.priv with mode 0600) |
+| Private keys (file) | File-based (~/.vibetea/key.priv with mode 0600) |
+| Private keys (env var) | Environment variable (base64-encoded) |
 
 ### Key Provisioning
 
 | Process | Location |
 |---------|----------|
-| Monitor key generation | `monitor/src/crypto.rs:100` - Crypto::generate() |
+| Monitor key generation | `monitor/src/crypto.rs:108` - Crypto::generate() |
+| Environment variable loading | `monitor/src/crypto.rs:143` - Crypto::load_from_env() |
+| File with env fallback | `monitor/src/crypto.rs:206` - Crypto::load_with_fallback() |
 | Server registration | Manual environment variable setup |
-| Public key fingerprint | `monitor/src/crypto.rs:263` - public_key_fingerprint() (8 chars) |
+| Public key fingerprint | `monitor/src/crypto.rs:429` - public_key_fingerprint() (8 chars) |
 
 ## Security Headers
 
@@ -186,6 +224,7 @@
 
 | Event | Logged Data | Level |
 |-------|-------------|-------|
+| Key source identification | Environment variable vs file | info |
 | Authentication failures | source_id, error type | warn/debug |
 | Signature verification failures | source_id, error details | warn |
 | Rate limit exceeded | source_id, retry_after | info |

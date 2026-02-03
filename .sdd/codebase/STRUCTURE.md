@@ -16,13 +16,14 @@ VibeTea/
 │   │   ├── watcher.rs         # File system watcher (inotify/FSEvents/ReadDirectoryChangesW)
 │   │   ├── parser.rs          # Claude Code JSONL parsing
 │   │   ├── privacy.rs         # Event payload sanitization
-│   │   ├── crypto.rs          # Ed25519 keypair generation/management
+│   │   ├── crypto.rs          # Ed25519 keypair generation/management with key loading strategies
 │   │   ├── sender.rs          # HTTP client with retry and buffering
 │   │   ├── types.rs           # Event type definitions
 │   │   └── error.rs           # Error types
 │   ├── tests/
 │   │   ├── privacy_test.rs    # Privacy filtering tests
-│   │   └── sender_recovery_test.rs  # Retry logic tests
+│   │   ├── sender_recovery_test.rs  # Retry logic tests
+│   │   └── env_key_test.rs    # Environment variable key loading tests
 │   └── Cargo.toml
 │
 ├── server/                     # Rust HTTP server (event hub)
@@ -95,10 +96,41 @@ VibeTea/
 | `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` | `FileWatcher`, `WatchEvent` |
 | `parser.rs` | Parse JSONL, extract Session/Activity/Tool events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
-| `crypto.rs` | Ed25519 keypair (generate, load, save, sign, fingerprint) | `Crypto`, `KeySource`, `CryptoError` |
+| `crypto.rs` | Ed25519 keypair with dual loading strategy (env var + file fallback) | `Crypto`, `KeySource`, `CryptoError` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
 | `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType` |
 | `error.rs` | Error types | `MonitorError`, custom errors |
+
+### Crypto Module Details (`monitor/src/crypto.rs`)
+
+The crypto module provides Ed25519 key management with flexible loading strategies:
+
+| Method | Purpose | Returns |
+|--------|---------|---------|
+| `Crypto::generate()` | Generate new Ed25519 keypair using OS RNG | `Crypto` instance |
+| `Crypto::load_from_env()` | Load 32-byte seed from `VIBETEA_PRIVATE_KEY` env var | `(Crypto, KeySource::EnvironmentVariable)` |
+| `Crypto::load_with_fallback(dir)` | Try env var first, fallback to file if not set | `(Crypto, KeySource)` |
+| `Crypto::load(dir)` | Load from file only (`dir/key.priv`) | `Crypto` instance |
+| `Crypto::save(dir)` | Save keypair to files (mode 0600/0644) | `Result<()>` |
+| `Crypto::public_key_base64()` | Get public key as base64 (RFC 4648) | `String` |
+| `Crypto::public_key_fingerprint()` | Get first 8 chars of public key (for logging) | `String` |
+| `Crypto::seed_base64()` | Export seed as base64 (for `VIBETEA_PRIVATE_KEY`) | `String` |
+| `Crypto::sign(message)` | Sign message, return base64 signature | `String` |
+| `Crypto::sign_raw(message)` | Sign message, return raw 64-byte signature | `[u8; 64]` |
+
+**Key Loading Behavior:**
+- `load_with_fallback()` used in `monitor/src/main.rs` at startup (see lines 183-187)
+- Environment variable `VIBETEA_PRIVATE_KEY` contains base64-encoded 32-byte Ed25519 seed
+- Whitespace trimming applied before base64 decoding
+- If env var set but invalid: error immediately (no fallback to file)
+- If env var not set: load from `VIBETEA_KEY_PATH/key.priv` (default `~/.vibetea/key.priv`)
+- Returns `KeySource` enum indicating origin (for logging)
+
+**Memory Safety:**
+- All intermediate key buffers zeroed via `zeroize` crate
+- Seed arrays zeroed immediately after `SigningKey` creation
+- Error paths also zero buffers before returning errors
+- Marked with FR-020 comments for security audit
 
 ### `server/src/` - Server Component
 
@@ -139,7 +171,7 @@ Self-contained CLI with these responsibilities:
 1. **Watch** files via `FileWatcher`
 2. **Parse** JSONL via `SessionParser`
 3. **Filter** events via `PrivacyPipeline`
-4. **Sign** events via `Crypto`
+4. **Sign** events via `Crypto` (with dual-source key loading)
 5. **Send** to server via `Sender`
 
 No cross-dependencies with Server or Client.
@@ -147,6 +179,7 @@ No cross-dependencies with Server or Client.
 ```
 monitor/src/main.rs
 ├── config.rs (load env)
+├── crypto.rs (load keys from env var OR file, track KeySource)
 ├── watcher.rs → sender.rs
 │   ↓
 ├── parser.rs → privacy.rs
@@ -209,6 +242,7 @@ client/src/App.tsx (root)
 |---------------------|--------------|---------|
 | **New Monitor command** | `monitor/src/main.rs` (add to `Command` enum) | `Command::Status` |
 | **New Monitor feature** | `monitor/src/<feature>.rs` (new module) | `monitor/src/compression.rs` |
+| **New key loading method** | `monitor/src/crypto.rs` (add method to `Crypto`) | `Crypto::load_from_stdin()` |
 | **New Server endpoint** | `server/src/routes.rs` (add route handler) | `POST /events/:id/ack` |
 | **New Server middleware** | `server/src/routes.rs` or `server/src/` (new module) | `server/src/middleware.rs` |
 | **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
@@ -227,6 +261,7 @@ client/src/App.tsx (root)
 ```rust
 // In monitor/src/main.rs
 use vibetea_monitor::config::Config;
+use vibetea_monitor::crypto::{Crypto, KeySource};
 use vibetea_monitor::watcher::FileWatcher;
 use vibetea_monitor::sender::Sender;
 use vibetea_monitor::types::Event;
@@ -294,6 +329,7 @@ Files that are auto-generated or should not be manually edited:
 | Function names | `snake_case` | `verify_signature()`, `calculate_backoff()` |
 | Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX` |
 | Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs` |
+| Enum variants | `PascalCase` | `KeySource::EnvironmentVariable`, `KeySource::File` |
 
 ### TypeScript Components and Functions
 
@@ -312,7 +348,7 @@ Files that are auto-generated or should not be manually edited:
 
 ```
 ✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, error
-✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest
+✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, zeroize
 ✗ CANNOT import:  server modules, client code
 ```
 
@@ -320,7 +356,7 @@ Files that are auto-generated or should not be manually edited:
 
 ```
 ✓ CAN import:     types, config, auth, broadcast, rate_limit, error, routes
-✓ CAN import:     std, tokio, axum, serde, ed25519-dalek
+✓ CAN import:     std, tokio, axum, serde, ed25519-dalek, subtle
 ✗ CANNOT import:  monitor modules, client code
 ```
 
@@ -330,6 +366,38 @@ Files that are auto-generated or should not be manually edited:
 ✓ CAN import:     components, hooks, types, utils, React, Zustand, third-party UI libs
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
 ```
+
+## Test Organization
+
+### Monitor Tests
+
+Located in `monitor/tests/` with `serial_test` crate for environment variable safety:
+
+| File | Purpose | Key Pattern |
+|------|---------|-------------|
+| `env_key_test.rs` | Environment variable key loading (FR-001 through FR-028) | `#[test] #[serial]` |
+| `privacy_test.rs` | Privacy filtering validation | — |
+| `sender_recovery_test.rs` | Retry logic and buffering | — |
+
+**Important**: Tests modifying environment variables MUST use `#[serial]` from `serial_test` crate or run with `cargo test --workspace --test-threads=1` to prevent interference.
+
+### Server Tests
+
+Located in `server/tests/`:
+
+| File | Purpose |
+|------|---------|
+| `unsafe_mode_test.rs` | Auth bypass mode validation |
+
+### Client Tests
+
+Located in `client/src/__tests__/`:
+
+| File | Purpose |
+|------|---------|
+| `App.test.tsx` | Integration tests |
+| `events.test.ts` | Event parsing/filtering |
+| `formatting.test.ts` | Utility function tests |
 
 ---
 
