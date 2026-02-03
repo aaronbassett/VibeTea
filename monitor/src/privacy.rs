@@ -356,6 +356,18 @@ impl PrivacyPipeline {
 
             // Error events pass through - category is already sanitized
             EventPayload::Error { .. } => payload,
+
+            // Enhanced tracking events pass through unchanged
+            // These contain session metrics and aggregated data, not sensitive user content
+            EventPayload::AgentSpawn(_) => payload,
+            EventPayload::SkillInvocation(_) => payload,
+            EventPayload::TokenUsage(_) => payload,
+            EventPayload::SessionMetrics(_) => payload,
+            EventPayload::ActivityPattern(_) => payload,
+            EventPayload::ModelDistribution(_) => payload,
+            EventPayload::TodoProgress(_) => payload,
+            EventPayload::FileChange(_) => payload,
+            EventPayload::ProjectActivity(_) => payload,
         }
     }
 
