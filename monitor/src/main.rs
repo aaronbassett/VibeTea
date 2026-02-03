@@ -206,13 +206,10 @@ async fn run_monitor() -> Result<()> {
     let persistence_tx = if let Some(ref persistence_config) = config.persistence {
         // We need to clone the crypto for persistence since Crypto doesn't implement Clone
         // Load a fresh copy from the same path
-        let persistence_crypto = Crypto::load(&config.key_path)
-            .context("Failed to load keys for persistence")?;
+        let persistence_crypto =
+            Crypto::load(&config.key_path).context("Failed to load keys for persistence")?;
 
-        let (manager, tx) = PersistenceManager::new(
-            persistence_config.clone(),
-            persistence_crypto,
-        );
+        let (manager, tx) = PersistenceManager::new(persistence_config.clone(), persistence_crypto);
 
         // Spawn persistence manager as background task
         tokio::spawn(async move {
