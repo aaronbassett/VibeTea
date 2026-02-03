@@ -167,6 +167,21 @@ export interface Session {
   readonly eventCount: number;
 }
 
+/**
+ * Hourly aggregate of events for heatmap visualization.
+ * Returned by the query edge function from get_hourly_aggregates().
+ */
+export interface HourlyAggregate {
+  /** Monitor identifier */
+  readonly source: string;
+  /** Date in YYYY-MM-DD format (UTC) */
+  readonly date: string;
+  /** Hour of day 0-23 (UTC) */
+  readonly hour: number;
+  /** Count of events in this hour */
+  readonly eventCount: number;
+}
+
 // -----------------------------------------------------------------------------
 // Type Guards
 // -----------------------------------------------------------------------------
