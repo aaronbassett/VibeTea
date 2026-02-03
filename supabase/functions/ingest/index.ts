@@ -11,8 +11,7 @@
  * @see specs/001-supabase-persistence/contracts/ingest.yaml
  */
 
-// TODO (T051): Use createClient for database operations
-// import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { verifyIngestAuth, type AuthResult } from "../_shared/auth.ts";
 
 /** Maximum number of events allowed per batch */
@@ -70,6 +69,22 @@ interface ErrorResponse {
 interface IngestResponse {
   readonly inserted: number;
   readonly message: string;
+}
+
+/**
+ * Initialize Supabase client for database access
+ *
+ * @throws Error if SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is not configured
+ */
+function createSupabaseClient(): SupabaseClient {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error("Missing Supabase configuration");
+  }
+
+  return createClient(supabaseUrl, supabaseServiceKey);
 }
 
 /**
@@ -310,15 +325,24 @@ async function handleRequest(request: Request): Promise<Response> {
     validatedEvents.push(validationResult.event);
   }
 
-  // TODO (T051): Insert events into database
-  // - Initialize Supabase client using environment variables
-  // - Call bulk_insert_events database function
-  // - Handle ON CONFLICT DO NOTHING for duplicates
-  // - Return actual inserted count
+  // Initialize Supabase client and insert events into database
+  const client = createSupabaseClient();
 
-  // Placeholder: Return success with event count
-  // This will be replaced with actual DB insertion in T051
-  const insertedCount = validatedEvents.length;
+  // Call bulk_insert_events RPC function
+  // The function handles ON CONFLICT DO NOTHING for duplicates
+  const { data, error: rpcError } = await client.rpc("bulk_insert_events", {
+    events_json: validatedEvents,
+  });
+
+  if (rpcError) {
+    console.error("Database insert error:", rpcError);
+    return errorResponse(500, "internal_error", "Failed to insert events into database");
+  }
+
+  // The RPC function returns a table with one row containing inserted_count
+  const insertedCount = Array.isArray(data) && data.length > 0
+    ? (data[0] as { inserted_count: number }).inserted_count
+    : 0;
 
   return successResponse(insertedCount, validatedEvents.length);
 }
