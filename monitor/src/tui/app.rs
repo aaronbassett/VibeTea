@@ -838,6 +838,48 @@ impl AppState {
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
+
+    /// Completes the setup process and transitions to the dashboard.
+    ///
+    /// This method should be called after the user submits the setup form
+    /// with valid input. It:
+    ///
+    /// 1. Validates the current setup form state
+    /// 2. Transitions the screen from Setup to Dashboard
+    /// 3. Initializes the dashboard state
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` if the transition was successful
+    /// - `Err(String)` if validation fails (error message for the session name field)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let mut state = AppState::new();
+    /// state.setup.session_name = "my-session".to_string();
+    ///
+    /// assert!(state.is_setup());
+    /// state.complete_setup().unwrap();
+    /// assert!(state.is_dashboard());
+    /// ```
+    pub fn complete_setup(&mut self) -> Result<(), String> {
+        // Validate session name using the validation function
+        crate::tui::widgets::validate_session_name(&self.setup.session_name)?;
+
+        // Clear any previous error
+        self.setup.session_name_error = None;
+
+        // Transition to dashboard
+        self.screen = Screen::Dashboard;
+
+        // Initialize dashboard state (will be populated later with actual data)
+        self.dashboard = DashboardState::default();
+
+        Ok(())
+    }
 }
 
 // =============================================================================
@@ -2246,5 +2288,134 @@ mod tests {
 
         state.focused_field = SetupField::Submit;
         assert_eq!(state.focused_field, SetupField::Submit);
+    }
+
+    // =============================================================================
+    // complete_setup() Tests (T066)
+    // =============================================================================
+
+    #[test]
+    fn complete_setup_transitions_to_dashboard() {
+        let mut state = AppState::new();
+        state.setup.session_name = "my-session".to_string();
+
+        assert!(state.is_setup());
+        let result = state.complete_setup();
+        assert!(result.is_ok());
+        assert!(state.is_dashboard());
+    }
+
+    #[test]
+    fn complete_setup_validates_session_name() {
+        let mut state = AppState::new();
+        state.setup.session_name = "valid-session-name".to_string();
+
+        let result = state.complete_setup();
+        assert!(result.is_ok());
+        assert!(state.is_dashboard());
+    }
+
+    #[test]
+    fn complete_setup_rejects_empty_session_name() {
+        let mut state = AppState::new();
+        state.setup.session_name = "".to_string();
+
+        let result = state.complete_setup();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Session name cannot be empty");
+        // Should remain on setup screen
+        assert!(state.is_setup());
+    }
+
+    #[test]
+    fn complete_setup_rejects_invalid_characters() {
+        let mut state = AppState::new();
+        state.setup.session_name = "invalid@name".to_string();
+
+        let result = state.complete_setup();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Session name can only contain letters, numbers, hyphens, and underscores"
+        );
+        // Should remain on setup screen
+        assert!(state.is_setup());
+    }
+
+    #[test]
+    fn complete_setup_clears_error_on_success() {
+        let mut state = AppState::new();
+        state.setup.session_name = "valid-session".to_string();
+        state.setup.session_name_error = Some("Previous error".to_string());
+
+        let result = state.complete_setup();
+        assert!(result.is_ok());
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn complete_setup_preserves_setup_state_on_failure() {
+        let mut state = AppState::new();
+        state.setup.session_name = "invalid name with spaces".to_string();
+        state.setup.key_option = KeyOption::UseExisting;
+        state.setup.focused_field = SetupField::Submit;
+        state.setup.existing_keys_found = true;
+
+        let result = state.complete_setup();
+        assert!(result.is_err());
+
+        // All setup state should be preserved on failure
+        assert!(state.is_setup());
+        assert_eq!(state.setup.session_name, "invalid name with spaces");
+        assert_eq!(state.setup.key_option, KeyOption::UseExisting);
+        assert_eq!(state.setup.focused_field, SetupField::Submit);
+        assert!(state.setup.existing_keys_found);
+    }
+
+    #[test]
+    fn complete_setup_initializes_dashboard_state() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test-session".to_string();
+
+        let result = state.complete_setup();
+        assert!(result.is_ok());
+
+        // Dashboard state should be initialized (currently default)
+        let _ = format!("{:?}", state.dashboard);
+    }
+
+    #[test]
+    fn complete_setup_accepts_hyphens_and_underscores() {
+        let mut state = AppState::new();
+        state.setup.session_name = "my-session_name".to_string();
+
+        let result = state.complete_setup();
+        assert!(result.is_ok());
+        assert!(state.is_dashboard());
+    }
+
+    #[test]
+    fn complete_setup_rejects_whitespace_only() {
+        let mut state = AppState::new();
+        state.setup.session_name = "   ".to_string();
+
+        let result = state.complete_setup();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Session name cannot be empty");
+        assert!(state.is_setup());
+    }
+
+    #[test]
+    fn complete_setup_rejects_too_long_session_name() {
+        let mut state = AppState::new();
+        state.setup.session_name = "a".repeat(65);
+
+        let result = state.complete_setup();
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Session name must be 64 characters or less"
+        );
+        assert!(state.is_setup());
     }
 }
