@@ -153,12 +153,12 @@
 - [x] T070 [US1] Implement hostname detection for default session name in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [x] T071 [GIT] Commit: add hostname default for session name
 - [x] T072 [US1] Auto-detect existing keys and set default key option in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T073 [GIT] Commit: auto-detect existing keys
+- [x] T073 [GIT] Commit: auto-detect existing keys
 
 ### Codebase Mapping and Retro
-- [ ] T074 [US1] Run /sdd:map incremental for Phase 3 changes
-- [ ] T075 [GIT] Commit: update codebase documents for phase 3
-- [ ] T076 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T074 [US1] Run /sdd:map incremental for Phase 3 changes
+- [x] T075 [GIT] Commit: update codebase documents for phase 3
+- [x] T076 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T077 [GIT] Commit: finalize phase 3 retro
 
 ### Phase Completion
