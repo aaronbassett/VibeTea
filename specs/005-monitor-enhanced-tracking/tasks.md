@@ -195,17 +195,17 @@
 - [x] T091 [US3] Create retro/P5.md for this phase
 
 ### Tests for User Story 3
-- [ ] T092 [GIT] Commit: initialize phase 5 retro
-- [ ] T093 [P] [US3] Unit test for history.jsonl parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [ ] T094 [P] [US3] Unit test for shell-like tokenization in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
-- [ ] T094A [P] [US3] Unit test for quoted string handling in shell-like tokenizer (use devs:rust-dev agent)
+- [x] T092 [GIT] Commit: initialize phase 5 retro
+- [x] T093 [P] [US3] Unit test for history.jsonl parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [x] T094 [P] [US3] Unit test for shell-like tokenization in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
+- [x] T094A [P] [US3] Unit test for quoted string handling in shell-like tokenizer (use devs:rust-dev agent)
   - Test: `/commit -m "fix: update docs"` → `commit`
   - Test: `/"my skill" arg1` → `"my skill"`
   - Test: `/sdd:plan` → `sdd:plan`
 - [ ] T095 [GIT] Commit: add skill_tracker tests (including quoted command names)
 
 ### Implementation for User Story 3
-- [ ] T096 [US3] Implement HistoryEntry struct for JSON parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [x] T096 [US3] Implement HistoryEntry struct for JSON parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
 - [ ] T097 [GIT] Commit: add HistoryEntry struct
 - [ ] T098 [US3] Implement skill_tracker module with file watching in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
 - [ ] T099 [GIT] Commit: implement skill_tracker module
