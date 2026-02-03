@@ -15,7 +15,7 @@
 
 import { create } from 'zustand';
 
-import type { Session, VibeteaEvent } from '../types/events';
+import type { HourlyAggregate, Session, VibeteaEvent } from '../types/events';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -29,6 +29,11 @@ export type ConnectionStatus =
   | 'connected'
   | 'disconnected'
   | 'reconnecting';
+
+/**
+ * Status of historic data fetch operation.
+ */
+export type HistoricDataStatus = 'idle' | 'loading' | 'error' | 'success';
 
 /**
  * Time range filter for events.
@@ -61,6 +66,16 @@ export interface EventStore {
   /** Active filters for the event stream */
   readonly filters: EventFilters;
 
+  // Historic data state
+  /** Cached historic aggregates for heatmap visualization */
+  readonly historicData: readonly HourlyAggregate[];
+  /** Status of the historic data fetch operation */
+  readonly historicDataStatus: HistoricDataStatus;
+  /** Timestamp when historic data was last fetched (null if never fetched) */
+  readonly historicDataFetchedAt: number | null;
+  /** Error message if historic data fetch failed (null if no error) */
+  readonly historicDataError: string | null;
+
   /** Add an event to the store (handles FIFO eviction and session updates) */
   readonly addEvent: (event: VibeteaEvent) => void;
   /** Update connection status */
@@ -75,6 +90,12 @@ export interface EventStore {
   readonly setTimeRangeFilter: (timeRange: TimeRangeFilter | null) => void;
   /** Clear all filters */
   readonly clearFilters: () => void;
+
+  // Historic data actions
+  /** Fetch historic aggregate data for the specified number of days */
+  readonly fetchHistoricData: (days: 7 | 30) => Promise<void>;
+  /** Clear historic data and reset to initial state */
+  readonly clearHistoricData: () => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -124,6 +145,12 @@ export const useEventStore = create<EventStore>()((set) => ({
   events: [],
   sessions: new Map<string, Session>(),
   filters: DEFAULT_FILTERS,
+
+  // Historic data initial state
+  historicData: [],
+  historicDataStatus: 'idle',
+  historicDataFetchedAt: null,
+  historicDataError: null,
 
   addEvent: (event: VibeteaEvent) => {
     set((state) => {
@@ -255,6 +282,22 @@ export const useEventStore = create<EventStore>()((set) => ({
   clearFilters: () => {
     set({ filters: DEFAULT_FILTERS });
   },
+
+  // Historic data actions
+  fetchHistoricData: async (_days: 7 | 30): Promise<void> => {
+    // Stub implementation - sets status to 'loading'
+    // Full implementation will be added in T107
+    set({ historicDataStatus: 'loading', historicDataError: null });
+  },
+
+  clearHistoricData: () => {
+    set({
+      historicData: [],
+      historicDataStatus: 'idle',
+      historicDataFetchedAt: null,
+      historicDataError: null,
+    });
+  },
 }));
 
 // -----------------------------------------------------------------------------
@@ -333,4 +376,27 @@ export function selectFilteredEvents(
 
     return true;
   });
+}
+
+/**
+ * Historic data state snapshot for components.
+ */
+export interface HistoricDataSnapshot {
+  readonly data: readonly HourlyAggregate[];
+  readonly status: HistoricDataStatus;
+  readonly fetchedAt: number | null;
+  readonly error: string | null;
+}
+
+/**
+ * Get historic data state as a snapshot object.
+ * Useful for components that need all historic data state together.
+ */
+export function selectHistoricData(state: EventStore): HistoricDataSnapshot {
+  return {
+    data: state.historicData,
+    status: state.historicDataStatus,
+    fetchedAt: state.historicDataFetchedAt,
+    error: state.historicDataError,
+  };
 }
