@@ -404,7 +404,8 @@ function getGlowStyles(intensity: number): React.CSSProperties {
   }
 
   // Normalize intensity to 0-1 range
-  const normalizedIntensity = Math.min(intensity, MAX_GLOW_INTENSITY) / MAX_GLOW_INTENSITY;
+  const normalizedIntensity =
+    Math.min(intensity, MAX_GLOW_INTENSITY) / MAX_GLOW_INTENSITY;
 
   // Box-shadow spread scales from 4px to 12px based on intensity
   const spread = 4 + normalizedIntensity * 8;
@@ -450,9 +451,10 @@ function HeatmapCellComponent({
   // When reduced motion is preferred:
   // - Show static max glow if there's any glow intensity (no decay animation)
   // - Skip the brightness filter animation
-  const effectiveGlowIntensity = prefersReducedMotion && glowIntensity > 0
-    ? MAX_GLOW_INTENSITY
-    : glowIntensity;
+  const effectiveGlowIntensity =
+    prefersReducedMotion && glowIntensity > 0
+      ? MAX_GLOW_INTENSITY
+      : glowIntensity;
 
   // Get glow styles, but skip brightness filter for reduced motion
   const glowStyles = getGlowStyles(effectiveGlowIntensity);
@@ -474,9 +476,7 @@ function HeatmapCellComponent({
     : 'transition-all duration-200';
 
   // Disable scale animation on hover when reduced motion is preferred
-  const hoverClass = prefersReducedMotion
-    ? ''
-    : 'hover:scale-110';
+  const hoverClass = prefersReducedMotion ? '' : 'hover:scale-110';
 
   return (
     <div
@@ -567,7 +567,9 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
 
   // Refs for tracking previous counts and decay timers
   const prevEventCountsRef = useRef<Map<string, number>>(new Map());
-  const decayTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const decayTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map()
+  );
 
   // Compute event counts by hour bucket
   const eventCounts = useMemo(() => countEventsByHour(events), [events]);
@@ -638,7 +640,10 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
         for (const key of cellsWithNewEvents) {
           // Increase intensity (up to MAX_GLOW_INTENSITY)
           const currentIntensity = newIntensities.get(key) ?? 0;
-          const newIntensity = Math.min(currentIntensity + 1, MAX_GLOW_INTENSITY);
+          const newIntensity = Math.min(
+            currentIntensity + 1,
+            MAX_GLOW_INTENSITY
+          );
           newIntensities.set(key, newIntensity);
           newLastEventTimes.set(key, now);
 
