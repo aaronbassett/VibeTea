@@ -1112,4 +1112,106 @@ mod tests {
         let err = WatcherError::ChannelClosed;
         assert_eq!(err.to_string(), "failed to send event: channel closed");
     }
+
+    #[test]
+    fn test_pending_paths_insert_and_drain() {
+        let pending = PendingPaths::new();
+        assert!(!pending.has_pending());
+
+        // Insert paths
+        pending.insert(PathBuf::from("/test/file1.jsonl"));
+        pending.insert(PathBuf::from("/test/file2.jsonl"));
+        assert!(pending.has_pending());
+
+        // Duplicate insert should not add another entry
+        pending.insert(PathBuf::from("/test/file1.jsonl"));
+
+        // Drain should return all paths
+        let paths = pending.drain();
+        assert_eq!(paths.len(), 2);
+        assert!(!pending.has_pending());
+
+        // Drain again should be empty
+        let paths = pending.drain();
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn test_pending_paths_coalesces_duplicates() {
+        let pending = PendingPaths::new();
+
+        // Insert same path multiple times (simulating rapid events)
+        for _ in 0..10 {
+            pending.insert(PathBuf::from("/test/rapid.jsonl"));
+        }
+
+        // Should only have one entry
+        let paths = pending.drain();
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], PathBuf::from("/test/rapid.jsonl"));
+    }
+
+    /// Test that FileRemoved events are properly coalesced when pending.
+    ///
+    /// This test verifies the fix from commit c96a2b2: FileRemoved events
+    /// should be stored in pending_removals when the channel is full, then
+    /// drained and processed to ensure session cleanup happens correctly.
+    #[tokio::test]
+    async fn test_file_removed_coalescing_under_pressure() {
+        use std::sync::Arc;
+
+        // Test the PendingPaths behavior directly since we can't easily
+        // saturate the real channel in a unit test
+        let pending_removals = Arc::new(PendingPaths::new());
+
+        // Simulate multiple removal events for the same file (as would happen
+        // under channel pressure)
+        let removal_path = PathBuf::from("/test/session.jsonl");
+        for _ in 0..5 {
+            pending_removals.insert(removal_path.clone());
+        }
+
+        // Verify coalescing: only one path in pending
+        assert!(pending_removals.has_pending());
+        let paths = pending_removals.drain();
+        assert_eq!(paths.len(), 1, "Multiple removals should coalesce to one");
+        assert_eq!(paths[0], removal_path);
+
+        // Verify empty after drain
+        assert!(!pending_removals.has_pending());
+    }
+
+    /// Test that drain ordering preserves path uniqueness across removals.
+    #[tokio::test]
+    async fn test_file_removed_drain_processes_all_unique_paths() {
+        let pending_removals = Arc::new(PendingPaths::new());
+
+        // Insert multiple different paths
+        let paths_to_remove = vec![
+            PathBuf::from("/test/session1.jsonl"),
+            PathBuf::from("/test/session2.jsonl"),
+            PathBuf::from("/test/session3.jsonl"),
+        ];
+
+        for path in &paths_to_remove {
+            pending_removals.insert(path.clone());
+        }
+
+        // Also add some duplicates
+        pending_removals.insert(paths_to_remove[0].clone());
+        pending_removals.insert(paths_to_remove[1].clone());
+
+        // Drain should return exactly 3 unique paths
+        let drained = pending_removals.drain();
+        assert_eq!(drained.len(), 3, "Should have 3 unique paths");
+
+        // Verify all expected paths are present
+        for path in &paths_to_remove {
+            assert!(
+                drained.contains(path),
+                "Drained paths should contain {:?}",
+                path
+            );
+        }
+    }
 }

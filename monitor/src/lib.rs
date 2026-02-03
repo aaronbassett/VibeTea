@@ -40,6 +40,6 @@ pub use crypto::{Crypto, CryptoError};
 pub use error::{MonitorError, Result};
 pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
-pub use sender::{Sender, SenderConfig, SenderError};
+pub use sender::{RetryPolicy, Sender, SenderConfig, SenderError};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 pub use watcher::{FileWatcher, WatchEvent, WatcherError};

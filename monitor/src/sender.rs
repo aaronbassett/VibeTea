@@ -69,6 +69,47 @@ const DEFAULT_BUFFER_SIZE: usize = 1000;
 /// Maximum number of retry attempts before giving up on a batch.
 const MAX_RETRY_ATTEMPTS: u32 = 10;
 
+/// Retry policy configuration for controlling backoff behavior.
+///
+/// This allows tests to use fast retries while production uses sensible defaults.
+#[derive(Debug, Clone)]
+pub struct RetryPolicy {
+    /// Initial delay between retries in milliseconds.
+    pub initial_delay_ms: u64,
+    /// Maximum delay between retries in milliseconds.
+    pub max_delay_ms: u64,
+    /// Maximum number of retry attempts.
+    pub max_attempts: u32,
+    /// Jitter factor (0.0 to 1.0) - e.g., 0.25 means ±25%.
+    pub jitter_factor: f64,
+}
+
+impl Default for RetryPolicy {
+    fn default() -> Self {
+        Self {
+            initial_delay_ms: INITIAL_RETRY_DELAY_SECS * 1000,
+            max_delay_ms: MAX_RETRY_DELAY_SECS * 1000,
+            max_attempts: MAX_RETRY_ATTEMPTS,
+            jitter_factor: JITTER_FACTOR,
+        }
+    }
+}
+
+impl RetryPolicy {
+    /// Creates a retry policy optimized for fast tests.
+    ///
+    /// Uses 1ms delays and 3 attempts to quickly verify retry behavior.
+    #[must_use]
+    pub fn fast_for_tests() -> Self {
+        Self {
+            initial_delay_ms: 1,
+            max_delay_ms: 5,
+            max_attempts: 3,
+            jitter_factor: 0.0, // No jitter for deterministic tests
+        }
+    }
+}
+
 /// HTTP request timeout.
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
@@ -122,6 +163,9 @@ pub struct SenderConfig {
 
     /// Maximum number of events to buffer.
     pub buffer_size: usize,
+
+    /// Retry policy for failed requests.
+    pub retry_policy: RetryPolicy,
 }
 
 impl SenderConfig {
@@ -132,6 +176,7 @@ impl SenderConfig {
             server_url,
             source_id,
             buffer_size,
+            retry_policy: RetryPolicy::default(),
         }
     }
 
@@ -139,6 +184,13 @@ impl SenderConfig {
     #[must_use]
     pub fn with_defaults(server_url: String, source_id: String) -> Self {
         Self::new(server_url, source_id, DEFAULT_BUFFER_SIZE)
+    }
+
+    /// Sets a custom retry policy.
+    #[must_use]
+    pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
+        self.retry_policy = policy;
+        self
     }
 }
 
@@ -148,7 +200,7 @@ pub struct Sender {
     crypto: Crypto,
     client: Client,
     buffer: VecDeque<Event>,
-    current_retry_delay: Duration,
+    current_retry_delay_ms: u64,
 }
 
 impl Sender {
@@ -166,12 +218,13 @@ impl Sender {
             .build()
             .expect("Failed to create HTTP client");
 
+        let initial_delay_ms = config.retry_policy.initial_delay_ms;
         Self {
             buffer: VecDeque::with_capacity(config.buffer_size),
             config,
             crypto,
             client,
-            current_retry_delay: Duration::from_secs(INITIAL_RETRY_DELAY_SECS),
+            current_retry_delay_ms: initial_delay_ms,
         }
     }
 
@@ -369,14 +422,14 @@ impl Sender {
                             return Err(SenderError::AuthFailed);
                         }
                         StatusCode::TOO_MANY_REQUESTS => {
-                            let retry_after = self.parse_retry_after(&response);
-                            warn!(retry_after_secs = retry_after, "Rate limited by server");
+                            let retry_after_ms = self.parse_retry_after(&response);
+                            warn!(retry_after_ms = retry_after_ms, "Rate limited by server");
 
-                            if attempts >= MAX_RETRY_ATTEMPTS {
+                            if attempts >= self.config.retry_policy.max_attempts {
                                 return Err(SenderError::MaxRetriesExceeded { attempts });
                             }
 
-                            sleep(Duration::from_secs(retry_after)).await;
+                            sleep(Duration::from_millis(retry_after_ms)).await;
                             continue;
                         }
                         StatusCode::PAYLOAD_TOO_LARGE => {
@@ -397,7 +450,7 @@ impl Sender {
                                 "Server error, will retry"
                             );
 
-                            if attempts >= MAX_RETRY_ATTEMPTS {
+                            if attempts >= self.config.retry_policy.max_attempts {
                                 return Err(SenderError::ServerError {
                                     status: status.as_u16(),
                                     message,
@@ -420,7 +473,7 @@ impl Sender {
                     if e.is_timeout() || e.is_connect() {
                         warn!(error = %e, "Connection error, will retry");
 
-                        if attempts >= MAX_RETRY_ATTEMPTS {
+                        if attempts >= self.config.retry_policy.max_attempts {
                             return Err(SenderError::MaxRetriesExceeded { attempts });
                         }
 
@@ -435,41 +488,51 @@ impl Sender {
     }
 
     /// Parses the Retry-After header from a 429 response.
+    ///
+    /// Returns the retry delay in milliseconds.
     fn parse_retry_after(&self, response: &reqwest::Response) -> u64 {
         response
             .headers()
             .get(RETRY_AFTER)
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(self.current_retry_delay.as_secs())
+            // Retry-After header is in seconds, convert to ms
+            .map(|secs| secs * 1000)
+            .unwrap_or(self.current_retry_delay_ms)
     }
 
     /// Waits for the current retry delay with jitter, then increases the delay.
     async fn wait_with_backoff(&mut self) {
-        let delay = self.add_jitter(self.current_retry_delay);
-        debug!(delay_ms = delay.as_millis(), "Waiting before retry");
-        sleep(delay).await;
+        let delay_ms = self.add_jitter_ms(self.current_retry_delay_ms);
+        debug!(delay_ms = delay_ms, "Waiting before retry");
+        sleep(Duration::from_millis(delay_ms)).await;
         self.increase_retry_delay();
     }
 
-    /// Adds ±25% jitter to a duration.
-    fn add_jitter(&self, duration: Duration) -> Duration {
+    /// Adds jitter to a delay in milliseconds based on the configured jitter factor.
+    fn add_jitter_ms(&self, delay_ms: u64) -> u64 {
+        let jitter_factor = self.config.retry_policy.jitter_factor;
+        if jitter_factor == 0.0 {
+            return delay_ms;
+        }
+
         let mut rng = rand::rng();
-        let jitter_range = duration.as_secs_f64() * JITTER_FACTOR;
+        let delay_f64 = delay_ms as f64;
+        let jitter_range = delay_f64 * jitter_factor;
         let jitter = rng.random_range(-jitter_range..=jitter_range);
-        let new_secs = (duration.as_secs_f64() + jitter).max(0.1);
-        Duration::from_secs_f64(new_secs)
+        let new_delay = (delay_f64 + jitter).max(1.0);
+        new_delay as u64
     }
 
     /// Doubles the retry delay up to the maximum.
     fn increase_retry_delay(&mut self) {
-        let new_secs = (self.current_retry_delay.as_secs() * 2).min(MAX_RETRY_DELAY_SECS);
-        self.current_retry_delay = Duration::from_secs(new_secs);
+        let new_delay_ms = (self.current_retry_delay_ms * 2).min(self.config.retry_policy.max_delay_ms);
+        self.current_retry_delay_ms = new_delay_ms;
     }
 
     /// Resets the retry delay to the initial value.
     fn reset_retry_delay(&mut self) {
-        self.current_retry_delay = Duration::from_secs(INITIAL_RETRY_DELAY_SECS);
+        self.current_retry_delay_ms = self.config.retry_policy.initial_delay_ms;
     }
 
     /// Gracefully shuts down the sender, attempting to flush any remaining events.
@@ -578,17 +641,16 @@ mod tests {
     #[test]
     fn test_add_jitter_stays_within_bounds() {
         let sender = create_test_sender();
-        let base = Duration::from_secs(10);
+        let base_ms = 10_000; // 10 seconds in ms
 
         // Run multiple times to test randomness bounds
         for _ in 0..100 {
-            let jittered = sender.add_jitter(base);
-            let secs = jittered.as_secs_f64();
-            // Should be within ±25% of 10 seconds
+            let jittered_ms = sender.add_jitter_ms(base_ms);
+            // Should be within ±25% of 10000ms (7500-12500)
             assert!(
-                (7.5..=12.5).contains(&secs),
+                (7500..=12500).contains(&jittered_ms),
                 "Jitter out of bounds: {}",
-                secs
+                jittered_ms
             );
         }
     }
@@ -597,35 +659,35 @@ mod tests {
     fn test_increase_retry_delay_doubles() {
         let mut sender = create_test_sender();
         assert_eq!(
-            sender.current_retry_delay.as_secs(),
-            INITIAL_RETRY_DELAY_SECS
+            sender.current_retry_delay_ms,
+            INITIAL_RETRY_DELAY_SECS * 1000
         );
 
         sender.increase_retry_delay();
-        assert_eq!(sender.current_retry_delay.as_secs(), 2);
+        assert_eq!(sender.current_retry_delay_ms, 2000);
 
         sender.increase_retry_delay();
-        assert_eq!(sender.current_retry_delay.as_secs(), 4);
+        assert_eq!(sender.current_retry_delay_ms, 4000);
     }
 
     #[test]
     fn test_increase_retry_delay_caps_at_max() {
         let mut sender = create_test_sender();
-        sender.current_retry_delay = Duration::from_secs(MAX_RETRY_DELAY_SECS);
+        sender.current_retry_delay_ms = MAX_RETRY_DELAY_SECS * 1000;
 
         sender.increase_retry_delay();
-        assert_eq!(sender.current_retry_delay.as_secs(), MAX_RETRY_DELAY_SECS);
+        assert_eq!(sender.current_retry_delay_ms, MAX_RETRY_DELAY_SECS * 1000);
     }
 
     #[test]
     fn test_reset_retry_delay() {
         let mut sender = create_test_sender();
-        sender.current_retry_delay = Duration::from_secs(30);
+        sender.current_retry_delay_ms = 30_000;
 
         sender.reset_retry_delay();
         assert_eq!(
-            sender.current_retry_delay.as_secs(),
-            INITIAL_RETRY_DELAY_SECS
+            sender.current_retry_delay_ms,
+            INITIAL_RETRY_DELAY_SECS * 1000
         );
     }
 

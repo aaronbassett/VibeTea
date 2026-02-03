@@ -5,7 +5,7 @@
 
 use uuid::Uuid;
 use vibetea_monitor::crypto::Crypto;
-use vibetea_monitor::sender::{Sender, SenderConfig};
+use vibetea_monitor::sender::{RetryPolicy, Sender, SenderConfig};
 use vibetea_monitor::types::{Event, EventPayload, EventType, ToolStatus};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -46,9 +46,10 @@ fn create_oversized_event() -> Event {
     )
 }
 
-/// Creates a sender configured to use the mock server.
+/// Creates a sender configured to use the mock server with fast retry policy.
 fn create_test_sender(server_url: &str) -> Sender {
-    let config = SenderConfig::new(server_url.to_string(), "test-monitor".to_string(), 100);
+    let config = SenderConfig::new(server_url.to_string(), "test-monitor".to_string(), 100)
+        .with_retry_policy(RetryPolicy::fast_for_tests());
     Sender::new(config, Crypto::generate())
 }
 
