@@ -35,7 +35,7 @@
 pub mod app;
 pub mod input;
 pub mod terminal;
-// pub mod ui;
+pub mod ui;
 pub mod widgets;
 
 // Re-exports for convenient access to core TUI types
@@ -46,3 +46,4 @@ pub use app::{
 };
 pub use input::{handle_setup_key, SetupAction};
 pub use terminal::{install_panic_hook, Tui};
+pub use ui::{render, render_setup_screen};

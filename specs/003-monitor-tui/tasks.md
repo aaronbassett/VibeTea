@@ -135,12 +135,12 @@
 
 ### Setup Input Handling
 - [x] T060 [US1] Implement setup form input handling in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T061 [GIT] Commit: add setup form input handling
-- [ ] T062 [US1] Implement Tab/Enter navigation with form submission in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T063 [GIT] Commit: add form navigation
+- [x] T061 [GIT] Commit: add setup form input handling
+- [x] T062 [US1] Implement Tab/Enter navigation with form submission in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T063 [GIT] Commit: add form navigation
 
 ### Setup Screen Rendering
-- [ ] T064 [US1] Implement setup screen layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
+- [x] T064 [US1] Implement setup screen layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
 - [ ] T065 [GIT] Commit: add setup screen rendering
 
 ### Setup-to-Dashboard Transition
