@@ -15,8 +15,9 @@
  */
 
 import type React from 'react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { COLORS } from '../constants/design-tokens';
 import { useEventStore } from '../hooks/useEventStore';
 
 import type { VibeteaEvent } from '../types/events';
@@ -338,15 +339,69 @@ function CellTooltip({ cell }: { readonly cell: HoveredCell }) {
 }
 
 /**
+ * Convert hex color to RGB components.
+ *
+ * @param hex - Hex color string (e.g., "#d97757")
+ * @returns RGB components as { r, g, b }
+ */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (result === null) {
+    return { r: 217, g: 119, b: 87 }; // Fallback to glow color
+  }
+  return {
+    r: parseInt(result[1] ?? 'D9', 16),
+    g: parseInt(result[2] ?? '77', 16),
+    b: parseInt(result[3] ?? '57', 16),
+  };
+}
+
+/**
+ * Calculate glow effect styles based on intensity.
+ *
+ * Uses COLORS.grid.glow (#d97757) for the orange glow effect.
+ *
+ * @param intensity - Glow intensity (0 to MAX_GLOW_INTENSITY)
+ * @returns CSS style object with box-shadow and filter
+ */
+function getGlowStyles(intensity: number): React.CSSProperties {
+  if (intensity <= 0) {
+    return {};
+  }
+
+  // Normalize intensity to 0-1 range
+  const normalizedIntensity = Math.min(intensity, MAX_GLOW_INTENSITY) / MAX_GLOW_INTENSITY;
+
+  // Box-shadow spread scales from 4px to 12px based on intensity
+  const spread = 4 + normalizedIntensity * 8;
+
+  // Opacity of glow scales from 0.3 to 0.8
+  const glowOpacity = 0.3 + normalizedIntensity * 0.5;
+
+  // Brightness boost scales from 1.0 to 1.3
+  const brightness = 1.0 + normalizedIntensity * 0.3;
+
+  // Use the glow color from design tokens
+  const { r, g, b } = hexToRgb(COLORS.grid.glow);
+
+  return {
+    boxShadow: `0 0 ${spread}px rgba(${r}, ${g}, ${b}, ${glowOpacity})`,
+    filter: `brightness(${brightness})`,
+  };
+}
+
+/**
  * Individual heatmap cell component.
  */
 function HeatmapCellComponent({
   cell,
+  glowIntensity,
   onHover,
   onLeave,
   onClick,
 }: {
   readonly cell: HeatmapCell;
+  readonly glowIntensity: number;
   readonly onHover: (cell: HeatmapCell, event: React.MouseEvent) => void;
   readonly onLeave: () => void;
   readonly onClick: (cell: HeatmapCell) => void;
@@ -354,6 +409,7 @@ function HeatmapCellComponent({
   const backgroundColor = getHeatmapColor(cell.count);
   const eventText = cell.count === 1 ? 'event' : 'events';
   const ariaLabel = `${cell.count} ${eventText} on ${cell.dateLabel} at ${String(cell.hour).padStart(2, '0')}:00`;
+  const glowStyles = getGlowStyles(glowIntensity);
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (event.key === 'Enter' || event.key === ' ') {
@@ -367,8 +423,8 @@ function HeatmapCellComponent({
       role="gridcell"
       tabIndex={0}
       aria-label={ariaLabel}
-      className="aspect-square rounded-sm cursor-pointer transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
-      style={{ backgroundColor }}
+      className="aspect-square rounded-sm cursor-pointer transition-all duration-200 hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
+      style={{ backgroundColor, ...glowStyles }}
       onMouseEnter={(e) => onHover(cell, e)}
       onMouseLeave={onLeave}
       onClick={() => onClick(cell)}
@@ -441,9 +497,120 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
   // State
   const [viewDays, setViewDays] = useState<ViewDays>(7);
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
+  const [glowState, setGlowState] = useState<HeatmapGlowState>({
+    intensities: new Map(),
+    lastEventTimes: new Map(),
+  });
+
+  // Refs for tracking previous counts and decay timers
+  const prevEventCountsRef = useRef<Map<string, number>>(new Map());
+  const decayTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Compute event counts by hour bucket
   const eventCounts = useMemo(() => countEventsByHour(events), [events]);
+
+  /**
+   * Start the decay animation for a cell.
+   * Gradually reduces intensity over the decay duration.
+   */
+  const startDecay = useCallback((cellKey: string) => {
+    // Decay step: reduce intensity by 1 every 400ms (2000ms / 5 steps)
+    const decayStepMs = GLOW_DECAY_DURATION_MS / MAX_GLOW_INTENSITY;
+
+    const decayStep = () => {
+      setGlowState((prevState) => {
+        const currentIntensity = prevState.intensities.get(cellKey) ?? 0;
+
+        if (currentIntensity <= 0) {
+          // Fully decayed, remove from maps
+          const newIntensities = new Map(prevState.intensities);
+          const newLastEventTimes = new Map(prevState.lastEventTimes);
+          newIntensities.delete(cellKey);
+          newLastEventTimes.delete(cellKey);
+          decayTimersRef.current.delete(cellKey);
+          return {
+            intensities: newIntensities,
+            lastEventTimes: newLastEventTimes,
+          };
+        }
+
+        // Decrease intensity by 1
+        const newIntensities = new Map(prevState.intensities);
+        newIntensities.set(cellKey, currentIntensity - 1);
+
+        // Schedule next decay step
+        const timer = setTimeout(decayStep, decayStepMs);
+        decayTimersRef.current.set(cellKey, timer);
+
+        return {
+          intensities: newIntensities,
+          lastEventTimes: prevState.lastEventTimes,
+        };
+      });
+    };
+
+    decayStep();
+  }, []);
+
+  // Detect new events and update glow state
+  useEffect(() => {
+    const prevCounts = prevEventCountsRef.current;
+    const now = Date.now();
+    const cellsWithNewEvents: string[] = [];
+
+    // Find cells that have received new events
+    eventCounts.forEach((count, key) => {
+      const prevCount = prevCounts.get(key) ?? 0;
+      if (count > prevCount) {
+        cellsWithNewEvents.push(key);
+      }
+    });
+
+    // Update glow state for cells with new events
+    if (cellsWithNewEvents.length > 0) {
+      setGlowState((prevState) => {
+        const newIntensities = new Map(prevState.intensities);
+        const newLastEventTimes = new Map(prevState.lastEventTimes);
+
+        for (const key of cellsWithNewEvents) {
+          // Increase intensity (up to MAX_GLOW_INTENSITY)
+          const currentIntensity = newIntensities.get(key) ?? 0;
+          const newIntensity = Math.min(currentIntensity + 1, MAX_GLOW_INTENSITY);
+          newIntensities.set(key, newIntensity);
+          newLastEventTimes.set(key, now);
+
+          // Clear existing decay timer for this cell
+          const existingTimer = decayTimersRef.current.get(key);
+          if (existingTimer !== undefined) {
+            clearTimeout(existingTimer);
+          }
+
+          // Set new decay timer
+          const timer = setTimeout(() => {
+            startDecay(key);
+          }, GLOW_DECAY_DURATION_MS);
+          decayTimersRef.current.set(key, timer);
+        }
+
+        return {
+          intensities: newIntensities,
+          lastEventTimes: newLastEventTimes,
+        };
+      });
+    }
+
+    // Update prev counts ref
+    prevEventCountsRef.current = new Map(eventCounts);
+  }, [eventCounts, startDecay]);
+
+  // Cleanup timers on unmount
+  useEffect(() => {
+    const timers = decayTimersRef.current;
+    return () => {
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
 
   // Generate all cells for the current view
   const cells = useMemo(
@@ -575,6 +742,7 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
                     <HeatmapCellComponent
                       key={cell.key}
                       cell={cell}
+                      glowIntensity={glowState.intensities.get(cell.key) ?? 0}
                       onHover={handleCellHover}
                       onLeave={handleCellLeave}
                       onClick={handleCellClick}
