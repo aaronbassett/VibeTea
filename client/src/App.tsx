@@ -8,6 +8,9 @@
 import { LazyMotion, domAnimation } from 'framer-motion';
 import { useCallback, useEffect, useState } from 'react';
 
+import { AnimatedBackground } from './components/animated/AnimatedBackground';
+import { ASCIIHeader } from './components/animated/ASCIIHeader';
+import { SpringContainer } from './components/animated/SpringContainer';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { EventStream } from './components/EventStream';
 import { Heatmap } from './components/Heatmap';
@@ -108,15 +111,27 @@ export default function App() {
   if (!hasToken) {
     return (
       <LazyMotion features={domAnimation}>
-        <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-8">
-          <div className="max-w-md w-full space-y-8">
+        <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-8 relative">
+          {/* Animated background layer */}
+          <AnimatedBackground showGrid showParticles />
+
+          {/* Content layer */}
+          <div className="max-w-md w-full space-y-8 relative z-10">
+            {/* ASCII Header with spring entrance */}
             <div className="text-center">
-              <h1 className="text-3xl font-bold mb-2">VibeTea Dashboard</h1>
-              <p className="text-gray-400">
-                Enter your authentication token to connect to the event stream.
-              </p>
+              <ASCIIHeader />
+              <SpringContainer springType="gentle" delay={0.2}>
+                <p className="text-gray-400 mt-4">
+                  Enter your authentication token to connect to the event
+                  stream.
+                </p>
+              </SpringContainer>
             </div>
-            <TokenForm onTokenChange={handleTokenChange} />
+
+            {/* Token form with spring entrance */}
+            <SpringContainer springType="standard" delay={0.4}>
+              <TokenForm onTokenChange={handleTokenChange} />
+            </SpringContainer>
           </div>
         </div>
       </LazyMotion>
