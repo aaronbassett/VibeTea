@@ -741,13 +741,8 @@ mod tests {
 
         // Collect events from inner debouncer
         let mut inner_events = Vec::new();
-        let inner_rx_cell = std::cell::RefCell::new(inner_rx);
-        while let Ok(Some(event)) = timeout(
-            Duration::from_millis(300),
-            inner_rx_cell.borrow_mut().recv(),
-        )
-        .await
-        {
+        let mut inner_rx = inner_rx;
+        while let Ok(Some(event)) = timeout(Duration::from_millis(300), inner_rx.recv()).await {
             inner_events.push(event);
         }
 
