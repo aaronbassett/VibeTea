@@ -142,7 +142,7 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
         <div>
           <label
             htmlFor="token-input"
-            className="block text-sm font-medium text-gray-200 mb-2"
+            className="block text-sm font-medium text-[#f5f5f5] mb-2"
           >
             Authentication Token
           </label>
@@ -155,7 +155,7 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
               isSaved ? 'Enter new token to update' : 'Enter your token'
             }
             autoComplete="off"
-            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg text-[#f5f5f5] placeholder-[#6b6b6b] focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:border-transparent"
             aria-describedby="token-status"
           />
         </div>
@@ -168,11 +168,11 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
         >
           <span
             className={`h-2 w-2 rounded-full ${
-              isSaved ? 'bg-green-500' : 'bg-gray-500'
+              isSaved ? 'bg-[#4ade80]' : 'bg-[#6b6b6b]'
             }`}
             aria-hidden="true"
           />
-          <span className="text-sm text-gray-400">
+          <span className="text-sm text-[#a0a0a0]">
             {isSaved ? 'Token saved' : 'No token saved'}
           </span>
         </div>
@@ -181,7 +181,7 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
           <button
             type="submit"
             disabled={!canSave}
-            className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+            className="flex-1 px-4 py-2 bg-[#d97757] hover:bg-[#e89a7a] disabled:bg-[#242424] disabled:text-[#6b6b6b] disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:ring-offset-2 focus:ring-offset-[#131313]"
           >
             Save Token
           </button>
@@ -189,7 +189,7 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
             type="button"
             onClick={handleClear}
             disabled={!isSaved}
-            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 disabled:text-gray-600 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+            className="px-4 py-2 bg-[#242424] hover:bg-[#2a2a2a] disabled:bg-[#1a1a1a] disabled:text-[#6b6b6b] disabled:cursor-not-allowed text-[#f5f5f5] font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:ring-offset-2 focus:ring-offset-[#131313]"
           >
             Clear
           </button>

@@ -111,7 +111,7 @@ export default function App() {
   if (!hasToken) {
     return (
       <LazyMotion features={domAnimation}>
-        <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-8 relative">
+        <div className="min-h-screen bg-[#131313] text-[#f5f5f5] flex flex-col items-center justify-center p-8 relative">
           {/* Animated background layer */}
           <AnimatedBackground showGrid showParticles />
 
@@ -121,7 +121,7 @@ export default function App() {
             <div className="text-center">
               <ASCIIHeader />
               <SpringContainer springType="gentle" delay={0.2}>
-                <p className="text-gray-400 mt-4">
+                <p className="text-[#a0a0a0] mt-4">
                   Enter your authentication token to connect to the event
                   stream.
                 </p>
