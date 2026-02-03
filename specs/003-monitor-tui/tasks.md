@@ -78,9 +78,9 @@
 ### State Types
 - [x] T028 [P] Implement AppState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [x] T029 [P] Implement Screen enum (Setup, Dashboard) in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T030 [GIT] Commit: add AppState and Screen types
-- [ ] T031 [P] Implement Theme struct with default and monochrome variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T032 [P] Implement Symbols struct with unicode and ascii variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T030 [GIT] Commit: add AppState and Screen types
+- [x] T031 [P] Implement Theme struct with default and monochrome variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T032 [P] Implement Symbols struct with unicode and ascii variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [ ] T033 [GIT] Commit: add Theme and Symbols configuration
 
 ### Sender Metrics Extension

@@ -41,6 +41,6 @@ pub mod widgets;
 // Re-exports for convenient access to core TUI types
 pub use app::{
     AppState, ConnectionStatus, DashboardState, EventHandler, EventStats, Screen, SetupFormState,
-    Symbols, Theme, TuiEvent, DEFAULT_TICK_RATE_MS,
+    Symbols, Theme, TuiEvent, ASCII_SYMBOLS, DEFAULT_TICK_RATE_MS, UNICODE_SYMBOLS,
 };
 pub use terminal::{install_panic_hook, Tui};

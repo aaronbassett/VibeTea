@@ -44,6 +44,7 @@
 use std::time::Duration;
 
 use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
+use ratatui::style::{Color, Modifier, Style};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::types::Event;
@@ -123,15 +124,228 @@ pub struct DashboardState {
 /// Theme configuration for the TUI.
 ///
 /// Defines colors and styles used throughout the interface for consistent
-/// visual presentation.
+/// visual presentation. The theme covers four main areas:
 ///
-/// # Note
+/// - **Status indicators**: Colors for connection states (connected, disconnected, etc.)
+/// - **Event stream**: Styles for different event types and timestamps
+/// - **Statistics**: Styles for metrics display (sent, failed, queued counts)
+/// - **Layout and form**: Borders, titles, inputs, and text styles
 ///
-/// This is a placeholder type. The full implementation will be added in a later
-/// task with color definitions for various UI elements.
-#[derive(Debug, Clone, Default)]
+/// # Color-Blind Safety
+///
+/// The theme uses symbols in addition to colors to ensure accessibility for
+/// color-blind users (NFR-006). Status indicators always have accompanying
+/// text or symbols that don't rely solely on color.
+///
+/// # NO_COLOR Support
+///
+/// For environments where colors should be disabled (per the `NO_COLOR` standard),
+/// use [`Theme::monochrome()`] or [`Theme::from_env()`] which will automatically
+/// detect the `NO_COLOR` environment variable.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::Theme;
+///
+/// // Default colorful theme
+/// let theme = Theme::default();
+///
+/// // Monochrome theme for NO_COLOR support
+/// let mono_theme = Theme::monochrome();
+///
+/// // Auto-detect based on environment
+/// let env_theme = Theme::from_env();
+/// ```
+#[derive(Debug, Clone)]
 pub struct Theme {
-    // Placeholder - color definitions will be added in future tasks
+    // Status indicators
+    /// Style for connected status (default: green).
+    pub status_connected: Style,
+    /// Style for disconnected status (default: red).
+    pub status_disconnected: Style,
+    /// Style for connecting status (default: yellow).
+    pub status_connecting: Style,
+    /// Style for reconnecting status (default: yellow).
+    pub status_reconnecting: Style,
+
+    // Event stream
+    /// Style for event timestamps (default: dark gray).
+    pub event_timestamp: Style,
+    /// Style for session events (default: magenta bold).
+    pub event_type_session: Style,
+    /// Style for activity events (default: blue).
+    pub event_type_activity: Style,
+    /// Style for tool events (default: cyan).
+    pub event_type_tool: Style,
+    /// Style for agent events (default: yellow).
+    pub event_type_agent: Style,
+    /// Style for summary events (default: green).
+    pub event_type_summary: Style,
+    /// Style for error events (default: red).
+    pub event_type_error: Style,
+    /// Style for recent events (default: bold).
+    pub event_recent: Style,
+
+    // Statistics
+    /// Style for total event count (default: white).
+    pub stat_total: Style,
+    /// Style for sent event count (default: green).
+    pub stat_sent: Style,
+    /// Style for failed event count (default: red bold).
+    pub stat_failed: Style,
+    /// Style for queued event count (default: yellow).
+    pub stat_queued: Style,
+
+    // Form
+    /// Style for focused input fields (default: cyan bold).
+    pub input_focused: Style,
+    /// Style for unfocused input fields (default: gray).
+    pub input_unfocused: Style,
+    /// Style for input error states (default: red).
+    pub input_error: Style,
+    /// Style for form labels (default: white).
+    pub label: Style,
+
+    // Layout
+    /// Style for unfocused borders (default: dark gray).
+    pub border: Style,
+    /// Style for focused borders (default: cyan).
+    pub border_focused: Style,
+    /// Style for titles (default: white bold).
+    pub title: Style,
+    /// Style for primary text (default: reset/terminal default).
+    pub text_primary: Style,
+    /// Style for secondary text (default: gray).
+    pub text_secondary: Style,
+    /// Style for muted/deemphasized text (default: dark gray).
+    pub text_muted: Style,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            // Status indicators (NFR-006: color-blind safe with symbols)
+            status_connected: Style::default().fg(Color::Green),
+            status_disconnected: Style::default().fg(Color::Red),
+            status_connecting: Style::default().fg(Color::Yellow),
+            status_reconnecting: Style::default().fg(Color::Yellow),
+
+            // Event stream
+            event_timestamp: Style::default().fg(Color::DarkGray),
+            event_type_session: Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+            event_type_activity: Style::default().fg(Color::Blue),
+            event_type_tool: Style::default().fg(Color::Cyan),
+            event_type_agent: Style::default().fg(Color::Yellow),
+            event_type_summary: Style::default().fg(Color::Green),
+            event_type_error: Style::default().fg(Color::Red),
+            event_recent: Style::default().add_modifier(Modifier::BOLD),
+
+            // Statistics (FR-012: failed visually distinguished)
+            stat_total: Style::default().fg(Color::White),
+            stat_sent: Style::default().fg(Color::Green),
+            stat_failed: Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            stat_queued: Style::default().fg(Color::Yellow),
+
+            // Form
+            input_focused: Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+            input_unfocused: Style::default().fg(Color::Gray),
+            input_error: Style::default().fg(Color::Red),
+            label: Style::default().fg(Color::White),
+
+            // Layout
+            border: Style::default().fg(Color::DarkGray),
+            border_focused: Style::default().fg(Color::Cyan),
+            title: Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
+            text_primary: Style::default(),
+            text_secondary: Style::default().fg(Color::Gray),
+            text_muted: Style::default().fg(Color::DarkGray),
+        }
+    }
+}
+
+impl Theme {
+    /// Creates a monochrome theme for `NO_COLOR` support.
+    ///
+    /// This theme uses only modifiers (bold, dim, italic, underlined) without
+    /// any color codes. It complies with the [NO_COLOR standard](https://no-color.org/)
+    /// for terminals where color output is disabled.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::Theme;
+    ///
+    /// let theme = Theme::monochrome();
+    /// // All styles use modifiers instead of colors
+    /// ```
+    #[must_use]
+    pub fn monochrome() -> Self {
+        Self {
+            status_connected: Style::default().add_modifier(Modifier::BOLD),
+            status_disconnected: Style::default().add_modifier(Modifier::DIM),
+            status_connecting: Style::default().add_modifier(Modifier::ITALIC),
+            status_reconnecting: Style::default().add_modifier(Modifier::ITALIC),
+
+            event_timestamp: Style::default().add_modifier(Modifier::DIM),
+            event_type_session: Style::default().add_modifier(Modifier::BOLD),
+            event_type_activity: Style::default(),
+            event_type_tool: Style::default(),
+            event_type_agent: Style::default().add_modifier(Modifier::ITALIC),
+            event_type_summary: Style::default(),
+            event_type_error: Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            event_recent: Style::default().add_modifier(Modifier::BOLD),
+
+            stat_total: Style::default(),
+            stat_sent: Style::default(),
+            stat_failed: Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            stat_queued: Style::default(),
+
+            input_focused: Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            input_unfocused: Style::default().add_modifier(Modifier::DIM),
+            input_error: Style::default().add_modifier(Modifier::BOLD),
+            label: Style::default(),
+
+            border: Style::default(),
+            border_focused: Style::default().add_modifier(Modifier::BOLD),
+            title: Style::default().add_modifier(Modifier::BOLD),
+            text_primary: Style::default(),
+            text_secondary: Style::default().add_modifier(Modifier::DIM),
+            text_muted: Style::default().add_modifier(Modifier::DIM),
+        }
+    }
+
+    /// Creates a theme based on the environment.
+    ///
+    /// Checks the `NO_COLOR` environment variable and returns:
+    /// - [`Theme::monochrome()`] if `NO_COLOR` is set (to any value)
+    /// - [`Theme::default()`] otherwise
+    ///
+    /// This follows the [NO_COLOR standard](https://no-color.org/) for respecting
+    /// user preferences regarding terminal colors.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::Theme;
+    ///
+    /// // Returns monochrome if NO_COLOR is set, colorful otherwise
+    /// let theme = Theme::from_env();
+    /// ```
+    #[must_use]
+    pub fn from_env() -> Self {
+        if std::env::var("NO_COLOR").is_ok() {
+            Self::monochrome()
+        } else {
+            Self::default()
+        }
+    }
 }
 
 /// Symbol set for the TUI (unicode or ASCII).
@@ -140,13 +354,157 @@ pub struct Theme {
 /// Unicode symbols provide a richer visual experience on modern terminals,
 /// while ASCII symbols ensure compatibility with limited terminals.
 ///
-/// # Note
+/// # Symbol Sets
 ///
-/// This is a placeholder type. The full implementation will be added in a later
-/// task with symbol definitions for borders, icons, and decorations.
-#[derive(Debug, Clone, Copy, Default)]
+/// Two predefined symbol sets are available:
+///
+/// - [`UNICODE_SYMBOLS`]: Rich unicode characters for modern terminals
+/// - [`ASCII_SYMBOLS`]: Plain ASCII for maximum compatibility
+///
+/// Use [`Symbols::detect()`] to automatically select the appropriate symbol
+/// set based on the terminal environment.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::{Symbols, UNICODE_SYMBOLS, ASCII_SYMBOLS};
+///
+/// // Use unicode symbols explicitly
+/// let symbols = UNICODE_SYMBOLS;
+/// assert_eq!(symbols.connected, "●");
+///
+/// // Use ASCII symbols for compatibility
+/// let symbols = ASCII_SYMBOLS;
+/// assert_eq!(symbols.connected, "[*]");
+///
+/// // Auto-detect based on terminal
+/// let symbols = Symbols::detect();
+/// ```
+#[derive(Debug, Clone, Copy)]
 pub struct Symbols {
-    // Placeholder - symbol definitions will be added in future tasks
+    /// Symbol for connected status.
+    pub connected: &'static str,
+    /// Symbol for disconnected status.
+    pub disconnected: &'static str,
+    /// Symbol for connecting status.
+    pub connecting: &'static str,
+    /// Symbol for reconnecting status.
+    pub reconnecting: &'static str,
+    /// Symbol for success/completion.
+    pub success: &'static str,
+    /// Symbol for failure/error.
+    pub failure: &'static str,
+    /// Arrow symbol for navigation/direction.
+    pub arrow: &'static str,
+    /// Bullet point symbol for lists.
+    pub bullet: &'static str,
+}
+
+/// Unicode symbol set for modern terminals.
+///
+/// This symbol set uses rich unicode characters that render nicely on most
+/// modern terminal emulators. It provides a more visually appealing experience
+/// but may not display correctly on limited terminals (e.g., Linux console,
+/// VT100 emulators).
+///
+/// # Symbols
+///
+/// | Symbol | Character | Description |
+/// |--------|-----------|-------------|
+/// | `connected` | ● | Filled circle for active connection |
+/// | `disconnected` | ○ | Empty circle for no connection |
+/// | `connecting` | ◔ | Quarter-filled circle for pending |
+/// | `reconnecting` | ◐ | Half-filled circle for retry |
+/// | `success` | ✓ | Check mark for success |
+/// | `failure` | ✗ | X mark for failure |
+/// | `arrow` | → | Right arrow for navigation |
+/// | `bullet` | • | Bullet point for lists |
+pub const UNICODE_SYMBOLS: Symbols = Symbols {
+    connected: "●",
+    disconnected: "○",
+    connecting: "◔",
+    reconnecting: "◐",
+    success: "✓",
+    failure: "✗",
+    arrow: "→",
+    bullet: "•",
+};
+
+/// ASCII symbol set for maximum compatibility.
+///
+/// This symbol set uses only plain ASCII characters, ensuring compatibility
+/// with all terminals including the Linux console, VT100 emulators, and
+/// environments with limited unicode support.
+///
+/// # Symbols
+///
+/// | Symbol | Characters | Description |
+/// |--------|------------|-------------|
+/// | `connected` | `[*]` | Asterisk in brackets for active |
+/// | `disconnected` | `[ ]` | Empty brackets for no connection |
+/// | `connecting` | `[.]` | Dot in brackets for pending |
+/// | `reconnecting` | `[~]` | Tilde in brackets for retry |
+/// | `success` | `[+]` | Plus in brackets for success |
+/// | `failure` | `[x]` | X in brackets for failure |
+/// | `arrow` | `->` | ASCII arrow for navigation |
+/// | `bullet` | `*` | Asterisk for lists |
+pub const ASCII_SYMBOLS: Symbols = Symbols {
+    connected: "[*]",
+    disconnected: "[ ]",
+    connecting: "[.]",
+    reconnecting: "[~]",
+    success: "[+]",
+    failure: "[x]",
+    arrow: "->",
+    bullet: "*",
+};
+
+impl Symbols {
+    /// Detects and returns the appropriate symbol set for the current terminal.
+    ///
+    /// This method checks the `TERM` environment variable to determine if the
+    /// terminal supports unicode. If the terminal is identified as a limited
+    /// environment (e.g., `linux` console, `vt100`), ASCII symbols are returned.
+    /// Otherwise, unicode symbols are used.
+    ///
+    /// # Detection Logic
+    ///
+    /// Returns [`ASCII_SYMBOLS`] if:
+    /// - `TERM` contains "linux" (Linux console)
+    /// - `TERM` contains "vt100" (VT100 emulator)
+    ///
+    /// Returns [`UNICODE_SYMBOLS`] otherwise, including when:
+    /// - `TERM` is not set
+    /// - `TERM` contains other values (xterm, screen, tmux, etc.)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::Symbols;
+    ///
+    /// let symbols = Symbols::detect();
+    /// // Will be unicode on most modern terminals
+    /// ```
+    #[must_use]
+    pub fn detect() -> Self {
+        if std::env::var("TERM")
+            .map(|t| t.contains("linux") || t.contains("vt100"))
+            .unwrap_or(false)
+        {
+            ASCII_SYMBOLS
+        } else {
+            UNICODE_SYMBOLS
+        }
+    }
+}
+
+impl Default for Symbols {
+    /// Returns the auto-detected symbol set.
+    ///
+    /// This is equivalent to calling [`Symbols::detect()`].
+    fn default() -> Self {
+        Self::detect()
+    }
 }
 
 /// Application state machine for the VibeTea Monitor TUI.
@@ -1087,34 +1445,268 @@ mod tests {
         let _ = format!("{:?}", cloned);
     }
 
+    // =============================================================================
+    // Theme Tests
+    // =============================================================================
+
     #[test]
-    fn theme_default() {
+    fn theme_default_creates_colorful_theme() {
         let theme = Theme::default();
-        // Just ensure it can be created with default
-        let _ = format!("{:?}", theme);
+        // Verify status colors are set
+        assert_eq!(theme.status_connected.fg, Some(Color::Green));
+        assert_eq!(theme.status_disconnected.fg, Some(Color::Red));
+        assert_eq!(theme.status_connecting.fg, Some(Color::Yellow));
+        assert_eq!(theme.status_reconnecting.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn theme_default_event_stream_styles() {
+        let theme = Theme::default();
+        assert_eq!(theme.event_timestamp.fg, Some(Color::DarkGray));
+        assert_eq!(theme.event_type_session.fg, Some(Color::Magenta));
+        assert!(theme
+            .event_type_session
+            .add_modifier
+            .contains(Modifier::BOLD));
+        assert_eq!(theme.event_type_activity.fg, Some(Color::Blue));
+        assert_eq!(theme.event_type_tool.fg, Some(Color::Cyan));
+        assert_eq!(theme.event_type_agent.fg, Some(Color::Yellow));
+        assert_eq!(theme.event_type_summary.fg, Some(Color::Green));
+        assert_eq!(theme.event_type_error.fg, Some(Color::Red));
+    }
+
+    #[test]
+    fn theme_default_statistics_styles() {
+        let theme = Theme::default();
+        assert_eq!(theme.stat_total.fg, Some(Color::White));
+        assert_eq!(theme.stat_sent.fg, Some(Color::Green));
+        assert_eq!(theme.stat_failed.fg, Some(Color::Red));
+        assert!(theme.stat_failed.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(theme.stat_queued.fg, Some(Color::Yellow));
+    }
+
+    #[test]
+    fn theme_default_form_styles() {
+        let theme = Theme::default();
+        assert_eq!(theme.input_focused.fg, Some(Color::Cyan));
+        assert!(theme.input_focused.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(theme.input_unfocused.fg, Some(Color::Gray));
+        assert_eq!(theme.input_error.fg, Some(Color::Red));
+        assert_eq!(theme.label.fg, Some(Color::White));
+    }
+
+    #[test]
+    fn theme_default_layout_styles() {
+        let theme = Theme::default();
+        assert_eq!(theme.border.fg, Some(Color::DarkGray));
+        assert_eq!(theme.border_focused.fg, Some(Color::Cyan));
+        assert_eq!(theme.title.fg, Some(Color::White));
+        assert!(theme.title.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(theme.text_secondary.fg, Some(Color::Gray));
+        assert_eq!(theme.text_muted.fg, Some(Color::DarkGray));
+    }
+
+    #[test]
+    fn theme_monochrome_uses_no_colors() {
+        let theme = Theme::monochrome();
+        // Monochrome theme should not set foreground colors
+        assert_eq!(theme.status_connected.fg, None);
+        assert_eq!(theme.status_disconnected.fg, None);
+        assert_eq!(theme.event_timestamp.fg, None);
+        assert_eq!(theme.stat_total.fg, None);
+        assert_eq!(theme.input_focused.fg, None);
+        assert_eq!(theme.border.fg, None);
+    }
+
+    #[test]
+    fn theme_monochrome_uses_modifiers() {
+        let theme = Theme::monochrome();
+        // Verify modifiers are used instead of colors
+        assert!(theme.status_connected.add_modifier.contains(Modifier::BOLD));
+        assert!(theme
+            .status_disconnected
+            .add_modifier
+            .contains(Modifier::DIM));
+        assert!(theme
+            .status_connecting
+            .add_modifier
+            .contains(Modifier::ITALIC));
+        assert!(theme.event_type_error.add_modifier.contains(Modifier::BOLD));
+        assert!(theme
+            .event_type_error
+            .add_modifier
+            .contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn theme_monochrome_stat_failed_is_distinguishable() {
+        let theme = Theme::monochrome();
+        // stat_failed should have both BOLD and UNDERLINED for visibility
+        assert!(theme.stat_failed.add_modifier.contains(Modifier::BOLD));
+        assert!(theme
+            .stat_failed
+            .add_modifier
+            .contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn theme_is_debug() {
+        let theme = Theme::default();
+        let debug_str = format!("{:?}", theme);
+        assert!(debug_str.contains("Theme"));
+        assert!(debug_str.contains("status_connected"));
     }
 
     #[test]
     fn theme_is_clone() {
         let theme = Theme::default();
         let cloned = theme.clone();
-        let _ = format!("{:?}", cloned);
+        assert_eq!(cloned.status_connected.fg, theme.status_connected.fg);
+        assert_eq!(cloned.event_type_error.fg, theme.event_type_error.fg);
     }
 
     #[test]
-    fn symbols_default() {
-        let symbols = Symbols::default();
-        // Just ensure it can be created with default
-        let _ = format!("{:?}", symbols);
+    fn theme_from_env_returns_colorful_when_no_color_unset() {
+        // Temporarily ensure NO_COLOR is not set for this test
+        let _guard = EnvGuard::new("NO_COLOR");
+        std::env::remove_var("NO_COLOR");
+
+        let theme = Theme::from_env();
+        // Should return colorful theme
+        assert_eq!(theme.status_connected.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn theme_from_env_returns_monochrome_when_no_color_set() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        std::env::set_var("NO_COLOR", "1");
+
+        let theme = Theme::from_env();
+        // Should return monochrome theme
+        assert_eq!(theme.status_connected.fg, None);
+        assert!(theme.status_connected.add_modifier.contains(Modifier::BOLD));
+    }
+
+    // =============================================================================
+    // Symbols Tests
+    // =============================================================================
+
+    #[test]
+    fn symbols_unicode_constants() {
+        assert_eq!(UNICODE_SYMBOLS.connected, "●");
+        assert_eq!(UNICODE_SYMBOLS.disconnected, "○");
+        assert_eq!(UNICODE_SYMBOLS.connecting, "◔");
+        assert_eq!(UNICODE_SYMBOLS.reconnecting, "◐");
+        assert_eq!(UNICODE_SYMBOLS.success, "✓");
+        assert_eq!(UNICODE_SYMBOLS.failure, "✗");
+        assert_eq!(UNICODE_SYMBOLS.arrow, "→");
+        assert_eq!(UNICODE_SYMBOLS.bullet, "•");
+    }
+
+    #[test]
+    fn symbols_ascii_constants() {
+        assert_eq!(ASCII_SYMBOLS.connected, "[*]");
+        assert_eq!(ASCII_SYMBOLS.disconnected, "[ ]");
+        assert_eq!(ASCII_SYMBOLS.connecting, "[.]");
+        assert_eq!(ASCII_SYMBOLS.reconnecting, "[~]");
+        assert_eq!(ASCII_SYMBOLS.success, "[+]");
+        assert_eq!(ASCII_SYMBOLS.failure, "[x]");
+        assert_eq!(ASCII_SYMBOLS.arrow, "->");
+        assert_eq!(ASCII_SYMBOLS.bullet, "*");
+    }
+
+    #[test]
+    fn symbols_is_debug() {
+        let symbols = UNICODE_SYMBOLS;
+        let debug_str = format!("{:?}", symbols);
+        assert!(debug_str.contains("Symbols"));
+        assert!(debug_str.contains("connected"));
     }
 
     #[test]
     fn symbols_is_copy() {
-        let symbols = Symbols::default();
+        let symbols = UNICODE_SYMBOLS;
         let copied = symbols;
         // Both still accessible because Symbols is Copy
-        let _ = format!("{:?}", symbols);
-        let _ = format!("{:?}", copied);
+        assert_eq!(symbols.connected, copied.connected);
+        assert_eq!(symbols.failure, copied.failure);
+    }
+
+    #[test]
+    fn symbols_is_clone() {
+        let symbols = ASCII_SYMBOLS;
+        let cloned = symbols.clone();
+        assert_eq!(cloned.arrow, "->");
+    }
+
+    #[test]
+    fn symbols_detect_returns_unicode_for_typical_terminal() {
+        let _guard = EnvGuard::new("TERM");
+        std::env::set_var("TERM", "xterm-256color");
+
+        let symbols = Symbols::detect();
+        assert_eq!(symbols.connected, "●");
+    }
+
+    #[test]
+    fn symbols_detect_returns_ascii_for_linux_console() {
+        let _guard = EnvGuard::new("TERM");
+        std::env::set_var("TERM", "linux");
+
+        let symbols = Symbols::detect();
+        assert_eq!(symbols.connected, "[*]");
+    }
+
+    #[test]
+    fn symbols_detect_returns_ascii_for_vt100() {
+        let _guard = EnvGuard::new("TERM");
+        std::env::set_var("TERM", "vt100");
+
+        let symbols = Symbols::detect();
+        assert_eq!(symbols.connected, "[*]");
+    }
+
+    #[test]
+    fn symbols_detect_returns_unicode_when_term_unset() {
+        let _guard = EnvGuard::new("TERM");
+        std::env::remove_var("TERM");
+
+        let symbols = Symbols::detect();
+        assert_eq!(symbols.connected, "●");
+    }
+
+    #[test]
+    fn symbols_default_calls_detect() {
+        // Default should behave the same as detect()
+        let _guard = EnvGuard::new("TERM");
+        std::env::set_var("TERM", "xterm");
+
+        let default_symbols = Symbols::default();
+        let detected_symbols = Symbols::detect();
+        assert_eq!(default_symbols.connected, detected_symbols.connected);
+    }
+
+    /// RAII guard for environment variable testing.
+    /// Saves the current value and restores it on drop.
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn new(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
     }
 
     // =============================================================================
