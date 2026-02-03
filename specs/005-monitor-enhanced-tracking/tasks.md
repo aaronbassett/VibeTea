@@ -208,10 +208,10 @@
 - [x] T096 [US3] Implement HistoryEntry struct for JSON parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
 - [x] T097 [GIT] Commit: add HistoryEntry struct
 - [x] T098 [US3] Implement skill_tracker module with file watching in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [ ] T099 [GIT] Commit: implement skill_tracker module
+- [x] T099 [GIT] Commit: implement skill_tracker module
 - [x] T100 [US3] Implement skill name extraction using shell-like tokenizer in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [ ] T101 [GIT] Commit: implement skill name extraction
-- [ ] T102 [US3] Wire skill_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [x] T101 [GIT] Commit: implement skill name extraction
+- [x] T102 [US3] Wire skill_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
 - [ ] T103 [GIT] Commit: wire skill_tracker to watcher
 - [ ] T104 [US3] Add client store handler for skill_invocation events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
 - [ ] T105 [GIT] Commit: add client skill_invocation handler

@@ -31,9 +31,11 @@ use vibetea_monitor::crypto::Crypto;
 use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
+use vibetea_monitor::trackers::skill_tracker::SkillTracker;
 use vibetea_monitor::trackers::stats_tracker::StatsTracker;
 use vibetea_monitor::types::{
-    AgentSpawnEvent, Event, EventPayload, EventType, SessionAction, TokenUsageEvent, ToolStatus,
+    AgentSpawnEvent, Event, EventPayload, EventType, SessionAction, SkillInvocationEvent,
+    TokenUsageEvent, ToolStatus,
 };
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
@@ -256,6 +258,27 @@ async fn run_monitor() -> Result<()> {
         }
     };
 
+    // Create channel for skill invocation events from skill tracker
+    let (skill_tx, mut skill_rx) = mpsc::channel::<SkillInvocationEvent>(config.buffer_size);
+
+    // Initialize skill tracker for skill/slash command monitoring
+    let _skill_tracker = match SkillTracker::new(skill_tx) {
+        Ok(tracker) => {
+            info!(
+                history_path = %tracker.history_path().display(),
+                "Skill tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize skill tracker (skill invocation tracking disabled)"
+            );
+            None
+        }
+    };
+
     info!("Monitor running. Press Ctrl+C to stop.");
 
     // Main event loop
@@ -282,6 +305,15 @@ async fn run_monitor() -> Result<()> {
             Some(token_event) = token_rx.recv() => {
                 process_token_usage_event(
                     token_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process skill invocation events from skill tracker
+            Some(skill_event) = skill_rx.recv() => {
+                process_skill_invocation_event(
+                    skill_event,
                     &mut sender,
                     &config.source_id,
                 ).await;
@@ -432,6 +464,38 @@ async fn process_token_usage_event(
     // Try to flush buffered events
     if let Err(e) = sender.flush().await {
         warn!(error = %e, "Failed to flush token usage events, will retry later");
+    }
+}
+
+/// Processes a skill invocation event from the skill tracker.
+async fn process_skill_invocation_event(
+    skill_event: SkillInvocationEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        skill_name = %skill_event.skill_name,
+        session_id = %skill_event.session_id,
+        project = %skill_event.project,
+        "Processing skill invocation event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::SkillInvocation,
+        EventPayload::SkillInvocation(skill_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush skill invocation events, will retry later");
     }
 }
 
