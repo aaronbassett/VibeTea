@@ -116,9 +116,9 @@
 **Independent Test**: Launch monitor, press Enter through all prompts, verify main dashboard displays with streaming logs
 
 ### Phase Start
-- [ ] T048 [GIT] Verify working tree is clean before starting Phase 3
-- [ ] T049 [GIT] Pull and rebase on origin/main if needed
-- [ ] T050 [US1] Create retro/P3.md for this phase
+- [x] T048 [GIT] Verify working tree is clean before starting Phase 3
+- [x] T049 [GIT] Pull and rebase on origin/main if needed
+- [x] T050 [US1] Create retro/P3.md for this phase
 - [ ] T051 [GIT] Commit: initialize phase 3 retro
 
 ### Setup Form State
