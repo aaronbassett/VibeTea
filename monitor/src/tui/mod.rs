@@ -34,10 +34,10 @@
 // TODO: Uncomment these module declarations as implementations are added
 // pub mod app;
 // pub mod input;
-// pub mod terminal;
+pub mod terminal;
 // pub mod ui;
 pub mod widgets;
 
 // Re-exports will be added as modules are implemented
 // pub use app::App;
-// pub use terminal::Terminal;
+pub use terminal::Tui;

@@ -63,8 +63,8 @@
 - [x] T018 Create retro/P2.md for this phase
 
 ### Terminal Infrastructure
-- [ ] T019 [GIT] Commit: initialize phase 2 retro
-- [ ] T020 Implement Tui struct with RAII terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
+- [x] T019 [GIT] Commit: initialize phase 2 retro
+- [x] T020 Implement Tui struct with RAII terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
 - [ ] T021 [GIT] Commit: add terminal wrapper with RAII restoration
 - [ ] T022 Implement panic hook for terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
 - [ ] T023 [GIT] Commit: add panic hook for terminal safety
