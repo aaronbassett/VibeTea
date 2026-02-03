@@ -161,9 +161,7 @@ impl Crypto {
             )));
         }
 
-        let mut seed: [u8; SEED_LENGTH] = decoded
-            .try_into()
-            .expect("length already validated");
+        let mut seed: [u8; SEED_LENGTH] = decoded.try_into().expect("length already validated");
         let signing_key = SigningKey::from_bytes(&seed);
         // FR-020: Zero intermediate key material after signing key construction
         seed.zeroize();
@@ -225,9 +223,8 @@ impl Crypto {
                     )));
                 }
 
-                let mut seed: [u8; SEED_LENGTH] = decoded
-                    .try_into()
-                    .expect("length already validated");
+                let mut seed: [u8; SEED_LENGTH] =
+                    decoded.try_into().expect("length already validated");
                 let signing_key = SigningKey::from_bytes(&seed);
                 // FR-020: Zero intermediate key material after signing key construction
                 seed.zeroize();

@@ -143,11 +143,7 @@ fn whitespace_is_trimmed_from_env_value() {
     guard.set(&padded_value);
 
     let result = Crypto::load_from_env();
-    assert!(
-        result.is_ok(),
-        "Should trim spaces: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should trim spaces: {:?}", result.err());
 }
 
 /// Verifies that newlines are trimmed from the environment variable value.
@@ -197,11 +193,7 @@ fn carriage_returns_are_trimmed() {
     guard.set(&with_crlf);
 
     let result = Crypto::load_from_env();
-    assert!(
-        result.is_ok(),
-        "Should trim CRLF: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "Should trim CRLF: {:?}", result.err());
 }
 
 // =============================================================================
@@ -338,7 +330,9 @@ fn env_var_takes_precedence_over_file() {
 
     // Generate and save a key to file
     let file_crypto = Crypto::generate();
-    file_crypto.save(temp_dir.path()).expect("Failed to save key to file");
+    file_crypto
+        .save(temp_dir.path())
+        .expect("Failed to save key to file");
     let file_pubkey = file_crypto.public_key_base64();
 
     // Generate a different key for the environment variable
@@ -377,12 +371,18 @@ fn file_key_used_when_env_var_not_set() {
 
     // Generate and save a key to file
     let file_crypto = Crypto::generate();
-    file_crypto.save(temp_dir.path()).expect("Failed to save key to file");
+    file_crypto
+        .save(temp_dir.path())
+        .expect("Failed to save key to file");
     let file_pubkey = file_crypto.public_key_base64();
 
     // Load with only file source available
     let result = Crypto::load_with_fallback(temp_dir.path());
-    assert!(result.is_ok(), "Should load key from file: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should load key from file: {:?}",
+        result.err()
+    );
 
     let (loaded_crypto, source) = result.unwrap();
 
@@ -411,7 +411,9 @@ fn invalid_env_var_does_not_fallback_to_file() {
 
     // Generate and save a valid key to file
     let file_crypto = Crypto::generate();
-    file_crypto.save(temp_dir.path()).expect("Failed to save key to file");
+    file_crypto
+        .save(temp_dir.path())
+        .expect("Failed to save key to file");
 
     // Set invalid env var
     guard.set("invalid_base64!");
@@ -450,7 +452,11 @@ fn roundtrip_generate_export_import_sign_verify() {
 
     // Step 4: Load from environment variable
     let result = Crypto::load_from_env();
-    assert!(result.is_ok(), "Should load exported key: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Should load exported key: {:?}",
+        result.err()
+    );
 
     let (loaded_crypto, source) = result.unwrap();
     assert_eq!(source, KeySource::EnvironmentVariable);
@@ -470,8 +476,8 @@ fn roundtrip_generate_export_import_sign_verify() {
     let signature_bytes = BASE64_STANDARD
         .decode(&signature)
         .expect("Failed to decode signature");
-    let sig = ed25519_dalek::Signature::from_slice(&signature_bytes)
-        .expect("Failed to parse signature");
+    let sig =
+        ed25519_dalek::Signature::from_slice(&signature_bytes).expect("Failed to parse signature");
 
     let verification_result = original_crypto.verifying_key().verify(message, &sig);
     assert!(
