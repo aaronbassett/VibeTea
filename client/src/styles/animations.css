@@ -17,7 +17,8 @@
  * Duration: ~1.5s for subtle, non-distracting effect.
  */
 @keyframes flicker {
-  0%, 100% {
+  0%,
+  100% {
     opacity: 0.05;
   }
   25% {
@@ -39,7 +40,8 @@
  * Subtle scale change (1.0 -> 1.05) for non-intrusive feedback.
  */
 @keyframes pulse {
-  0%, 100% {
+  0%,
+  100% {
     transform: scale(1);
     opacity: 1;
   }
@@ -57,12 +59,14 @@
  * Creates a breathing glow effect that draws attention without distraction.
  */
 @keyframes glow {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 4px rgba(217, 119, 87, 0.3);
   }
   50% {
-    box-shadow: 0 0 12px rgba(217, 119, 87, 0.6),
-                0 0 20px rgba(217, 119, 87, 0.3);
+    box-shadow:
+      0 0 12px rgba(217, 119, 87, 0.6),
+      0 0 20px rgba(217, 119, 87, 0.3);
   }
 }
 

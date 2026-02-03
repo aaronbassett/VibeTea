@@ -2,29 +2,29 @@
 
 export const COLORS = {
   background: {
-    primary: '#131313',    // Main background
-    secondary: '#1a1a1a',  // Card/panel background
-    tertiary: '#242424',   // Elevated surfaces
+    primary: '#131313', // Main background
+    secondary: '#1a1a1a', // Card/panel background
+    tertiary: '#242424', // Elevated surfaces
   },
   accent: {
-    orange: '#d97757',     // Primary accent (electric orange/coral)
+    orange: '#d97757', // Primary accent (electric orange/coral)
     orangeLight: '#e89a7a', // Hover state
-    orangeDark: '#c45f3f',  // Active state
+    orangeDark: '#c45f3f', // Active state
   },
   text: {
-    primary: '#f5f5f5',    // Main text (WCAG AA on #131313)
-    secondary: '#a0a0a0',  // Secondary text
-    muted: '#6b6b6b',      // Disabled/placeholder
+    primary: '#f5f5f5', // Main text (WCAG AA on #131313)
+    secondary: '#a0a0a0', // Secondary text
+    muted: '#6b6b6b', // Disabled/placeholder
   },
   status: {
-    connected: '#4ade80',   // Green for connected
-    connecting: '#facc15',  // Yellow for connecting
+    connected: '#4ade80', // Green for connected
+    connecting: '#facc15', // Yellow for connecting
     disconnected: '#ef4444', // Red for disconnected
     error: '#ef4444',
   },
   grid: {
-    line: '#2a2a2a',       // Grid line color
-    glow: '#d97757',       // Glow effect color
+    line: '#2a2a2a', // Grid line color
+    glow: '#d97757', // Glow effect color
   },
 } as const;
 
