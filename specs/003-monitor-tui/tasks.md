@@ -85,12 +85,12 @@
 
 ### Sender Metrics Extension
 - [x] T034 Add SenderMetrics struct to monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T035 [GIT] Commit: add SenderMetrics struct
+- [x] T035 [GIT] Commit: add SenderMetrics struct
 - [x] T036 Add metrics() method and counters to Sender in monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T037 [GIT] Commit: implement sender metrics tracking
+- [x] T037 [GIT] Commit: implement sender metrics tracking
 
 ### Error Types
-- [ ] T038 Add TuiError and SetupError types to monitor/src/error.rs (use devs:rust-dev agent)
+- [x] T038 Add TuiError and SetupError types to monitor/src/error.rs (use devs:rust-dev agent)
 - [ ] T039 [GIT] Commit: add TUI error types
 
 ### Codebase Mapping and Retro

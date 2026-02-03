@@ -43,7 +43,7 @@ pub mod watcher;
 
 pub use config::Config;
 pub use crypto::{Crypto, CryptoError};
-pub use error::{MonitorError, Result};
+pub use error::{MonitorError, Result, SetupError, TuiError};
 pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
 pub use sender::{RetryPolicy, Sender, SenderConfig, SenderError, SenderMetrics};
