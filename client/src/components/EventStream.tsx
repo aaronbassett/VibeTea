@@ -250,7 +250,11 @@ interface EventRowProps {
 /**
  * Renders a single event row with optional entrance animation.
  */
-function EventRow({ event, shouldAnimate, prefersReducedMotion }: EventRowProps) {
+function EventRow({
+  event,
+  shouldAnimate,
+  prefersReducedMotion,
+}: EventRowProps) {
   const Icon = EVENT_TYPE_ICONS[event.type];
   const colorClass = EVENT_TYPE_COLORS[event.type];
   const description = getEventDescription(event);
@@ -263,29 +267,34 @@ function EventRow({ event, shouldAnimate, prefersReducedMotion }: EventRowProps)
     <>
       {/* Event type icon and badge */}
       <div
-        className={`flex items-center gap-2 px-2 py-1 rounded-md border ${colorClass}`}
+        className={`flex items-center justify-center gap-2 px-2.5 py-1 rounded-md border min-w-[90px] ${colorClass}`}
       >
-        <Icon className="w-4 h-4" aria-hidden="true" />
+        <Icon className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
         <span className="text-xs font-medium capitalize">{event.type}</span>
       </div>
 
       {/* Event description */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-gray-100 truncate">{description}</p>
-        <p className="text-xs text-gray-500 truncate">
+        <p className="text-sm text-[#f5f5f5] truncate">{description}</p>
+        <p className="text-xs text-[#6b6b6b] truncate">
           {event.source} | {event.payload.sessionId.slice(0, 8)}...
         </p>
       </div>
 
       {/* Timestamp */}
-      <time
-        dateTime={event.timestamp}
-        className="text-xs text-gray-400 font-mono shrink-0"
-      >
-        {formattedTime}
-      </time>
+      <div className="flex items-center shrink-0 pl-3 ml-2 border-l border-[#2a2a2a]">
+        <time
+          dateTime={event.timestamp}
+          className="text-xs text-[#a0a0a0] font-mono tabular-nums"
+        >
+          {formattedTime}
+        </time>
+      </div>
     </>
   );
+
+  const rowClassName =
+    'group flex items-center gap-3 px-4 py-3 border-b border-[#1a1a1a] transition-[background-color,border-color] duration-150 hover:bg-[#1a1a1a]/70 hover:border-[#2a2a2a]';
 
   // If animating, use framer-motion's m.div
   if (animate) {
@@ -294,7 +303,7 @@ function EventRow({ event, shouldAnimate, prefersReducedMotion }: EventRowProps)
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={SPRING_CONFIGS.standard}
-        className="group flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors border-b border-gray-800/50"
+        className={rowClassName}
         role="listitem"
         aria-label={`${event.type} event at ${formattedTime}: ${description}`}
       >
@@ -306,7 +315,7 @@ function EventRow({ event, shouldAnimate, prefersReducedMotion }: EventRowProps)
   // No animation - render plain div
   return (
     <div
-      className="group flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors border-b border-gray-800/50"
+      className={rowClassName}
       role="listitem"
       aria-label={`${event.type} event at ${formattedTime}: ${description}`}
     >
@@ -562,7 +571,8 @@ export function EventStream({ className = '' }: EventStreamProps) {
             // 3. It hasn't already been animated
             // 4. Animation throttle allows it
             let eventShouldAnimate = false;
-            const isInitialEvent = initialEventIdsRef.current?.has(event.id) ?? true;
+            const isInitialEvent =
+              initialEventIdsRef.current?.has(event.id) ?? true;
             const hasBeenAnimated = animatedEventIdsRef.current.has(event.id);
 
             if (!isInitialEvent && !hasBeenAnimated) {
