@@ -54,6 +54,122 @@ interface EventStreamProps {
   readonly className?: string;
 }
 
+/**
+ * Tracks the animation state for an individual event in the stream.
+ *
+ * Used to determine whether an event should play entrance animations based on:
+ * - Age threshold: Events older than `eventAnimationMaxAgeMs` (5s) should not animate
+ * - Initial load: Events present on first render should not animate
+ * - Throttle limits: Respects `maxEntranceAnimationsPerSecond` (10/s) constraint
+ *
+ * @see ANIMATION_TIMING.eventAnimationMaxAgeMs - 5000ms threshold
+ * @see ANIMATION_TIMING.maxEntranceAnimationsPerSecond - 10/s throttle limit
+ */
+export interface EventAnimationState {
+  /** The unique identifier of the event. */
+  readonly eventId: string;
+  /** Whether the event is within the animation age threshold (< 5 seconds old). */
+  readonly shouldAnimate: boolean;
+  /** Whether this event was just added (vs present during initial load). */
+  readonly isNew: boolean;
+}
+
+/**
+ * Tracks recently animated events for throttling entrance animations.
+ * Maps event IDs to the timestamp when their animation was triggered.
+ */
+export type AnimationThrottleMap = Map<string, number>;
+
+/**
+ * Determines if an event should animate based on its age.
+ *
+ * @param eventTimestamp - RFC 3339 timestamp of the event
+ * @param currentTime - Current time in milliseconds (Date.now())
+ * @param maxAgeMs - Maximum age in milliseconds for animation eligibility (default: 5000)
+ * @returns true if the event is within the animation age threshold
+ *
+ * @example
+ * ```ts
+ * const eventTs = new Date().toISOString();
+ * const canAnimate = shouldEventAnimate(eventTs, Date.now(), 5000);
+ * // canAnimate === true (just created)
+ *
+ * // After 6 seconds...
+ * const canAnimateLater = shouldEventAnimate(eventTs, Date.now(), 5000);
+ * // canAnimateLater === false (too old)
+ * ```
+ */
+export function shouldEventAnimate(
+  eventTimestamp: string,
+  currentTime: number,
+  maxAgeMs: number = 5000
+): boolean {
+  const eventTime = new Date(eventTimestamp).getTime();
+  const ageMs = currentTime - eventTime;
+  return ageMs < maxAgeMs && ageMs >= 0;
+}
+
+/**
+ * Checks if a new animation can be triggered without exceeding the throttle limit.
+ *
+ * @param throttleMap - Map of recently animated event IDs to their animation timestamps
+ * @param currentTime - Current time in milliseconds
+ * @param maxPerSecond - Maximum animations allowed per second (default: 10)
+ * @returns true if a new animation can be triggered
+ *
+ * @example
+ * ```ts
+ * const throttle = new Map<string, number>();
+ * if (canTriggerAnimation(throttle, Date.now(), 10)) {
+ *   throttle.set(eventId, Date.now());
+ *   // trigger animation...
+ * }
+ * ```
+ */
+export function canTriggerAnimation(
+  throttleMap: AnimationThrottleMap,
+  currentTime: number,
+  maxPerSecond: number = 10
+): boolean {
+  // Count animations triggered within the last second
+  const oneSecondAgo = currentTime - 1000;
+  let recentCount = 0;
+
+  for (const timestamp of throttleMap.values()) {
+    if (timestamp > oneSecondAgo) {
+      recentCount++;
+    }
+  }
+
+  return recentCount < maxPerSecond;
+}
+
+/**
+ * Cleans up old entries from the throttle map to prevent memory leaks.
+ * Removes entries older than 1 second.
+ *
+ * @param throttleMap - Map of recently animated event IDs to their animation timestamps
+ * @param currentTime - Current time in milliseconds
+ *
+ * @example
+ * ```ts
+ * // Call periodically or before checking throttle
+ * cleanupThrottleMap(throttleMap, Date.now());
+ * ```
+ */
+export function cleanupThrottleMap(
+  throttleMap: AnimationThrottleMap,
+  currentTime: number
+): void {
+  const oneSecondAgo = currentTime - 1000;
+
+  for (const [eventId, timestamp] of throttleMap.entries()) {
+    if (timestamp <= oneSecondAgo) {
+      throttleMap.delete(eventId);
+    }
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Helper Functions
 // -----------------------------------------------------------------------------
