@@ -230,9 +230,7 @@ function ActivityIndicator({
   const pulseClass = PULSE_ANIMATIONS[activityLevel];
 
   // Base indicator styling
-  const baseClass = isActive
-    ? 'bg-green-500'
-    : 'bg-gray-500';
+  const baseClass = isActive ? 'bg-green-500' : 'bg-gray-500';
 
   return (
     <span
@@ -471,7 +469,9 @@ export function SessionOverview({
               key={session.sessionId}
               session={session}
               recentEventCount={recentEventCounts.get(session.sessionId) ?? 0}
-              onClick={onSessionClick !== undefined ? handleSessionClick : undefined}
+              onClick={
+                onSessionClick !== undefined ? handleSessionClick : undefined
+              }
             />
           ))}
         </div>
