@@ -93,10 +93,8 @@ function createSupabaseClient(): SupabaseClient {
 /**
  * Parse and validate query parameters
  *
- * TODO (T047): Implement full validation logic
- *   - Validate days is 7 or 30
- *   - Validate source format if provided
- *   - Return appropriate error messages
+ * @param url - Request URL to extract query parameters from
+ * @returns Parsed parameters or an error object
  */
 function parseQueryParams(
   url: URL
@@ -110,8 +108,7 @@ function parseQueryParams(
   if (daysParam !== null) {
     const parsedDays = parseInt(daysParam, 10);
 
-    // TODO (T047): Implement proper validation
-    // For now, check if it's a valid value
+    // Validate days is one of the allowed values (7 or 30)
     if (!VALID_DAYS.includes(parsedDays as ValidDays)) {
       return {
         error: "invalid_days",
