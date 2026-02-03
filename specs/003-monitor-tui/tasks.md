@@ -81,12 +81,12 @@
 - [x] T030 [GIT] Commit: add AppState and Screen types
 - [x] T031 [P] Implement Theme struct with default and monochrome variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
 - [x] T032 [P] Implement Symbols struct with unicode and ascii variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T033 [GIT] Commit: add Theme and Symbols configuration
+- [x] T033 [GIT] Commit: add Theme and Symbols configuration
 
 ### Sender Metrics Extension
-- [ ] T034 Add SenderMetrics struct to monitor/src/sender.rs (use devs:rust-dev agent)
+- [x] T034 Add SenderMetrics struct to monitor/src/sender.rs (use devs:rust-dev agent)
 - [ ] T035 [GIT] Commit: add SenderMetrics struct
-- [ ] T036 Add metrics() method and counters to Sender in monitor/src/sender.rs (use devs:rust-dev agent)
+- [x] T036 Add metrics() method and counters to Sender in monitor/src/sender.rs (use devs:rust-dev agent)
 - [ ] T037 [GIT] Commit: implement sender metrics tracking
 
 ### Error Types

@@ -46,7 +46,7 @@ pub use crypto::{Crypto, CryptoError};
 pub use error::{MonitorError, Result};
 pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
-pub use sender::{RetryPolicy, Sender, SenderConfig, SenderError};
+pub use sender::{RetryPolicy, Sender, SenderConfig, SenderError, SenderMetrics};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
 pub use utils::{Debouncer, DebouncerError, DEFAULT_DEBOUNCE_MS};
 pub use watcher::{check_inotify_usage, FileWatcher, InotifyUsage, WatchEvent, WatcherError};
