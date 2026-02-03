@@ -87,6 +87,7 @@ pub enum WatchEvent {
 
 /// Internal events from the notify callback, processed by the async task.
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 enum InternalEvent {
     FileCreated(PathBuf),
     FileModified(PathBuf),
