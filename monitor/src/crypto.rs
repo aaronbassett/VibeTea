@@ -54,6 +54,9 @@ const PUBLIC_KEY_FILE: &str = "key.pub";
 /// Length of Ed25519 seed (private key material).
 const SEED_LENGTH: usize = 32;
 
+/// Environment variable name for the private key.
+const ENV_PRIVATE_KEY: &str = "VIBETEA_PRIVATE_KEY";
+
 /// Errors that can occur during cryptographic operations.
 #[derive(Error, Debug)]
 pub enum CryptoError {
@@ -72,6 +75,10 @@ pub enum CryptoError {
     /// Key file already exists.
     #[error("key file already exists: {0}")]
     KeyExists(String),
+
+    /// Environment variable not set or empty.
+    #[error("environment variable not set: {0}")]
+    EnvVar(String),
 }
 
 /// Handles Ed25519 cryptographic operations.
@@ -103,6 +110,126 @@ impl Crypto {
         rand::rng().fill(&mut seed);
         let signing_key = SigningKey::from_bytes(&seed);
         Self { signing_key }
+    }
+
+    /// Loads a keypair from the `VIBETEA_PRIVATE_KEY` environment variable.
+    ///
+    /// The environment variable should contain a base64-encoded 32-byte
+    /// Ed25519 seed (RFC 4648 standard base64). Whitespace (including newlines)
+    /// is trimmed before decoding.
+    ///
+    /// Returns a tuple of the `Crypto` instance and `KeySource::EnvironmentVariable`
+    /// to indicate where the key was loaded from.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError` if:
+    /// - The environment variable is not set or is empty
+    /// - The value is not valid base64
+    /// - The decoded key is not exactly 32 bytes
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::{Crypto, KeySource};
+    ///
+    /// // Assuming VIBETEA_PRIVATE_KEY is set with a valid base64 seed
+    /// let (crypto, source) = Crypto::load_from_env().unwrap();
+    /// assert_eq!(source, KeySource::EnvironmentVariable);
+    /// ```
+    pub fn load_from_env() -> Result<(Self, KeySource), CryptoError> {
+        let value = std::env::var(ENV_PRIVATE_KEY)
+            .map_err(|_| CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()))?;
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()));
+        }
+
+        let decoded = BASE64_STANDARD.decode(trimmed)?;
+
+        if decoded.len() != SEED_LENGTH {
+            return Err(CryptoError::InvalidKey(format!(
+                "expected {} bytes, got {}",
+                SEED_LENGTH,
+                decoded.len()
+            )));
+        }
+
+        let seed: [u8; SEED_LENGTH] = decoded
+            .try_into()
+            .expect("length already validated");
+        let signing_key = SigningKey::from_bytes(&seed);
+
+        Ok((Self { signing_key }, KeySource::EnvironmentVariable))
+    }
+
+    /// Loads a keypair, trying the environment variable first, then the file.
+    ///
+    /// This method implements the key precedence rule:
+    /// 1. If `VIBETEA_PRIVATE_KEY` is set, it is used (env var takes precedence)
+    /// 2. If the env var is set but invalid, an error is returned (no fallback)
+    /// 3. If the env var is not set, the key is loaded from `{dir}/key.priv`
+    ///
+    /// Returns a tuple of the `Crypto` instance and `KeySource` indicating
+    /// where the key was loaded from.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory containing the fallback key file
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError` if:
+    /// - The env var is set but invalid (base64 or length error)
+    /// - The env var is not set and the file doesn't exist or is invalid
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::{Crypto, KeySource};
+    /// use std::path::Path;
+    ///
+    /// let (crypto, source) = Crypto::load_with_env(Path::new("/home/user/.vibetea")).unwrap();
+    /// match source {
+    ///     KeySource::EnvironmentVariable => println!("Loaded from env var"),
+    ///     KeySource::File(path) => println!("Loaded from file: {:?}", path),
+    /// }
+    /// ```
+    pub fn load_with_env(dir: &Path) -> Result<(Self, KeySource), CryptoError> {
+        // Check if the environment variable is set
+        match std::env::var(ENV_PRIVATE_KEY) {
+            Ok(value) => {
+                // Env var is set - try to load from it (no fallback on error)
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()));
+                }
+
+                let decoded = BASE64_STANDARD.decode(trimmed)?;
+
+                if decoded.len() != SEED_LENGTH {
+                    return Err(CryptoError::InvalidKey(format!(
+                        "expected {} bytes, got {}",
+                        SEED_LENGTH,
+                        decoded.len()
+                    )));
+                }
+
+                let seed: [u8; SEED_LENGTH] = decoded
+                    .try_into()
+                    .expect("length already validated");
+                let signing_key = SigningKey::from_bytes(&seed);
+
+                Ok((Self { signing_key }, KeySource::EnvironmentVariable))
+            }
+            Err(_) => {
+                // Env var not set - load from file
+                let priv_path = dir.join(PRIVATE_KEY_FILE);
+                let crypto = Self::load(dir)?;
+                Ok((crypto, KeySource::File(priv_path)))
+            }
+        }
     }
 
     /// Loads an existing keypair from a directory.
@@ -241,6 +368,30 @@ impl Crypto {
     #[must_use]
     pub fn public_key_base64(&self) -> String {
         BASE64_STANDARD.encode(self.signing_key.verifying_key().as_bytes())
+    }
+
+    /// Returns the private key seed as a base64-encoded string.
+    ///
+    /// This is the inverse of `load_from_env()` - the returned string can be
+    /// stored in the `VIBETEA_PRIVATE_KEY` environment variable.
+    ///
+    /// # Security
+    ///
+    /// The seed is sensitive key material. Handle the returned string with care
+    /// and avoid logging it or storing it in insecure locations.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::crypto::Crypto;
+    ///
+    /// let crypto = Crypto::generate();
+    /// let seed = crypto.seed_base64();
+    /// // Can be used with: VIBETEA_PRIVATE_KEY=<seed>
+    /// ```
+    #[must_use]
+    pub fn seed_base64(&self) -> String {
+        BASE64_STANDARD.encode(self.signing_key.to_bytes())
     }
 
     /// Returns the first 8 characters of the base64-encoded public key.
@@ -480,5 +631,186 @@ mod tests {
         // Should be valid base64 and decode to 32 bytes
         let decoded = BASE64_STANDARD.decode(pubkey).unwrap();
         assert_eq!(decoded.len(), 32);
+    }
+
+    #[test]
+    fn test_seed_base64_returns_valid_base64() {
+        let crypto = Crypto::generate();
+        let seed_b64 = crypto.seed_base64();
+
+        // Should decode to exactly 32 bytes
+        let decoded = BASE64_STANDARD.decode(&seed_b64).unwrap();
+        assert_eq!(decoded.len(), SEED_LENGTH);
+    }
+
+    #[test]
+    fn test_seed_base64_roundtrip() {
+        // Generate a key and get its seed
+        let original = Crypto::generate();
+        let seed_b64 = original.seed_base64();
+        let original_pubkey = original.public_key_base64();
+
+        // Decode and recreate
+        let decoded = BASE64_STANDARD.decode(&seed_b64).unwrap();
+        let seed: [u8; SEED_LENGTH] = decoded.try_into().unwrap();
+        let signing_key = SigningKey::from_bytes(&seed);
+        let recreated = Crypto { signing_key };
+
+        // Should have the same public key
+        assert_eq!(original_pubkey, recreated.public_key_base64());
+    }
+
+    mod env_tests {
+        use super::*;
+        use serial_test::serial;
+
+        /// RAII guard for environment variable manipulation in tests.
+        struct EnvGuard {
+            key: String,
+            original: Option<String>,
+        }
+
+        impl EnvGuard {
+            fn new(key: &str) -> Self {
+                let original = std::env::var(key).ok();
+                Self {
+                    key: key.to_string(),
+                    original,
+                }
+            }
+
+            fn set(&self, value: &str) {
+                std::env::set_var(&self.key, value);
+            }
+
+            fn remove(&self) {
+                std::env::remove_var(&self.key);
+            }
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.original {
+                    Some(val) => std::env::set_var(&self.key, val),
+                    None => std::env::remove_var(&self.key),
+                }
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_success() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+
+            // Generate a key and export its seed
+            let original = Crypto::generate();
+            let seed_b64 = original.seed_base64();
+            let original_pubkey = original.public_key_base64();
+
+            // Set the env var and load
+            guard.set(&seed_b64);
+            let (loaded, source) = Crypto::load_from_env().unwrap();
+
+            // Should have the same public key
+            assert_eq!(original_pubkey, loaded.public_key_base64());
+            assert_eq!(source, KeySource::EnvironmentVariable);
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_trims_whitespace() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+
+            let original = Crypto::generate();
+            let seed_b64 = original.seed_base64();
+            let original_pubkey = original.public_key_base64();
+
+            // Add whitespace around the value
+            let with_whitespace = format!("  \n{}\n  ", seed_b64);
+            guard.set(&with_whitespace);
+
+            let (loaded, _) = Crypto::load_from_env().unwrap();
+            assert_eq!(original_pubkey, loaded.public_key_base64());
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_missing_var() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.remove();
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::EnvVar(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_empty_var() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.set("");
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::EnvVar(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_whitespace_only() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.set("   \n\t  ");
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::EnvVar(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_invalid_base64() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.set("not-valid-base64!!!");
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::Base64(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_wrong_length() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            // 16 bytes instead of 32
+            let short_seed = BASE64_STANDARD.encode([0u8; 16]);
+            guard.set(&short_seed);
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(matches!(err, CryptoError::InvalidKey(_)));
+            if let CryptoError::InvalidKey(msg) = err {
+                assert!(msg.contains("expected 32 bytes"));
+                assert!(msg.contains("got 16"));
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_too_long() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            // 64 bytes instead of 32
+            let long_seed = BASE64_STANDARD.encode([0u8; 64]);
+            guard.set(&long_seed);
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(matches!(err, CryptoError::InvalidKey(_)));
+            if let CryptoError::InvalidKey(msg) = err {
+                assert!(msg.contains("expected 32 bytes"));
+                assert!(msg.contains("got 64"));
+            }
+        }
     }
 }
