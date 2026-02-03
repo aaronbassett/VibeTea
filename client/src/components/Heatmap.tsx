@@ -16,8 +16,9 @@
 
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, m } from 'framer-motion';
 
-import { COLORS } from '../constants/design-tokens';
+import { COLORS, SPRING_CONFIGS } from '../constants/design-tokens';
 import { useEventStore } from '../hooks/useEventStore';
 
 import type { VibeteaEvent } from '../types/events';
@@ -315,26 +316,35 @@ function HourHeader() {
 
 /**
  * Tooltip component for showing cell details on hover.
+ * Animated with spring physics for smooth entrance/exit transitions.
  */
 function CellTooltip({ cell }: { readonly cell: HoveredCell }) {
   const dateTime = formatCellDateTime(new Date(cell.date), cell.hour);
   const eventText = cell.count === 1 ? 'event' : 'events';
 
   return (
-    <div
-      className="absolute z-50 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg shadow-xl text-sm pointer-events-none"
+    <m.div
+      className="absolute z-50 px-3 py-2 rounded-lg shadow-xl text-sm pointer-events-none"
       style={{
         left: cell.x,
         top: cell.y,
         transform: 'translate(-50%, -100%) translateY(-8px)',
+        backgroundColor: COLORS.background.secondary,
+        borderWidth: 1,
+        borderStyle: 'solid',
+        borderColor: COLORS.background.tertiary,
       }}
+      initial={{ opacity: 0, y: 8, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: 8, scale: 0.95 }}
+      transition={SPRING_CONFIGS.standard}
       role="tooltip"
     >
-      <div className="font-medium text-white">
+      <div className="font-medium" style={{ color: COLORS.text.primary }}>
         {cell.count} {eventText}
       </div>
-      <div className="text-gray-400">{dateTime}</div>
-    </div>
+      <div style={{ color: COLORS.text.secondary }}>{dateTime}</div>
+    </m.div>
   );
 }
 
@@ -754,7 +764,9 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
           </div>
 
           {/* Tooltip */}
-          {hoveredCell !== null && <CellTooltip cell={hoveredCell} />}
+          <AnimatePresence>
+            {hoveredCell !== null && <CellTooltip cell={hoveredCell} />}
+          </AnimatePresence>
 
           {/* Legend */}
           <div className="flex items-center justify-end gap-2 mt-4 text-xs text-gray-500">
