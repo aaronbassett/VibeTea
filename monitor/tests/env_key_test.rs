@@ -346,7 +346,7 @@ fn env_var_takes_precedence_over_file() {
     guard.set(&env_base64);
 
     // Load with both sources available - should use env var
-    let result = Crypto::load_with_env(temp_dir.path());
+    let result = Crypto::load_with_fallback(temp_dir.path());
     assert!(result.is_ok(), "Should load key: {:?}", result.err());
 
     let (loaded_crypto, source) = result.unwrap();
@@ -381,7 +381,7 @@ fn file_key_used_when_env_var_not_set() {
     let file_pubkey = file_crypto.public_key_base64();
 
     // Load with only file source available
-    let result = Crypto::load_with_env(temp_dir.path());
+    let result = Crypto::load_with_fallback(temp_dir.path());
     assert!(result.is_ok(), "Should load key from file: {:?}", result.err());
 
     let (loaded_crypto, source) = result.unwrap();
@@ -417,7 +417,7 @@ fn invalid_env_var_does_not_fallback_to_file() {
     guard.set("invalid_base64!");
 
     // Load should fail with env var error, not fallback to file
-    let result = Crypto::load_with_env(temp_dir.path());
+    let result = Crypto::load_with_fallback(temp_dir.path());
     assert!(
         result.is_err(),
         "Should fail with env var error, not silently fallback to file"
@@ -622,7 +622,7 @@ fn key_source_is_file_with_correct_path_when_loaded_from_file() {
     let crypto = Crypto::generate();
     crypto.save(temp_dir.path()).expect("Failed to save key");
 
-    let (_, source) = Crypto::load_with_env(temp_dir.path()).expect("Should load key");
+    let (_, source) = Crypto::load_with_fallback(temp_dir.path()).expect("Should load key");
 
     assert_eq!(
         source,

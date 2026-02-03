@@ -190,13 +190,13 @@ impl Crypto {
     /// use vibetea_monitor::crypto::{Crypto, KeySource};
     /// use std::path::Path;
     ///
-    /// let (crypto, source) = Crypto::load_with_env(Path::new("/home/user/.vibetea")).unwrap();
+    /// let (crypto, source) = Crypto::load_with_fallback(Path::new("/home/user/.vibetea")).unwrap();
     /// match source {
     ///     KeySource::EnvironmentVariable => println!("Loaded from env var"),
     ///     KeySource::File(path) => println!("Loaded from file: {:?}", path),
     /// }
     /// ```
-    pub fn load_with_env(dir: &Path) -> Result<(Self, KeySource), CryptoError> {
+    pub fn load_with_fallback(dir: &Path) -> Result<(Self, KeySource), CryptoError> {
         // Check if the environment variable is set
         match std::env::var(ENV_PRIVATE_KEY) {
             Ok(value) => {
