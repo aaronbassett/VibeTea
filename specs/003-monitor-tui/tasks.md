@@ -411,25 +411,25 @@
 **Independent Test**: Run monitor with existing keys, select "Generate new key", verify new keypair created and old backed up
 
 ### Phase Start
-- [ ] T201 [GIT] Verify working tree is clean before starting Phase 9
-- [ ] T202 [GIT] Pull and rebase on origin/main if needed
-- [ ] T203 [US7] Create retro/P9.md for this phase
-- [ ] T204 [GIT] Commit: initialize phase 9 retro
+- [x] T201 [GIT] Verify working tree is clean before starting Phase 9
+- [x] T202 [GIT] Pull and rebase on origin/main if needed
+- [x] T203 [US7] Create retro/P9.md for this phase
+- [x] T204 [GIT] Commit: initialize phase 9 retro
 
 ### Key Option UI
-- [ ] T205 [US7] Implement key option toggle in setup form in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T206 [GIT] Commit: add key option toggle UI
-- [ ] T207 [US7] Show "Use existing" only when keys exist in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T208 [GIT] Commit: conditionally show key options
+- [x] T205 [US7] Implement key option toggle in setup form in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T206 [GIT] Commit: add key option toggle UI
+- [x] T207 [US7] Show "Use existing" only when keys exist in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T208 [GIT] Commit: conditionally show key options
 
 ### Key Backup Logic
-- [ ] T209 [US7] Implement key backup with timestamp suffix in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T210 [GIT] Commit: add key backup before regeneration
+- [x] T209 [US7] Implement key backup with timestamp suffix in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T210 [GIT] Commit: add key backup before regeneration
 
 ### Codebase Mapping and Retro
-- [ ] T211 [US7] Run /sdd:map incremental for Phase 9 changes
-- [ ] T212 [GIT] Commit: update codebase documents for phase 9
-- [ ] T213 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T211 [US7] Run /sdd:map incremental for Phase 9 changes
+- [x] T212 [GIT] Commit: update codebase documents for phase 9
+- [x] T213 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T214 [GIT] Commit: finalize phase 9 retro
 
 ### Phase Completion
