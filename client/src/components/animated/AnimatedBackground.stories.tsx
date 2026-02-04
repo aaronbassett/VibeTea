@@ -208,9 +208,7 @@ The component respects these settings automatically without any additional confi
             Enable &quot;prefers-reduced-motion&quot; in your system settings or
             Chrome DevTools to see this component pause all animations.
           </p>
-          <p
-            style={{ opacity: 0.7, marginTop: '12px', fontSize: '12px' }}
-          >
+          <p style={{ opacity: 0.7, marginTop: '12px', fontSize: '12px' }}>
             DevTools: Rendering tab &rarr; Emulate prefers-reduced-motion
           </p>
         </div>

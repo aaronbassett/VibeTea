@@ -51,7 +51,9 @@ function createMockEvents(
       const timestamp = new Date(
         baseTime.getTime() + idCounter * 60000
       ).toISOString();
-      events.push(createMockEvent(type as EventType, `evt-${idCounter}`, timestamp));
+      events.push(
+        createMockEvent(type as EventType, `evt-${idCounter}`, timestamp)
+      );
       idCounter++;
     }
   }

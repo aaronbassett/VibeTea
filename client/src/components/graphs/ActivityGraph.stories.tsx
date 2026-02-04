@@ -27,7 +27,13 @@ function generateEventId(index: number): string {
 function createSampleEvent(
   index: number,
   offsetMs: number,
-  type: 'session' | 'activity' | 'tool' | 'agent' | 'summary' | 'error' = 'activity'
+  type:
+    | 'session'
+    | 'activity'
+    | 'tool'
+    | 'agent'
+    | 'summary'
+    | 'error' = 'activity'
 ): VibeteaEvent {
   const timestamp = new Date(Date.now() - offsetMs).toISOString();
   const sessionId = `session-${Math.floor(index / 5) + 1}`;
@@ -35,7 +41,12 @@ function createSampleEvent(
   const payloads = {
     session: { sessionId, action: 'started' as const, project: 'vibetea' },
     activity: { sessionId, project: 'vibetea' },
-    tool: { sessionId, tool: 'Bash', status: 'completed' as const, project: 'vibetea' },
+    tool: {
+      sessionId,
+      tool: 'Bash',
+      status: 'completed' as const,
+      project: 'vibetea',
+    },
     agent: { sessionId, state: 'thinking' },
     summary: { sessionId, summary: 'Completed task successfully' },
     error: { sessionId, category: 'timeout' },
@@ -59,14 +70,9 @@ function createSampleEvent(
  */
 function generateSampleEvents(count: number, rangeMs: number): VibeteaEvent[] {
   const events: VibeteaEvent[] = [];
-  const eventTypes: Array<'session' | 'activity' | 'tool' | 'agent' | 'summary' | 'error'> = [
-    'activity',
-    'activity',
-    'tool',
-    'activity',
-    'tool',
-    'agent',
-  ];
+  const eventTypes: Array<
+    'session' | 'activity' | 'tool' | 'agent' | 'summary' | 'error'
+  > = ['activity', 'activity', 'tool', 'activity', 'tool', 'agent'];
 
   for (let i = 0; i < count; i++) {
     // Distribute events randomly within the time range
@@ -101,9 +107,16 @@ function generateHighActivityEvents(rangeMs: number): VibeteaEvent[] {
     for (let i = 0; i < burstSize; i++) {
       const variance = (rangeMs / burstCount) * 0.3;
       const offset = burstCenter + (Math.random() - 0.5) * variance;
-      const eventTypes: Array<'tool' | 'activity' | 'agent'> = ['tool', 'activity', 'agent'];
-      const eventType = eventTypes[eventIndex % eventTypes.length] ?? 'activity';
-      events.push(createSampleEvent(eventIndex, Math.max(0, offset), eventType));
+      const eventTypes: Array<'tool' | 'activity' | 'agent'> = [
+        'tool',
+        'activity',
+        'agent',
+      ];
+      const eventType =
+        eventTypes[eventIndex % eventTypes.length] ?? 'activity';
+      events.push(
+        createSampleEvent(eventIndex, Math.max(0, offset), eventType)
+      );
       eventIndex++;
     }
   }
@@ -179,7 +192,8 @@ const meta = {
     },
     onTimeRangeChange: {
       action: 'onTimeRangeChange',
-      description: 'Callback invoked when the user selects a different time range',
+      description:
+        'Callback invoked when the user selects a different time range',
       table: {
         type: { summary: '(range: TimeRange) => void' },
       },

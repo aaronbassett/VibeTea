@@ -34,7 +34,12 @@ function createSampleEvent(
 ): VibeteaEvent {
   const timestamp = new Date(Date.now() - offsetMs).toISOString();
   const sessionId = `session-${sessionIndex ?? Math.floor(index / 5) + 1}`;
-  const sources = ['claude-agent', 'vim-plugin', 'vscode-extension', 'terminal-client'];
+  const sources = [
+    'claude-agent',
+    'vim-plugin',
+    'vscode-extension',
+    'terminal-client',
+  ];
   const source = sources[index % sources.length] ?? 'claude-agent';
 
   const payloads: Record<EventType, VibeteaEvent['payload']> = {
@@ -56,21 +61,26 @@ function createSampleEvent(
     },
     agent: {
       sessionId,
-      state: ['thinking', 'executing', 'waiting', 'idle'][index % 4] ?? 'thinking',
+      state:
+        ['thinking', 'executing', 'waiting', 'idle'][index % 4] ?? 'thinking',
     },
     summary: {
       sessionId,
-      summary: [
-        'Implemented new EventStream component with virtual scrolling support',
-        'Fixed performance issue in dashboard rendering pipeline',
-        'Refactored authentication flow to use modern patterns',
-        'Added comprehensive test coverage for API endpoints',
-        'Updated documentation with usage examples and best practices',
-      ][index % 5] ?? 'Completed task successfully',
+      summary:
+        [
+          'Implemented new EventStream component with virtual scrolling support',
+          'Fixed performance issue in dashboard rendering pipeline',
+          'Refactored authentication flow to use modern patterns',
+          'Added comprehensive test coverage for API endpoints',
+          'Updated documentation with usage examples and best practices',
+        ][index % 5] ?? 'Completed task successfully',
     },
     error: {
       sessionId,
-      category: ['timeout', 'network', 'validation', 'permission', 'unknown'][index % 5] ?? 'unknown',
+      category:
+        ['timeout', 'network', 'validation', 'permission', 'unknown'][
+          index % 5
+        ] ?? 'unknown',
     },
   };
 
@@ -90,10 +100,22 @@ function createSampleEvent(
  * @param includeErrors - Whether to include error events
  * @returns Array of sample events
  */
-function generateMixedEvents(count: number, includeErrors: boolean = true): VibeteaEvent[] {
+function generateMixedEvents(
+  count: number,
+  includeErrors: boolean = true
+): VibeteaEvent[] {
   const events: VibeteaEvent[] = [];
   const eventTypes: EventType[] = includeErrors
-    ? ['activity', 'tool', 'tool', 'activity', 'agent', 'session', 'summary', 'error']
+    ? [
+        'activity',
+        'tool',
+        'tool',
+        'activity',
+        'agent',
+        'session',
+        'summary',
+        'error',
+      ]
     : ['activity', 'tool', 'tool', 'activity', 'agent', 'session', 'summary'];
 
   for (let i = 0; i < count; i++) {
@@ -124,7 +146,9 @@ function generateHighVolumeEvents(count: number): VibeteaEvent[] {
     // Events are spread across the last 10 seconds
     const offsetMs = (i / count) * 10000;
     const eventType = eventTypes[i % eventTypes.length] ?? 'activity';
-    events.push(createSampleEvent(i, eventType, offsetMs, Math.floor(i / 20) + 1));
+    events.push(
+      createSampleEvent(i, eventType, offsetMs, Math.floor(i / 20) + 1)
+    );
   }
 
   // Sort by timestamp (newest first)
@@ -139,8 +163,17 @@ function generateHighVolumeEvents(count: number): VibeteaEvent[] {
  * @returns Array with one event of each type
  */
 function generateOneOfEachType(): VibeteaEvent[] {
-  const types: EventType[] = ['session', 'activity', 'tool', 'agent', 'summary', 'error'];
-  return types.map((type, index) => createSampleEvent(index, type, index * 1000, 1));
+  const types: EventType[] = [
+    'session',
+    'activity',
+    'tool',
+    'agent',
+    'summary',
+    'error',
+  ];
+  return types.map((type, index) =>
+    createSampleEvent(index, type, index * 1000, 1)
+  );
 }
 
 // -----------------------------------------------------------------------------
@@ -256,7 +289,9 @@ EventStream displays VibeTea events in a virtual scrolling list with efficient r
   decorators: [
     (Story, context) => {
       // Get events from story args or use default
-      const events = (context.args as { _events?: VibeteaEvent[] })._events ?? DEFAULT_EVENTS;
+      const events =
+        (context.args as { _events?: VibeteaEvent[] })._events ??
+        DEFAULT_EVENTS;
       return (
         <EventStoreDecorator events={events}>
           <div

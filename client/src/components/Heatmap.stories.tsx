@@ -96,7 +96,8 @@ function generateHeatmapEvents(
 
       date.setHours(hour, minute, 0, 0);
 
-      const eventType = eventTypes[eventIndex % eventTypes.length] ?? 'activity';
+      const eventType =
+        eventTypes[eventIndex % eventTypes.length] ?? 'activity';
       events.push(createMockEvent(eventIndex, date.toISOString(), eventType));
       eventIndex++;
     }
@@ -125,7 +126,9 @@ function getWeightedHour(): number {
   for (const range of weights) {
     cumulative += range.weight;
     if (random <= cumulative) {
-      return range.start + Math.floor(Math.random() * (range.end - range.start + 1));
+      return (
+        range.start + Math.floor(Math.random() * (range.end - range.start + 1))
+      );
     }
   }
 
@@ -167,7 +170,8 @@ function generateHighActivityEvents(days: number): VibeteaEvent[] {
         date.setDate(date.getDate() - spot.dayOffset);
         date.setHours(hour, Math.floor(Math.random() * 60), 0, 0);
 
-        const eventType = eventTypes[eventIndex % eventTypes.length] ?? 'activity';
+        const eventType =
+          eventTypes[eventIndex % eventTypes.length] ?? 'activity';
         events.push(createMockEvent(eventIndex, date.toISOString(), eventType));
         eventIndex++;
       }
@@ -185,7 +189,8 @@ function generateHighActivityEvents(days: number): VibeteaEvent[] {
         date.setDate(date.getDate() - dayOffset);
         date.setHours(hour, Math.floor(Math.random() * 60), 0, 0);
 
-        const eventType = eventTypes[eventIndex % eventTypes.length] ?? 'activity';
+        const eventType =
+          eventTypes[eventIndex % eventTypes.length] ?? 'activity';
         events.push(createMockEvent(eventIndex, date.toISOString(), eventType));
         eventIndex++;
       }
@@ -237,7 +242,8 @@ function HeatmapWithMockStore({
 
     // Add events in reverse order so newest are first
     const sortedEvents = [...events].sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      (a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
 
     for (const event of sortedEvents) {

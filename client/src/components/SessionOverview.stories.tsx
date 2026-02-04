@@ -73,7 +73,12 @@ function generateRecentEvents(
     const payloads: Record<EventType, VibeteaEvent['payload']> = {
       session: { sessionId, action: 'started', project: 'vibetea' },
       activity: { sessionId, project: 'vibetea' },
-      tool: { sessionId, tool: 'Bash', status: 'completed', project: 'vibetea' },
+      tool: {
+        sessionId,
+        tool: 'Bash',
+        status: 'completed',
+        project: 'vibetea',
+      },
       agent: { sessionId, state: 'thinking' },
       summary: { sessionId, summary: 'Completed task successfully' },
       error: { sessionId, category: 'timeout' },
