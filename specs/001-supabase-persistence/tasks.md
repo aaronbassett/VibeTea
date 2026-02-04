@@ -241,8 +241,8 @@
 
 ### Implementation
 - [x] T124 [US1] Create retro/P6.md for this phase
-- [ ] T125 [GIT] Commit: initialize phase 6 retro
-- [ ] T126 [US1] Create persistence feature detection helper in client/src/utils/persistence.ts (check VITE_SUPABASE_URL) (use devs:typescript-dev agent)
+- [x] T125 [GIT] Commit: initialize phase 6 retro
+- [x] T126 [US1] Create persistence feature detection helper in client/src/utils/persistence.ts (check VITE_SUPABASE_URL) (use devs:typescript-dev agent)
 - [ ] T127 [GIT] Commit: add persistence feature detection
 - [ ] T128 [US1] Implement data merging logic in client/src/components/Heatmap.tsx - real-time events in current hour take precedence over historic hourly aggregates (hour-level merge, not event-level) (use devs:react-dev agent)
 - [ ] T129 [GIT] Commit: implement heatmap data merging
