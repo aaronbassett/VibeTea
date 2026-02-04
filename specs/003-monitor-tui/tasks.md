@@ -485,38 +485,38 @@
 **Purpose**: Final integration, main.rs updates, and overall quality
 
 ### Phase Start
-- [ ] T237 [GIT] Verify working tree is clean before starting Phase 11
-- [ ] T238 [GIT] Pull and rebase on origin/main if needed
-- [ ] T239 Create retro/P11.md for this phase
-- [ ] T240 [GIT] Commit: initialize phase 11 retro
+- [x] T237 [GIT] Verify working tree is clean before starting Phase 11
+- [x] T238 [GIT] Pull and rebase on origin/main if needed
+- [x] T239 Create retro/P11.md for this phase
+- [x] T240 [GIT] Commit: initialize phase 11 retro
 
 ### Main.rs Integration
-- [ ] T241 Update monitor/src/main.rs to make TUI the default mode in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T242 [GIT] Commit: make TUI default mode
-- [ ] T243 Preserve existing init/run subcommands for scripting in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T244 [GIT] Commit: preserve CLI subcommands
+- [x] T241 Update monitor/src/main.rs to make TUI the default mode in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T242 [GIT] Commit: make TUI default mode
+- [x] T243 Preserve existing init/run subcommands for scripting in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T244 [GIT] Commit: preserve CLI subcommands
 
 ### Dashboard Input Handling
-- [ ] T245 Implement dashboard input handling (q/Esc quit, scroll keys) in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T246 [GIT] Commit: add dashboard input handling
+- [x] T245 Implement dashboard input handling (q/Esc quit, scroll keys) in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T246 [GIT] Commit: add dashboard input handling (completed in Phase 4)
 
 ### Size Warning
-- [ ] T247 [P] Implement size_warning widget for terminals below 80x24 in monitor/src/tui/widgets/size_warning.rs (use devs:rust-dev agent)
-- [ ] T248 [GIT] Commit: add terminal size warning widget
-- [ ] T249 Add minimum size check before entering TUI mode in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
-- [ ] T250 [GIT] Commit: add minimum terminal size check
+- [x] T247 [P] Implement size_warning widget for terminals below 80x24 in monitor/src/tui/widgets/size_warning.rs (use devs:rust-dev agent)
+- [x] T248 [GIT] Commit: add terminal size warning widget
+- [x] T249 Add minimum size check before entering TUI mode in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
+- [x] T250 [GIT] Commit: add minimum terminal size check
 
 ### Log Redirection
-- [ ] T251 Suppress stderr logging in TUI mode per NFR-005 in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T252 [GIT] Commit: suppress logging in TUI mode
+- [x] T251 Suppress stderr logging in TUI mode per NFR-005 in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T252 [GIT] Commit: suppress logging in TUI mode
 
 ### Signal Handling
-- [ ] T253 Integrate TUI shutdown with existing signal handlers in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T254 [GIT] Commit: integrate TUI with signal handlers
+- [x] T253 Integrate TUI shutdown with existing signal handlers in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T254 [GIT] Commit: integrate TUI with signal handlers
 
 ### Performance
-- [ ] T255 Verify 60ms tick rate and render throttling in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T256 [GIT] Commit: verify TUI performance settings
+- [x] T255 Verify 60ms tick rate and render throttling in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T256 [GIT] Commit: verify TUI performance settings
 
 ### NO_COLOR Support
 - [ ] T257 Implement NO_COLOR environment variable detection in monitor/src/tui/app.rs (use devs:rust-dev agent)
