@@ -2,7 +2,7 @@
 
 **Purpose**: Document code style, naming conventions, error handling, and common patterns.
 **Generated**: 2026-02-03
-**Last Updated**: 2026-02-04 (Phase 9 update)
+**Last Updated**: 2026-02-04 (Phase 11 update)
 
 ## Code Style
 
@@ -270,6 +270,213 @@ pub fn validate_session_name(name: &str) -> Result<(), String> {
 }
 ```
 
+### RAII Terminal Restoration Pattern (Phase 11)
+
+The `Tui` struct wraps terminal management with automatic restoration via the `Drop` trait (NFR-005 compliance):
+
+```rust
+// In monitor/src/tui/terminal.rs
+
+/// A wrapper around ratatui's Terminal that provides RAII-based cleanup.
+///
+/// When dropped, this struct automatically:
+/// - Shows the cursor
+/// - Leaves the alternate screen
+/// - Disables raw mode
+pub struct Tui {
+    /// The underlying ratatui terminal.
+    terminal: Terminal<CrosstermBackend<Stdout>>,
+    /// Track whether the terminal has been restored to avoid double cleanup.
+    restored: bool,
+}
+
+impl Tui {
+    /// Creates a new TUI instance, initializing the terminal for raw mode.
+    pub fn new() -> io::Result<Self> {
+        // Enable raw mode for character-by-character input
+        enable_raw_mode()?;
+
+        let mut stdout = io::stdout();
+
+        // Enter alternate screen and hide cursor
+        if let Err(e) = execute!(stdout, EnterAlternateScreen, Hide) {
+            let _ = disable_raw_mode();
+            return Err(e);
+        }
+
+        let backend = CrosstermBackend::new(stdout);
+        let terminal = match Terminal::new(backend) {
+            Ok(t) => t,
+            Err(e) => {
+                let _ = execute!(io::stdout(), Show, LeaveAlternateScreen);
+                let _ = disable_raw_mode();
+                return Err(e);
+            }
+        };
+
+        Ok(Self {
+            terminal,
+            restored: false,
+        })
+    }
+
+    /// Explicitly restores the terminal to its original state.
+    pub fn restore(&mut self) -> io::Result<()> {
+        if self.restored {
+            return Ok(());
+        }
+
+        self.restored = true;
+        execute!(io::stdout(), Show, LeaveAlternateScreen)?;
+        disable_raw_mode()?;
+        Ok(())
+    }
+}
+
+impl Drop for Tui {
+    /// Restores the terminal state when the [`Tui`] is dropped.
+    ///
+    /// This implementation silently ignores errors during cleanup to avoid
+    /// panics during stack unwinding.
+    fn drop(&mut self) {
+        if self.restored {
+            return;
+        }
+
+        let _ = execute!(io::stdout(), Show, LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+    }
+}
+```
+
+**Key conventions (Phase 11):**
+- **RAII pattern**: Terminal state is automatically restored when `Tui` is dropped
+- **Panic safety**: `Drop` implementation silently ignores errors to avoid panics during unwinding
+- **Double-cleanup prevention**: The `restored` flag prevents re-entry and double cleanup
+- **Error handling**: `restore()` propagates errors for explicit cleanup; `Drop` silently ignores them
+- **Initialization order**: `install_panic_hook()` must be called BEFORE creating `Tui` to ensure cleanup on early panics
+
+**Usage pattern:**
+
+```rust
+fn run_tui() -> Result<()> {
+    // Install panic hook BEFORE creating TUI
+    install_panic_hook();
+
+    // Initialize TUI - enters raw mode and alternate screen
+    let mut tui = Tui::new().context("Failed to initialize terminal for TUI")?;
+
+    // ... render and handle events ...
+
+    // Explicit restoration (optional - Drop will also handle it)
+    tui.restore().context("Failed to restore terminal")?;
+
+    println!("VibeTea Monitor TUI exited successfully.");
+    Ok(())
+}
+```
+
+### Signal Handling Pattern (Phase 11)
+
+The TUI detects signals via crossterm's `KeyEvent` system:
+
+```rust
+// In monitor/src/main.rs - TUI mode signal handling
+
+loop {
+    if crossterm::event::poll(std::time::Duration::from_millis(100))
+        .context("Failed to poll for events")?
+    {
+        if let crossterm::event::Event::Key(key_event) =
+            crossterm::event::read().context("Failed to read terminal event")?
+        {
+            use crossterm::event::{KeyCode, KeyModifiers};
+
+            match key_event.code {
+                // Ctrl+C - graceful shutdown on SIGINT equivalent
+                KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    break;
+                }
+                // Escape - universal quit key
+                KeyCode::Esc => {
+                    break;
+                }
+                // 'q' - standard TUI quit key
+                KeyCode::Char('q') => {
+                    break;
+                }
+                // Ignore other keys
+                _ => {}
+            }
+        }
+    }
+}
+
+// Terminal is automatically restored via Drop when exiting the function
+tui.restore().context("Failed to restore terminal")?;
+```
+
+**Key conventions (Phase 11):**
+- **Signal detection**: Ctrl+C is detected as `KeyEvent` with `KeyCode::Char('c')` and `KeyModifiers::CONTROL`
+- **Three quit mechanisms**: Ctrl+C, Escape, and 'q' all trigger graceful shutdown
+- **Event loop**: Uses `crossterm::event::poll()` and `read()` for non-blocking event handling
+- **Clean exit**: Terminal is restored before printing exit message
+- **No logging**: TUI mode does NOT initialize logging (NFR-005 compliance) to avoid corrupting the display
+
+**Test coverage:**
+- Input handling tests verify Ctrl+C is correctly identified as `SetupAction::Quit` and `DashboardAction::Quit`
+- Terminal tests verify panic hook is installed and can be chained
+- RAII tests verify `restored` flag prevents double cleanup
+
+### Logging Initialization Pattern (Phase 11 - NFR-005)
+
+**TUI Mode**: Does NOT initialize logging
+
+```rust
+// In monitor/src/main.rs - run_tui()
+
+fn run_tui() -> Result<()> {
+    // NFR-005: Do NOT initialize logging in TUI mode.
+    // Logging to stderr would corrupt the TUI display.
+    // The tracing subscriber is only initialized in run_monitor() for headless mode.
+
+    install_panic_hook();
+    let mut tui = Tui::new().context("Failed to initialize terminal for TUI")?;
+    // ... TUI code ...
+}
+```
+
+**Headless Mode**: Initializes logging at `info` level
+
+```rust
+// In monitor/src/main.rs - run_monitor()
+
+async fn run_monitor() -> Result<()> {
+    // Initialize logging only in headless mode
+    init_logging();
+
+    info!("Starting VibeTea Monitor");
+    // ... monitor code ...
+}
+
+fn init_logging() {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_level(true)
+        .init();
+}
+```
+
+**Key conventions (Phase 11 - NFR-005):**
+- **TUI mode suppresses stderr**: No logging output to prevent display corruption
+- **Headless mode only logs**: Logging is only initialized in `run_monitor()`, not `run_tui()`
+- **Environment variable control**: Users can set `RUST_LOG` to control headless logging level
+- **Default level**: `info` level for headless monitoring (info for important events, warn/error for issues)
+- **Rationale**: TUI controls the entire terminal display and any stderr output would corrupt it
+
 ## Error Handling
 
 ### Error Patterns
@@ -295,7 +502,7 @@ Error messages are descriptive and context-rich:
 
 ### Logging Conventions
 
-The `tracing` crate is used for structured logging:
+The `tracing` crate is used for structured logging (headless mode only):
 
 | Level | When to Use | Example |
 |-------|-------------|---------|
@@ -306,7 +513,7 @@ The `tracing` crate is used for structured logging:
 
 ## Module Organization
 
-### Monitor Crate - Phase 9 Structure
+### Monitor Crate - Phase 9-11 Structure
 
 ```
 monitor/src/
@@ -318,7 +525,25 @@ monitor/src/
 │   ├── generate_with_backup()   # Phase 9: Generate with auto-backup
 │   └── tests module             # 30+ unit tests + backup tests
 │
+├── main.rs                      # Phase 11: TUI vs headless mode dispatch
+│   ├── run_tui()                # TUI mode: no logging, RAII terminal management
+│   ├── run_monitor()            # Headless mode: logging enabled, async event loop
+│   ├── install_panic_hook()     # Ensures terminal restoration on panic
+│   └── Signal handling via crossterm KeyEvent
+│
 ├── tui/
+│   ├── mod.rs                   # Module declarations and re-exports
+│   ├── terminal.rs              # Phase 11: RAII Tui struct with Drop impl
+│   │   ├── Tui struct           # Terminal wrapper with auto-restoration
+│   │   ├── install_panic_hook() # Panic hook for terminal cleanup
+│   │   └── Drop impl            # Automatic cleanup on drop
+│   │
+│   ├── input.rs                 # Keyboard event handling
+│   │   ├── SetupAction enum     # Form input actions
+│   │   ├── DashboardAction enum # Dashboard navigation actions
+│   │   ├── handle_setup_key()   # Setup form input processing
+│   │   └── handle_dashboard_key() # Dashboard input processing
+│   │
 │   ├── app.rs                   # Application state
 │   │   ├── SetupFormState       # Form state tracking
 │   │   ├── KeyOption enum       # Phase 9: UseExisting | GenerateNew
@@ -387,14 +612,42 @@ Format: `type(scope): description`
 |------|-------|---------|
 | feat | New feature | `feat(crypto): add key backup functionality with timestamp suffix` |
 | fix | Bug fix | `fix(setup): correct UI rendering when no existing keys found` |
-| docs | Documentation updates | `docs(codebase): document Phase 9 patterns` |
+| docs | Documentation updates | `docs(codebase): document Phase 11 TUI conventions` |
 | refactor | Code restructuring | `refactor(widgets): simplify conditional rendering logic` |
-| test | Adding/updating tests | `test(crypto): add 10 backup pattern tests` |
+| test | Adding/updating tests | `test(tui): add 80+ input handling tests` |
 | chore | Maintenance | `chore: update dependencies` |
 
 ## Code Review Guidelines
 
-### Phase 9 Specific
+### Phase 11 Specific (TUI Implementation)
+
+When reviewing Phase 11 changes:
+
+1. **RAII Terminal Management**:
+   - Verify `install_panic_hook()` is called BEFORE `Tui::new()`
+   - Confirm `Tui` struct uses RAII pattern with `Drop` implementation
+   - Check that `restored` flag prevents double cleanup
+   - Validate that errors in `Drop` are silently ignored (no panics on unwinding)
+
+2. **Signal Handling**:
+   - Verify Ctrl+C is detected as `KeyCode::Char('c')` with `KeyModifiers::CONTROL`
+   - Confirm three quit mechanisms: Ctrl+C, Escape, 'q'
+   - Check event loop uses `crossterm::event::poll()` and `read()`
+   - Validate graceful shutdown breaks the event loop and restores terminal
+
+3. **Logging Initialization (NFR-005)**:
+   - Confirm TUI mode does NOT call `init_logging()`
+   - Verify headless mode (`run_monitor()`) initializes logging via `tracing_subscriber`
+   - Check that logging level respects `RUST_LOG` environment variable
+   - Validate no stderr output occurs during TUI rendering
+
+4. **Input Handling**:
+   - Verify 80+ tests cover all key combinations
+   - Confirm context-sensitive behavior (e.g., 'q' inserts vs quits depending on field)
+   - Check action enums have proper Debug/Clone/Eq derives
+   - Validate field-specific navigation and submission patterns
+
+### Phase 9 Specific (still relevant)
 
 When reviewing Phase 9 changes:
 
@@ -417,4 +670,4 @@ When reviewing Phase 9 changes:
 
 ---
 
-*This document defines HOW to write code. Last updated: Phase 9 (2026-02-04)*
+*This document defines HOW to write code. Last updated: Phase 11 (2026-02-04)*
