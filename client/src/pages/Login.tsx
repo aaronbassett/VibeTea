@@ -182,15 +182,14 @@ export function Login({ onAuthSuccess }: LoginProps) {
                   id="login-error"
                   role="alert"
                   aria-live="assertive"
-                  initial={prefersReducedMotion ? undefined : { opacity: 0, y: -10 }}
+                  initial={
+                    prefersReducedMotion ? undefined : { opacity: 0, y: -10 }
+                  }
                   animate={{ opacity: 1, y: 0 }}
                   transition={SPRING_CONFIGS.gentle}
                   className="text-center p-3 bg-[#ef4444]/10 border border-[#ef4444]/30 rounded-lg"
                 >
-                  <p
-                    className="text-sm"
-                    style={{ color: COLORS.status.error }}
-                  >
+                  <p className="text-sm" style={{ color: COLORS.status.error }}>
                     {error}
                   </p>
                 </m.div>
