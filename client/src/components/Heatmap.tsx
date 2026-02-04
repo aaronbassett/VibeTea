@@ -12,14 +12,18 @@
  * - Timezone-aware hour bucketing using local time
  * - Cell click filtering to select events from a specific hour
  * - Accessible with proper ARIA labels and keyboard navigation
+ * - Historic data integration with real-time event merging
+ * - Conditional rendering based on persistence configuration
  */
 
 import type React from 'react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { useEventStore } from '../hooks/useEventStore';
+import { useHistoricData } from '../hooks/useHistoricData';
+import { isPersistenceEnabled } from '../utils/persistence';
 
-import type { VibeteaEvent } from '../types/events';
+import type { HourlyAggregate, VibeteaEvent } from '../types/events';
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -36,6 +40,9 @@ const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;
 
 /** View options for the heatmap */
 const VIEW_OPTIONS = [7, 30] as const;
+
+/** Timeout before showing loading error (5 seconds) */
+const LOADING_TIMEOUT_MS = 5000;
 
 // -----------------------------------------------------------------------------
 // Types
@@ -137,6 +144,34 @@ function getBucketKeyFromDate(date: Date, hour: number): string {
 }
 
 /**
+ * Create a bucket key from a UTC date string and hour.
+ *
+ * Converts UTC date/hour to local timezone bucket key.
+ *
+ * @param dateStr - Date in "YYYY-MM-DD" format (UTC)
+ * @param utcHour - Hour in UTC (0-23)
+ * @returns Bucket key in format "YYYY-MM-DD-HH" (local timezone)
+ */
+function getBucketKeyFromUtc(dateStr: string, utcHour: number): string {
+  // Parse the UTC date and hour
+  const utcDate = new Date(
+    `${dateStr}T${String(utcHour).padStart(2, '0')}:00:00Z`
+  );
+  // Convert to local bucket key
+  return getBucketKey(utcDate.toISOString());
+}
+
+/**
+ * Get the current hour's bucket key.
+ *
+ * @returns Bucket key for the current local hour
+ */
+function getCurrentHourBucketKey(): string {
+  const now = new Date();
+  return getBucketKeyFromDate(now, now.getHours());
+}
+
+/**
  * Count events per hour bucket.
  *
  * @param events - Array of VibeTea events
@@ -154,6 +189,51 @@ function countEventsByHour(
   }
 
   return counts;
+}
+
+/**
+ * Merge historic aggregates with real-time event counts.
+ *
+ * For the current hour: use real-time event counts (more fresh)
+ * For past hours: use historic aggregate counts
+ *
+ * @param historicData - Array of hourly aggregates from the server (UTC)
+ * @param realtimeCounts - Map of bucket keys to real-time event counts (local)
+ * @returns Merged map of bucket keys to counts
+ */
+function mergeEventCounts(
+  historicData: readonly HourlyAggregate[],
+  realtimeCounts: Map<string, number>
+): Map<string, number> {
+  const merged = new Map<string, number>();
+  const currentHourKey = getCurrentHourBucketKey();
+
+  // First, add all historic data (converting from UTC to local bucket keys)
+  for (const aggregate of historicData) {
+    const bucketKey = getBucketKeyFromUtc(aggregate.date, aggregate.hour);
+    // Skip the current hour - we'll use real-time data for that
+    if (bucketKey !== currentHourKey) {
+      const existing = merged.get(bucketKey) ?? 0;
+      merged.set(bucketKey, existing + aggregate.eventCount);
+    }
+  }
+
+  // For the current hour, use real-time counts
+  const currentHourCount = realtimeCounts.get(currentHourKey);
+  if (currentHourCount !== undefined) {
+    merged.set(currentHourKey, currentHourCount);
+  }
+
+  // For buckets not in historic data but in real-time (edge case during initial load),
+  // add real-time counts for past hours only if not already present in merged
+  for (const [key, count] of realtimeCounts) {
+    if (key === currentHourKey) continue; // Already handled
+    if (!merged.has(key)) {
+      merged.set(key, count);
+    }
+  }
+
+  return merged;
 }
 
 /**
@@ -234,6 +314,55 @@ function formatHourLabel(hour: number): string {
 // -----------------------------------------------------------------------------
 // Sub-components
 // -----------------------------------------------------------------------------
+
+/**
+ * Loading indicator with spinner.
+ */
+function LoadingIndicator() {
+  return (
+    <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
+      <svg
+        className="w-4 h-4 animate-spin"
+        fill="none"
+        viewBox="0 0 24 24"
+        aria-hidden="true"
+      >
+        <circle
+          className="opacity-25"
+          cx="12"
+          cy="12"
+          r="10"
+          stroke="currentColor"
+          strokeWidth="4"
+        />
+        <path
+          className="opacity-75"
+          fill="currentColor"
+          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+        />
+      </svg>
+      <span>Fetching historic data...</span>
+    </div>
+  );
+}
+
+/**
+ * Error message with retry button.
+ */
+function ErrorMessage({ onRetry }: { readonly onRetry: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-4 text-sm text-amber-400 mb-4 p-2 bg-amber-900/20 rounded-md border border-amber-700/30">
+      <span>Unable to load historic data. Showing real-time events only.</span>
+      <button
+        type="button"
+        onClick={onRetry}
+        className="px-3 py-1 text-xs font-medium text-amber-300 bg-amber-800/50 rounded hover:bg-amber-700/50 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500"
+      >
+        Retry
+      </button>
+    </div>
+  );
+}
 
 /**
  * View toggle buttons for switching between 7-day and 30-day views.
@@ -394,6 +523,8 @@ function EmptyState() {
  * - Timezone-aware hour alignment (uses local time)
  * - Click cells to filter event stream to that hour
  * - Accessible with ARIA labels and keyboard navigation
+ * - Historic data integration with real-time event merging
+ * - Returns null when persistence is disabled
  *
  * @example
  * ```tsx
@@ -412,20 +543,52 @@ function EmptyState() {
  * ```
  */
 export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
+  // Check if persistence is enabled - hide component entirely if not
+  const persistenceEnabled = isPersistenceEnabled();
+
   // Selective subscription: only re-render when events change
   const events = useEventStore((state) => state.events);
 
   // State
   const [viewDays, setViewDays] = useState<ViewDays>(7);
   const [hoveredCell, setHoveredCell] = useState<HoveredCell | null>(null);
+  const [loadingTimedOut, setLoadingTimedOut] = useState(false);
 
-  // Compute event counts by hour bucket
-  const eventCounts = useMemo(() => countEventsByHour(events), [events]);
+  // Fetch historic data using the view days
+  const { data: historicData, status, refetch } = useHistoricData(viewDays);
+
+  // Handle loading timeout - only the timer callback sets state
+  useEffect(() => {
+    // Only set up timeout when status is loading
+    if (status !== 'loading') {
+      return undefined;
+    }
+
+    const timeoutId = setTimeout(() => {
+      setLoadingTimedOut(true);
+    }, LOADING_TIMEOUT_MS);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [status]);
+
+  // Compute real-time event counts by hour bucket
+  const realtimeCounts = useMemo(() => countEventsByHour(events), [events]);
+
+  // Merge historic and real-time data
+  const mergedCounts = useMemo(() => {
+    if (historicData.length === 0) {
+      // No historic data yet, use real-time only
+      return realtimeCounts;
+    }
+    return mergeEventCounts(historicData, realtimeCounts);
+  }, [historicData, realtimeCounts]);
 
   // Generate all cells for the current view
   const cells = useMemo(
-    () => generateHeatmapCells(viewDays, eventCounts),
-    [viewDays, eventCounts]
+    () => generateHeatmapCells(viewDays, mergedCounts),
+    [viewDays, mergedCounts]
   );
 
   // Group cells by day for grid rendering
@@ -437,8 +600,16 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
     return result;
   }, [cells]);
 
-  // Check if there are any events
-  const hasEvents = events.length > 0;
+  // Check if there are any events (from merged data)
+  const hasEvents = cells.some((cell) => cell.count > 0);
+
+  // Determine if we should show loading state
+  const showLoading =
+    status === 'loading' && historicData.length === 0 && !loadingTimedOut;
+
+  // Determine if we should show error state
+  const showError =
+    status === 'error' || (loadingTimedOut && status === 'loading');
 
   /**
    * Handle cell hover to show tooltip.
@@ -497,6 +668,19 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
     setViewDays(days);
   }, []);
 
+  /**
+   * Handle retry button click.
+   */
+  const handleRetry = useCallback(() => {
+    setLoadingTimedOut(false);
+    refetch();
+  }, [refetch]);
+
+  // Hide the component entirely when persistence is disabled
+  if (!persistenceEnabled) {
+    return null;
+  }
+
   return (
     <div
       className={`bg-gray-900 text-gray-100 ${className}`}
@@ -508,6 +692,12 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
         <h2 className="text-lg font-semibold text-gray-100">Activity</h2>
         <ViewToggle viewDays={viewDays} onViewChange={handleViewChange} />
       </div>
+
+      {/* Loading indicator */}
+      {showLoading && <LoadingIndicator />}
+
+      {/* Error message with retry */}
+      {showError && <ErrorMessage onRetry={handleRetry} />}
 
       {/* Heatmap grid or empty state */}
       {hasEvents ? (

@@ -243,16 +243,16 @@
 - [x] T124 [US1] Create retro/P6.md for this phase
 - [x] T125 [GIT] Commit: initialize phase 6 retro
 - [x] T126 [US1] Create persistence feature detection helper in client/src/utils/persistence.ts (check VITE_SUPABASE_URL) (use devs:typescript-dev agent)
-- [ ] T127 [GIT] Commit: add persistence feature detection
-- [ ] T128 [US1] Implement data merging logic in client/src/components/Heatmap.tsx - real-time events in current hour take precedence over historic hourly aggregates (hour-level merge, not event-level) (use devs:react-dev agent)
+- [x] T127 [GIT] Commit: add persistence feature detection
+- [x] T128 [US1] Implement data merging logic in client/src/components/Heatmap.tsx - real-time events in current hour take precedence over historic hourly aggregates (hour-level merge, not event-level) (use devs:react-dev agent)
 - [ ] T129 [GIT] Commit: implement heatmap data merging
-- [ ] T130 [US1] Add loading state to Heatmap: "Fetching historic data..." with 5s timeout before showing error (use devs:react-dev agent)
+- [x] T130 [US1] Add loading state to Heatmap: "Fetching historic data..." with 5s timeout before showing error (use devs:react-dev agent)
 - [ ] T131 [GIT] Commit: add heatmap loading state
-- [ ] T132 [US1] Add error state to Heatmap: "Unable to load historic data. Showing real-time events only." with Retry button; fallback to real-time only (use devs:react-dev agent)
+- [x] T132 [US1] Add error state to Heatmap: "Unable to load historic data. Showing real-time events only." with Retry button; fallback to real-time only (use devs:react-dev agent)
 - [ ] T133 [GIT] Commit: add heatmap error handling
-- [ ] T134 [US1] Implement conditional rendering - hide heatmap card entirely when persistence disabled (use devs:react-dev agent)
+- [x] T134 [US1] Implement conditional rendering - hide heatmap card entirely when persistence disabled (use devs:react-dev agent)
 - [ ] T135 [GIT] Commit: implement conditional heatmap visibility
-- [ ] T136 [US1] Add 7/30 day toggle to heatmap view - queries last N calendar days (or less if insufficient data) (use devs:react-dev agent)
+- [x] T136 [US1] Add 7/30 day toggle to heatmap view - queries last N calendar days (or less if insufficient data) (use devs:react-dev agent)
 - [ ] T137 [GIT] Commit: add day range toggle
 - [ ] T138 [P] [US1] Create component tests for Heatmap with historic data in client/src/components/Heatmap.test.tsx (use devs:react-dev agent)
 - [ ] T139 [P] [US1] Create integration test for data merging logic (use devs:typescript-dev agent)
