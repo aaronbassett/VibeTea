@@ -11,6 +11,7 @@ import { LazyMotion, domAnimation } from 'framer-motion';
 import { AnimatedBackground } from './components/animated/AnimatedBackground';
 import { AnimationErrorBoundary } from './components/animated/ErrorBoundary';
 import { useAuth } from './hooks/useAuth';
+import { useReducedMotion } from './hooks/useReducedMotion';
 import { Dashboard } from './pages/Dashboard';
 import { Login } from './pages/Login';
 
@@ -28,6 +29,7 @@ import { Login } from './pages/Login';
  */
 export default function App() {
   const { user, loading } = useAuth();
+  const prefersReducedMotion = useReducedMotion();
 
   // Show loading state during initial auth check
   if (loading) {
@@ -40,9 +42,11 @@ export default function App() {
           aria-label="Checking authentication status"
         >
           {/* Animated background layer with error boundary */}
-          <AnimationErrorBoundary>
-            <AnimatedBackground showGrid showParticles />
-          </AnimationErrorBoundary>
+          {!prefersReducedMotion && (
+            <AnimationErrorBoundary>
+              <AnimatedBackground showGrid showParticles />
+            </AnimationErrorBoundary>
+          )}
 
           {/* Loading indicator */}
           <div className="relative z-10 text-center">
