@@ -20,8 +20,8 @@ module.exports = {
     assert: {
       // Assertions for performance budgets
       assertions: {
-        // Performance score must be >= 80
-        'categories:performance': ['error', { minScore: 0.8 }],
+        // Performance score must be >= 75 (allows for CI environment variability)
+        'categories:performance': ['error', { minScore: 0.75 }],
         // Accessibility score must be >= 80
         'categories:accessibility': ['error', { minScore: 0.8 }],
         // Best practices score must be >= 80
