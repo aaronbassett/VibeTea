@@ -1804,6 +1804,476 @@ impl Default for EventBuffer {
     }
 }
 
+// =============================================================================
+// Scroll State (FR-011)
+// =============================================================================
+
+/// Manages scroll state for the event stream display.
+///
+/// The `ScrollState` tracks the current scroll offset, auto-scroll mode, and
+/// cached dimensions used for scroll calculations. It implements FR-011: "New
+/// events MUST auto-scroll unless user has manually scrolled up."
+///
+/// # Scroll Model
+///
+/// The scroll offset represents how many events are hidden below the visible
+/// area, counting from the bottom (newest events). An offset of 0 means the
+/// newest events are visible at the bottom of the viewport.
+///
+/// ```text
+/// offset = 0 (default, auto-scroll):
+/// ┌─────────────────────┐
+/// │ event 997           │  ← visible_height = 4
+/// │ event 998           │
+/// │ event 999           │
+/// │ event 1000 (newest) │  ← bottom of viewport
+/// └─────────────────────┘
+///
+/// offset = 2 (scrolled up):
+/// ┌─────────────────────┐
+/// │ event 995           │
+/// │ event 996           │
+/// │ event 997           │
+/// │ event 998           │  ← 2 newer events hidden below
+/// └─────────────────────┘
+/// ```
+///
+/// # Auto-Scroll Behavior
+///
+/// When `auto_scroll` is `true`, new events cause the view to scroll down
+/// automatically. When the user manually scrolls up (increasing offset),
+/// `auto_scroll` is disabled. Scrolling to the bottom re-enables it.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::ScrollState;
+///
+/// let mut scroll = ScrollState::new(10); // 10 visible lines
+/// scroll.update_total_events(100);
+///
+/// assert!(scroll.auto_scroll()); // Auto-scroll enabled by default
+/// assert_eq!(scroll.offset(), 0);
+///
+/// scroll.scroll_up(); // User scrolls up
+/// assert!(!scroll.auto_scroll()); // Auto-scroll disabled
+/// assert_eq!(scroll.offset(), 1);
+///
+/// scroll.scroll_to_bottom(); // User scrolls to bottom
+/// assert!(scroll.auto_scroll()); // Auto-scroll re-enabled
+/// assert_eq!(scroll.offset(), 0);
+/// ```
+#[derive(Debug, Clone)]
+pub struct ScrollState {
+    /// Current scroll offset (0 = newest at bottom visible).
+    ///
+    /// The offset represents how many events are hidden below the visible
+    /// viewport. Valid range: `0..=max(0, total_events - visible_height)`.
+    offset: usize,
+
+    /// Whether auto-scroll is enabled (scroll to newest on new events).
+    ///
+    /// Auto-scroll is enabled by default and disabled when the user manually
+    /// scrolls up. It is re-enabled when the user scrolls to the bottom.
+    auto_scroll: bool,
+
+    /// Total events in buffer (cached for scroll calculations).
+    ///
+    /// This value is updated via `update_total_events` when the event buffer
+    /// changes size. Used to calculate the maximum valid scroll offset.
+    total_events: usize,
+
+    /// Visible area height (set from terminal size).
+    ///
+    /// This value is updated via `update_visible_height` when the terminal
+    /// is resized. Used to calculate the maximum valid scroll offset.
+    visible_height: usize,
+}
+
+impl ScrollState {
+    /// Creates a new `ScrollState` with the specified visible height.
+    ///
+    /// Auto-scroll is enabled by default, and the offset starts at 0 (newest
+    /// events visible at the bottom).
+    ///
+    /// # Arguments
+    ///
+    /// * `visible_height` - Number of visible lines in the event stream viewport
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let scroll = ScrollState::new(20);
+    /// assert!(scroll.auto_scroll());
+    /// assert_eq!(scroll.offset(), 0);
+    /// assert_eq!(scroll.visible_height(), 20);
+    /// ```
+    #[must_use]
+    pub fn new(visible_height: usize) -> Self {
+        Self {
+            offset: 0,
+            auto_scroll: true,
+            total_events: 0,
+            visible_height,
+        }
+    }
+
+    /// Returns the current scroll offset.
+    ///
+    /// An offset of 0 means the newest events are visible at the bottom
+    /// of the viewport.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// assert_eq!(scroll.offset(), 0);
+    ///
+    /// scroll.scroll_up();
+    /// assert_eq!(scroll.offset(), 1);
+    /// ```
+    #[must_use]
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    /// Returns whether auto-scroll is enabled.
+    ///
+    /// When auto-scroll is enabled, new events cause the view to scroll
+    /// down automatically to keep the newest events visible.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// assert!(scroll.auto_scroll());
+    ///
+    /// scroll.scroll_up();
+    /// assert!(!scroll.auto_scroll());
+    /// ```
+    #[must_use]
+    pub fn auto_scroll(&self) -> bool {
+        self.auto_scroll
+    }
+
+    /// Returns the total number of events.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// assert_eq!(scroll.total_events(), 0);
+    ///
+    /// scroll.update_total_events(100);
+    /// assert_eq!(scroll.total_events(), 100);
+    /// ```
+    #[must_use]
+    pub fn total_events(&self) -> usize {
+        self.total_events
+    }
+
+    /// Returns the visible height of the viewport.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let scroll = ScrollState::new(25);
+    /// assert_eq!(scroll.visible_height(), 25);
+    /// ```
+    #[must_use]
+    pub fn visible_height(&self) -> usize {
+        self.visible_height
+    }
+
+    /// Returns the maximum valid scroll offset.
+    ///
+    /// The maximum offset is `max(0, total_events - visible_height)`. When
+    /// there are fewer events than the visible height, the max offset is 0.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// assert_eq!(scroll.max_offset(), 90);
+    ///
+    /// scroll.update_total_events(5); // Fewer events than visible
+    /// assert_eq!(scroll.max_offset(), 0);
+    /// ```
+    #[must_use]
+    pub fn max_offset(&self) -> usize {
+        self.total_events.saturating_sub(self.visible_height)
+    }
+
+    /// Scrolls up by one line (increases offset by 1).
+    ///
+    /// Disables auto-scroll since this is a manual scroll action.
+    /// The offset is clamped to the valid range.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    ///
+    /// scroll.scroll_up();
+    /// assert_eq!(scroll.offset(), 1);
+    /// assert!(!scroll.auto_scroll());
+    /// ```
+    pub fn scroll_up(&mut self) {
+        self.auto_scroll = false;
+        self.offset = self.offset.saturating_add(1);
+        self.clamp();
+    }
+
+    /// Scrolls down by one line (decreases offset by 1).
+    ///
+    /// If scrolling to the bottom (offset becomes 0), re-enables auto-scroll.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// scroll.scroll_up();
+    /// scroll.scroll_up();
+    /// assert_eq!(scroll.offset(), 2);
+    ///
+    /// scroll.scroll_down();
+    /// assert_eq!(scroll.offset(), 1);
+    ///
+    /// scroll.scroll_down();
+    /// assert_eq!(scroll.offset(), 0);
+    /// assert!(scroll.auto_scroll()); // Re-enabled at bottom
+    /// ```
+    pub fn scroll_down(&mut self) {
+        self.offset = self.offset.saturating_sub(1);
+        if self.offset == 0 {
+            self.auto_scroll = true;
+        }
+    }
+
+    /// Scrolls up by one page (increases offset by visible_height).
+    ///
+    /// Disables auto-scroll since this is a manual scroll action.
+    /// The offset is clamped to the valid range.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    ///
+    /// scroll.scroll_page_up();
+    /// assert_eq!(scroll.offset(), 10);
+    /// assert!(!scroll.auto_scroll());
+    /// ```
+    pub fn scroll_page_up(&mut self) {
+        self.auto_scroll = false;
+        self.offset = self.offset.saturating_add(self.visible_height);
+        self.clamp();
+    }
+
+    /// Scrolls down by one page (decreases offset by visible_height).
+    ///
+    /// If scrolling to the bottom (offset becomes 0), re-enables auto-scroll.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// scroll.scroll_page_up();
+    /// scroll.scroll_page_up();
+    /// assert_eq!(scroll.offset(), 20);
+    ///
+    /// scroll.scroll_page_down();
+    /// assert_eq!(scroll.offset(), 10);
+    ///
+    /// scroll.scroll_page_down();
+    /// assert_eq!(scroll.offset(), 0);
+    /// assert!(scroll.auto_scroll()); // Re-enabled at bottom
+    /// ```
+    pub fn scroll_page_down(&mut self) {
+        self.offset = self.offset.saturating_sub(self.visible_height);
+        if self.offset == 0 {
+            self.auto_scroll = true;
+        }
+    }
+
+    /// Scrolls to the top (oldest events visible).
+    ///
+    /// Sets offset to the maximum value and disables auto-scroll.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    ///
+    /// scroll.scroll_to_top();
+    /// assert_eq!(scroll.offset(), 90); // max_offset
+    /// assert!(!scroll.auto_scroll());
+    /// ```
+    pub fn scroll_to_top(&mut self) {
+        self.auto_scroll = false;
+        self.offset = self.max_offset();
+    }
+
+    /// Scrolls to the bottom (newest events visible).
+    ///
+    /// Sets offset to 0 and re-enables auto-scroll.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// scroll.scroll_to_top();
+    ///
+    /// scroll.scroll_to_bottom();
+    /// assert_eq!(scroll.offset(), 0);
+    /// assert!(scroll.auto_scroll());
+    /// ```
+    pub fn scroll_to_bottom(&mut self) {
+        self.offset = 0;
+        self.auto_scroll = true;
+    }
+
+    /// Updates the total number of events.
+    ///
+    /// Call this when the event buffer size changes. The offset is clamped
+    /// to ensure it remains within the valid range.
+    ///
+    /// # Arguments
+    ///
+    /// * `total` - New total number of events in the buffer
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// assert_eq!(scroll.total_events(), 100);
+    /// assert_eq!(scroll.max_offset(), 90);
+    /// ```
+    pub fn update_total_events(&mut self, total: usize) {
+        self.total_events = total;
+        self.clamp();
+    }
+
+    /// Updates the visible height of the viewport.
+    ///
+    /// Call this when the terminal is resized. The offset is clamped
+    /// to ensure it remains within the valid range.
+    ///
+    /// # Arguments
+    ///
+    /// * `height` - New visible height in lines
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// assert_eq!(scroll.max_offset(), 90);
+    ///
+    /// scroll.update_visible_height(20);
+    /// assert_eq!(scroll.visible_height(), 20);
+    /// assert_eq!(scroll.max_offset(), 80);
+    /// ```
+    pub fn update_visible_height(&mut self, height: usize) {
+        self.visible_height = height;
+        self.clamp();
+    }
+
+    /// Clamps the offset to the valid range.
+    ///
+    /// Ensures offset is between 0 and `max_offset()` (inclusive).
+    /// Called automatically after scroll operations and dimension updates.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let mut scroll = ScrollState::new(10);
+    /// scroll.update_total_events(100);
+    /// scroll.scroll_to_top();
+    /// assert_eq!(scroll.offset(), 90);
+    ///
+    /// // Reduce total events
+    /// scroll.update_total_events(50);
+    /// // Offset is automatically clamped
+    /// assert_eq!(scroll.offset(), 40);
+    /// ```
+    pub fn clamp(&mut self) {
+        let max = self.max_offset();
+        if self.offset > max {
+            self.offset = max;
+        }
+    }
+}
+
+impl Default for ScrollState {
+    /// Creates a `ScrollState` with default values.
+    ///
+    /// The default state has:
+    /// - `offset`: 0 (newest events visible)
+    /// - `auto_scroll`: true
+    /// - `total_events`: 0
+    /// - `visible_height`: 0
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::ScrollState;
+    ///
+    /// let scroll = ScrollState::default();
+    /// assert_eq!(scroll.offset(), 0);
+    /// assert!(scroll.auto_scroll());
+    /// assert_eq!(scroll.total_events(), 0);
+    /// assert_eq!(scroll.visible_height(), 0);
+    /// ```
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            auto_scroll: true,
+            total_events: 0,
+            visible_height: 0,
+        }
+    }
+}
+
 /// Events that drive the TUI event loop.
 ///
 /// The TUI operates on an event-driven model where all state changes
@@ -3688,5 +4158,330 @@ mod tests {
         assert!(!form_state.existing_keys_found);
         // Session name should still be set
         assert!(!form_state.session_name.is_empty());
+    }
+
+    // =============================================================================
+    // ScrollState Tests (T097)
+    // =============================================================================
+
+    #[test]
+    fn scroll_state_new_creates_with_visible_height() {
+        let scroll = ScrollState::new(20);
+        assert_eq!(scroll.visible_height(), 20);
+        assert_eq!(scroll.offset(), 0);
+        assert!(scroll.auto_scroll());
+        assert_eq!(scroll.total_events(), 0);
+    }
+
+    #[test]
+    fn scroll_state_default_has_zero_dimensions() {
+        let scroll = ScrollState::default();
+        assert_eq!(scroll.offset(), 0);
+        assert!(scroll.auto_scroll());
+        assert_eq!(scroll.total_events(), 0);
+        assert_eq!(scroll.visible_height(), 0);
+    }
+
+    #[test]
+    fn scroll_state_is_debug() {
+        let scroll = ScrollState::new(10);
+        let debug_str = format!("{:?}", scroll);
+        assert!(debug_str.contains("ScrollState"));
+        assert!(debug_str.contains("offset"));
+        assert!(debug_str.contains("auto_scroll"));
+    }
+
+    #[test]
+    fn scroll_state_is_clone() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_up();
+
+        let cloned = scroll.clone();
+        assert_eq!(cloned.offset(), scroll.offset());
+        assert_eq!(cloned.auto_scroll(), scroll.auto_scroll());
+        assert_eq!(cloned.total_events(), scroll.total_events());
+        assert_eq!(cloned.visible_height(), scroll.visible_height());
+    }
+
+    #[test]
+    fn scroll_state_max_offset_with_more_events_than_visible() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        assert_eq!(scroll.max_offset(), 90);
+    }
+
+    #[test]
+    fn scroll_state_max_offset_with_fewer_events_than_visible() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(5);
+        assert_eq!(scroll.max_offset(), 0);
+    }
+
+    #[test]
+    fn scroll_state_max_offset_with_equal_events_and_visible() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(10);
+        assert_eq!(scroll.max_offset(), 0);
+    }
+
+    #[test]
+    fn scroll_state_scroll_up_increases_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+
+        scroll.scroll_up();
+        assert_eq!(scroll.offset(), 1);
+    }
+
+    #[test]
+    fn scroll_state_scroll_up_disables_auto_scroll() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        assert!(scroll.auto_scroll());
+
+        scroll.scroll_up();
+        assert!(!scroll.auto_scroll());
+    }
+
+    #[test]
+    fn scroll_state_scroll_up_clamps_to_max() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(15);
+        // max_offset is 5
+
+        for _ in 0..10 {
+            scroll.scroll_up();
+        }
+        assert_eq!(scroll.offset(), 5); // Clamped to max
+    }
+
+    #[test]
+    fn scroll_state_scroll_down_decreases_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_up();
+        scroll.scroll_up();
+        assert_eq!(scroll.offset(), 2);
+
+        scroll.scroll_down();
+        assert_eq!(scroll.offset(), 1);
+    }
+
+    #[test]
+    fn scroll_state_scroll_down_clamps_to_zero() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+
+        scroll.scroll_down(); // Already at 0
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn scroll_state_scroll_down_to_bottom_enables_auto_scroll() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_up();
+        scroll.scroll_up();
+        assert!(!scroll.auto_scroll());
+
+        scroll.scroll_down();
+        assert!(!scroll.auto_scroll()); // Still at offset 1
+
+        scroll.scroll_down();
+        assert!(scroll.auto_scroll()); // Now at offset 0
+    }
+
+    #[test]
+    fn scroll_state_scroll_page_up_increases_by_visible_height() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+
+        scroll.scroll_page_up();
+        assert_eq!(scroll.offset(), 10);
+    }
+
+    #[test]
+    fn scroll_state_scroll_page_up_disables_auto_scroll() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+
+        scroll.scroll_page_up();
+        assert!(!scroll.auto_scroll());
+    }
+
+    #[test]
+    fn scroll_state_scroll_page_up_clamps_to_max() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(25);
+        // max_offset is 15
+
+        scroll.scroll_page_up();
+        scroll.scroll_page_up();
+        assert_eq!(scroll.offset(), 15); // Clamped to max
+    }
+
+    #[test]
+    fn scroll_state_scroll_page_down_decreases_by_visible_height() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_page_up();
+        scroll.scroll_page_up();
+        assert_eq!(scroll.offset(), 20);
+
+        scroll.scroll_page_down();
+        assert_eq!(scroll.offset(), 10);
+    }
+
+    #[test]
+    fn scroll_state_scroll_page_down_clamps_to_zero() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_up();
+        scroll.scroll_up();
+        assert_eq!(scroll.offset(), 2);
+
+        scroll.scroll_page_down();
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn scroll_state_scroll_page_down_to_bottom_enables_auto_scroll() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_page_up();
+        assert!(!scroll.auto_scroll());
+
+        scroll.scroll_page_down();
+        assert!(scroll.auto_scroll()); // Now at offset 0
+    }
+
+    #[test]
+    fn scroll_state_scroll_to_top_sets_max_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+
+        scroll.scroll_to_top();
+        assert_eq!(scroll.offset(), 90);
+    }
+
+    #[test]
+    fn scroll_state_scroll_to_top_disables_auto_scroll() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+
+        scroll.scroll_to_top();
+        assert!(!scroll.auto_scroll());
+    }
+
+    #[test]
+    fn scroll_state_scroll_to_bottom_sets_zero_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_to_top();
+
+        scroll.scroll_to_bottom();
+        assert_eq!(scroll.offset(), 0);
+    }
+
+    #[test]
+    fn scroll_state_scroll_to_bottom_enables_auto_scroll() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_to_top();
+        assert!(!scroll.auto_scroll());
+
+        scroll.scroll_to_bottom();
+        assert!(scroll.auto_scroll());
+    }
+
+    #[test]
+    fn scroll_state_update_total_events_clamps_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_to_top();
+        assert_eq!(scroll.offset(), 90);
+
+        scroll.update_total_events(50);
+        // max_offset is now 40, offset should be clamped
+        assert_eq!(scroll.offset(), 40);
+    }
+
+    #[test]
+    fn scroll_state_update_visible_height_clamps_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_to_top();
+        assert_eq!(scroll.offset(), 90);
+
+        scroll.update_visible_height(50);
+        // max_offset is now 50, offset should be clamped
+        assert_eq!(scroll.offset(), 50);
+    }
+
+    #[test]
+    fn scroll_state_clamp_reduces_excessive_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_to_top();
+        assert_eq!(scroll.offset(), 90);
+
+        // Simulate reducing events without going through update_total_events
+        scroll.total_events = 20;
+        scroll.clamp();
+        assert_eq!(scroll.offset(), 10); // max_offset is now 10
+    }
+
+    #[test]
+    fn scroll_state_clamp_does_not_change_valid_offset() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(100);
+        scroll.scroll_up();
+        scroll.scroll_up();
+        assert_eq!(scroll.offset(), 2);
+
+        scroll.clamp();
+        assert_eq!(scroll.offset(), 2); // Still valid, unchanged
+    }
+
+    #[test]
+    fn scroll_state_auto_scroll_maintained_on_new_events() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(50);
+        assert!(scroll.auto_scroll());
+        assert_eq!(scroll.offset(), 0);
+
+        // Simulate new events arriving
+        scroll.update_total_events(60);
+        assert!(scroll.auto_scroll()); // Still enabled
+        assert_eq!(scroll.offset(), 0); // Still at bottom
+    }
+
+    #[test]
+    fn scroll_state_offset_preserved_when_scrolled_up_and_new_events() {
+        let mut scroll = ScrollState::new(10);
+        scroll.update_total_events(50);
+        scroll.scroll_up();
+        scroll.scroll_up();
+        assert_eq!(scroll.offset(), 2);
+        assert!(!scroll.auto_scroll());
+
+        // Simulate new events arriving
+        scroll.update_total_events(60);
+        assert_eq!(scroll.offset(), 2); // Preserved
+        assert!(!scroll.auto_scroll()); // Still disabled
+    }
+
+    #[test]
+    fn scroll_state_zero_visible_height_max_offset_equals_total() {
+        let mut scroll = ScrollState::new(0);
+        scroll.update_total_events(100);
+        assert_eq!(scroll.max_offset(), 100);
+    }
+
+    #[test]
+    fn scroll_state_zero_total_events_max_offset_is_zero() {
+        let scroll = ScrollState::new(10);
+        assert_eq!(scroll.max_offset(), 0);
     }
 }
