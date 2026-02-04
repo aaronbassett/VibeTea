@@ -31,12 +31,13 @@ use vibetea_monitor::crypto::Crypto;
 use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
+use vibetea_monitor::trackers::file_history_tracker::FileHistoryTracker;
 use vibetea_monitor::trackers::skill_tracker::SkillTracker;
 use vibetea_monitor::trackers::stats_tracker::StatsTracker;
 use vibetea_monitor::trackers::todo_tracker::TodoTracker;
 use vibetea_monitor::types::{
-    AgentSpawnEvent, Event, EventPayload, EventType, SessionAction, SkillInvocationEvent,
-    TodoProgressEvent, TokenUsageEvent, ToolStatus,
+    AgentSpawnEvent, Event, EventPayload, EventType, FileChangeEvent, SessionAction,
+    SkillInvocationEvent, TodoProgressEvent, TokenUsageEvent, ToolStatus,
 };
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
@@ -301,6 +302,27 @@ async fn run_monitor() -> Result<()> {
         }
     };
 
+    // Create channel for file change events from file history tracker
+    let (file_change_tx, mut file_change_rx) = mpsc::channel::<FileChangeEvent>(config.buffer_size);
+
+    // Initialize file history tracker for line change tracking
+    let _file_history_tracker = match FileHistoryTracker::new(file_change_tx) {
+        Ok(tracker) => {
+            info!(
+                file_history_dir = %tracker.root_dir().display(),
+                "File history tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize file history tracker (line change tracking disabled)"
+            );
+            None
+        }
+    };
+
     info!("Monitor running. Press Ctrl+C to stop.");
 
     // Main event loop
@@ -346,6 +368,15 @@ async fn run_monitor() -> Result<()> {
             Some(todo_event) = todo_rx.recv() => {
                 process_todo_progress_event(
                     todo_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process file change events from file history tracker
+            Some(file_change_event) = file_change_rx.recv() => {
+                process_file_change_event(
+                    file_change_event,
                     &mut sender,
                     &config.source_id,
                 ).await;
@@ -577,6 +608,40 @@ async fn process_todo_progress_event(
     // Try to flush buffered events
     if let Err(e) = sender.flush().await {
         warn!(error = %e, "Failed to flush todo progress events, will retry later");
+    }
+}
+
+/// Processes a file change event from the file history tracker.
+async fn process_file_change_event(
+    file_change_event: FileChangeEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        session_id = %file_change_event.session_id,
+        file_hash = %file_change_event.file_hash,
+        version = file_change_event.version,
+        lines_added = file_change_event.lines_added,
+        lines_removed = file_change_event.lines_removed,
+        "Processing file change event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::FileChange,
+        EventPayload::FileChange(file_change_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush file change events, will retry later");
     }
 }
 
