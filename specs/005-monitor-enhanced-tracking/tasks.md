@@ -478,9 +478,9 @@
 **Purpose**: Integration testing, privacy verification, and documentation
 
 ### Phase Start
-- [ ] T251 [GIT] Verify working tree is clean before starting Phase 12
-- [ ] T252 [GIT] Pull and rebase on origin/main if needed
-- [ ] T253 Create retro/P12.md for this phase
+- [x] T251 [GIT] Verify working tree is clean before starting Phase 12
+- [x] T252 [GIT] Pull and rebase on origin/main if needed
+- [x] T253 Create retro/P12.md for this phase
 
 ### Implementation
 - [ ] T254 [GIT] Commit: initialize phase 12 retro
