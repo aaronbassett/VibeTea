@@ -303,8 +303,8 @@
 - [x] T150 [GIT] Commit: handle narrow terminal for credentials (combined with T146)
 
 ### Dashboard Layout Integration
-- [ ] T151 [US4] Integrate credentials panel into dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
-- [ ] T152 [GIT] Commit: integrate credentials into dashboard
+- [x] T151 [US4] Integrate credentials panel into dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
+- [x] T152 [GIT] Commit: integrate credentials into dashboard
 
 ### Codebase Mapping and Retro
 - [ ] T153 [US4] Run /sdd:map incremental for Phase 6 changes
