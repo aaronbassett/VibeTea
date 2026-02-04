@@ -14,9 +14,12 @@
 
 import type React from 'react';
 import { useCallback, useMemo } from 'react';
+import { m, AnimatePresence } from 'framer-motion';
 
-import { useEventStore } from '../hooks/useEventStore';
+import { useEventStore, type ConnectionStatus } from '../hooks/useEventStore';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 import { formatDuration, formatRelativeTime } from '../utils/formatting';
+import { SPRING_CONFIGS } from '../constants/design-tokens';
 
 import type { Session, SessionStatus, VibeteaEvent } from '../types/events';
 
@@ -88,6 +91,8 @@ interface SessionCardProps {
   readonly onClick?: (sessionId: string) => void;
   /** Whether this session is currently selected for filtering */
   readonly isSelected?: boolean;
+  /** Whether the user prefers reduced motion */
+  readonly prefersReducedMotion?: boolean;
 }
 
 /**
@@ -104,6 +109,54 @@ interface ActivityIndicatorProps {
  * Activity level based on recent event count.
  */
 type ActivityLevel = 'none' | 'low' | 'medium' | 'high';
+
+/**
+ * Animation phases for session card transitions.
+ */
+export type SessionAnimationPhase =
+  | 'entering'
+  | 'idle'
+  | 'exiting'
+  | 'statusChange';
+
+/**
+ * Animation states for session cards.
+ *
+ * Tracks the current animation phase, previous status for transitions,
+ * and hover state for interactive animations.
+ */
+export interface SessionCardAnimationState {
+  /** Current animation phase */
+  readonly phase: SessionAnimationPhase;
+  /** Previous status (for status change animation) */
+  readonly previousStatus: SessionStatus | null;
+  /** Whether hover state is active */
+  readonly isHovered: boolean;
+}
+
+// -----------------------------------------------------------------------------
+// Animation Variants
+// -----------------------------------------------------------------------------
+
+/**
+ * Animation variants for session card entry/exit/layout transitions.
+ * Uses the expressive spring config (stiffness: 260, damping: 20) from design tokens.
+ */
+const cardVariants = {
+  initial: { opacity: 0, y: 20, scale: 0.95 },
+  animate: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: SPRING_CONFIGS.expressive,
+  },
+  exit: {
+    opacity: 0,
+    y: -10,
+    scale: 0.95,
+    transition: { duration: 0.2 },
+  },
+};
 
 // -----------------------------------------------------------------------------
 // Helper Functions
@@ -276,10 +329,15 @@ function SessionCard({
   recentEventCount,
   onClick,
   isSelected = false,
+  prefersReducedMotion = false,
 }: SessionCardProps) {
   const isActive = session.status === 'active';
   const isEnded = session.status === 'ended';
   const isDimmed = !isActive && !isSelected;
+
+  // Animated glow class for active sessions
+  // CSS handles prefers-reduced-motion fallback in animations.css
+  const glowClass = isActive ? 'session-card-glow-active' : '';
 
   // Calculate display values
   const duration = getSessionDuration(session.startedAt);
@@ -320,15 +378,39 @@ function SessionCard({
       ? 'cursor-pointer hover:bg-gray-700/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset'
       : '';
 
+  // Disable spring animations for reduced motion
+  const animationProps = prefersReducedMotion
+    ? { initial: false, animate: false, exit: undefined, layout: false }
+    : {
+        variants: cardVariants,
+        initial: 'initial' as const,
+        animate: 'animate' as const,
+        exit: 'exit' as const,
+        layout: true,
+      };
+
+  // Disable hover effects for reduced motion
+  const hoverProps = prefersReducedMotion
+    ? undefined
+    : onClick !== undefined
+      ? {
+          scale: 1.02,
+          boxShadow: '0 0 12px 2px rgba(217, 119, 87, 0.3)',
+          transition: SPRING_CONFIGS.gentle,
+        }
+      : undefined;
+
   return (
-    <div
+    <m.div
       role="listitem"
       tabIndex={onClick !== undefined ? 0 : undefined}
       aria-label={`${session.project} session, ${STATUS_CONFIG[session.status].label}, duration ${formattedDuration}${isSelected ? ', selected' : ''}`}
       aria-selected={isSelected}
-      className={`border rounded-lg p-4 transition-all ${selectedClass} ${opacityClass} ${hoverClass}`}
+      className={`border rounded-lg p-4 transition-colors ${selectedClass} ${opacityClass} ${hoverClass} ${glowClass}`}
       onClick={onClick !== undefined ? handleClick : undefined}
       onKeyDown={onClick !== undefined ? handleKeyDown : undefined}
+      {...animationProps}
+      whileHover={hoverProps}
     >
       {/* Header row: Project name and status badge */}
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -367,16 +449,66 @@ function SessionCard({
           </span>
         )}
       </div>
-    </div>
+    </m.div>
   );
 }
 
 /**
- * Empty state when no sessions are available.
+ * Props for the EmptyState component.
  */
-function EmptyState() {
+interface EmptyStateProps {
+  /** Current WebSocket connection status */
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/**
+ * Get context-aware empty state message based on connection status.
+ *
+ * @param connectionStatus - Current WebSocket connection status
+ * @returns Object with primary message and call-to-action text
+ */
+function getEmptyStateMessages(connectionStatus: ConnectionStatus): {
+  readonly primary: string;
+  readonly callToAction: string;
+} {
+  switch (connectionStatus) {
+    case 'connecting':
+      return {
+        primary: 'Connecting to server...',
+        callToAction: 'Sessions will appear once connected',
+      };
+    case 'reconnecting':
+      return {
+        primary: 'Reconnecting to server...',
+        callToAction: 'Sessions will reappear once reconnected',
+      };
+    case 'disconnected':
+      return {
+        primary: 'Not connected',
+        callToAction: 'Click Connect to start receiving session data',
+      };
+    case 'connected':
+    default:
+      return {
+        primary: 'No active sessions',
+        callToAction: 'Start a Claude Code session to see activity here',
+      };
+  }
+}
+
+/**
+ * Empty state when no sessions are available.
+ * Displays context-aware messages based on connection status.
+ */
+function EmptyState({ connectionStatus }: EmptyStateProps) {
+  const { primary, callToAction } = getEmptyStateMessages(connectionStatus);
+
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+    <div
+      className="flex flex-col items-center justify-center py-12 text-gray-500"
+      role="status"
+      aria-live="polite"
+    >
       <svg
         className="w-12 h-12 mb-4"
         fill="none"
@@ -391,8 +523,8 @@ function EmptyState() {
           d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
         />
       </svg>
-      <p className="text-sm">No active sessions</p>
-      <p className="text-xs mt-1">Sessions will appear here when detected</p>
+      <p className="text-sm font-medium">{primary}</p>
+      <p className="text-xs mt-1 text-center max-w-xs">{callToAction}</p>
     </div>
   );
 }
@@ -437,9 +569,13 @@ export function SessionOverview({
   onSessionClick,
   selectedSessionId,
 }: SessionOverviewProps) {
-  // Subscribe to sessions from the store
+  // Detect user's reduced motion preference
+  const prefersReducedMotion = useReducedMotion();
+
+  // Subscribe to sessions and connection status from the store
   const sessions = useEventStore((state) => state.sessions);
   const events = useEventStore((state) => state.events);
+  const connectionStatus = useEventStore((state) => state.status);
 
   // Convert sessions Map to sorted array
   const sortedSessions = useMemo(() => {
@@ -486,20 +622,23 @@ export function SessionOverview({
       {/* Sessions list or empty state */}
       {hasSessions ? (
         <div role="list" aria-label="Active sessions" className="space-y-3">
-          {sortedSessions.map((session) => (
-            <SessionCard
-              key={session.sessionId}
-              session={session}
-              recentEventCount={recentEventCounts.get(session.sessionId) ?? 0}
-              onClick={
-                onSessionClick !== undefined ? handleSessionClick : undefined
-              }
-              isSelected={selectedSessionId === session.sessionId}
-            />
-          ))}
+          <AnimatePresence mode="popLayout">
+            {sortedSessions.map((session) => (
+              <SessionCard
+                key={session.sessionId}
+                session={session}
+                recentEventCount={recentEventCounts.get(session.sessionId) ?? 0}
+                onClick={
+                  onSessionClick !== undefined ? handleSessionClick : undefined
+                }
+                isSelected={selectedSessionId === session.sessionId}
+                prefersReducedMotion={prefersReducedMotion}
+              />
+            ))}
+          </AnimatePresence>
         </div>
       ) : (
-        <EmptyState />
+        <EmptyState connectionStatus={connectionStatus} />
       )}
     </div>
   );

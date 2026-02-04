@@ -7,8 +7,17 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { m } from 'framer-motion';
 
-import { selectFilteredEvents, useEventStore } from '../hooks/useEventStore';
+import {
+  selectFilteredEvents,
+  useEventStore,
+  type ConnectionStatus,
+} from '../hooks/useEventStore';
+import { useAnimationThrottle } from '../hooks/useAnimationThrottle';
+import { useReducedMotion } from '../hooks/useReducedMotion';
+import { EVENT_TYPE_ICONS } from './icons/EventIcons';
+import { ANIMATION_TIMING, SPRING_CONFIGS } from '../constants/design-tokens';
 
 import type { EventType, VibeteaEvent } from '../types/events';
 
@@ -21,26 +30,6 @@ const ESTIMATED_ROW_HEIGHT = 64;
 
 /** Distance from bottom (in pixels) to disable auto-scroll when user scrolls up */
 const AUTO_SCROLL_THRESHOLD = 50;
-
-/** Icon mapping for each event type */
-const EVENT_TYPE_ICONS: Record<EventType, string> = {
-  tool: '\u{1F527}', // 🔧
-  activity: '\u{1F4AC}', // 💬
-  session: '\u{1F680}', // 🚀
-  summary: '\u{1F4CB}', // 📋
-  error: '\u{26A0}\u{FE0F}', // ⚠️
-  agent: '\u{1F916}', // 🤖
-  // Enhanced tracking event icons
-  agent_spawn: '\u{1F331}', // 🌱
-  skill_invocation: '\u{2728}', // ✨
-  token_usage: '\u{1F4B0}', // 💰
-  session_metrics: '\u{1F4CA}', // 📊
-  activity_pattern: '\u{1F4C8}', // 📈
-  model_distribution: '\u{1F916}', // 🤖
-  todo_progress: '\u{2705}', // ✅
-  file_change: '\u{1F4DD}', // 📝
-  project_activity: '\u{1F4C1}', // 📁
-};
 
 /** Color classes for event type badges */
 const EVENT_TYPE_COLORS: Record<EventType, string> = {
@@ -72,6 +61,122 @@ const EVENT_TYPE_COLORS: Record<EventType, string> = {
 interface EventStreamProps {
   /** Additional CSS classes to apply to the container. */
   readonly className?: string;
+}
+
+/**
+ * Tracks the animation state for an individual event in the stream.
+ *
+ * Used to determine whether an event should play entrance animations based on:
+ * - Age threshold: Events older than `eventAnimationMaxAgeMs` (5s) should not animate
+ * - Initial load: Events present on first render should not animate
+ * - Throttle limits: Respects `maxEntranceAnimationsPerSecond` (10/s) constraint
+ *
+ * @see ANIMATION_TIMING.eventAnimationMaxAgeMs - 5000ms threshold
+ * @see ANIMATION_TIMING.maxEntranceAnimationsPerSecond - 10/s throttle limit
+ */
+export interface EventAnimationState {
+  /** The unique identifier of the event. */
+  readonly eventId: string;
+  /** Whether the event is within the animation age threshold (< 5 seconds old). */
+  readonly shouldAnimate: boolean;
+  /** Whether this event was just added (vs present during initial load). */
+  readonly isNew: boolean;
+}
+
+/**
+ * Tracks recently animated events for throttling entrance animations.
+ * Maps event IDs to the timestamp when their animation was triggered.
+ */
+export type AnimationThrottleMap = Map<string, number>;
+
+/**
+ * Determines if an event should animate based on its age.
+ *
+ * @param eventTimestamp - RFC 3339 timestamp of the event
+ * @param currentTime - Current time in milliseconds (Date.now())
+ * @param maxAgeMs - Maximum age in milliseconds for animation eligibility (default: 5000)
+ * @returns true if the event is within the animation age threshold
+ *
+ * @example
+ * ```ts
+ * const eventTs = new Date().toISOString();
+ * const canAnimate = shouldEventAnimate(eventTs, Date.now(), 5000);
+ * // canAnimate === true (just created)
+ *
+ * // After 6 seconds...
+ * const canAnimateLater = shouldEventAnimate(eventTs, Date.now(), 5000);
+ * // canAnimateLater === false (too old)
+ * ```
+ */
+export function shouldEventAnimate(
+  eventTimestamp: string,
+  currentTime: number,
+  maxAgeMs: number = 5000
+): boolean {
+  const eventTime = new Date(eventTimestamp).getTime();
+  const ageMs = currentTime - eventTime;
+  return ageMs < maxAgeMs && ageMs >= 0;
+}
+
+/**
+ * Checks if a new animation can be triggered without exceeding the throttle limit.
+ *
+ * @param throttleMap - Map of recently animated event IDs to their animation timestamps
+ * @param currentTime - Current time in milliseconds
+ * @param maxPerSecond - Maximum animations allowed per second (default: 10)
+ * @returns true if a new animation can be triggered
+ *
+ * @example
+ * ```ts
+ * const throttle = new Map<string, number>();
+ * if (canTriggerAnimation(throttle, Date.now(), 10)) {
+ *   throttle.set(eventId, Date.now());
+ *   // trigger animation...
+ * }
+ * ```
+ */
+export function canTriggerAnimation(
+  throttleMap: AnimationThrottleMap,
+  currentTime: number,
+  maxPerSecond: number = 10
+): boolean {
+  // Count animations triggered within the last second
+  const oneSecondAgo = currentTime - 1000;
+  let recentCount = 0;
+
+  for (const timestamp of throttleMap.values()) {
+    if (timestamp > oneSecondAgo) {
+      recentCount++;
+    }
+  }
+
+  return recentCount < maxPerSecond;
+}
+
+/**
+ * Cleans up old entries from the throttle map to prevent memory leaks.
+ * Removes entries older than 1 second.
+ *
+ * @param throttleMap - Map of recently animated event IDs to their animation timestamps
+ * @param currentTime - Current time in milliseconds
+ *
+ * @example
+ * ```ts
+ * // Call periodically or before checking throttle
+ * cleanupThrottleMap(throttleMap, Date.now());
+ * ```
+ */
+export function cleanupThrottleMap(
+  throttleMap: AnimationThrottleMap,
+  currentTime: number
+): void {
+  const oneSecondAgo = currentTime - 1000;
+
+  for (const [eventId, timestamp] of throttleMap.entries()) {
+    if (timestamp <= oneSecondAgo) {
+      throttleMap.delete(eventId);
+    }
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -207,34 +312,47 @@ function getEventDescription(event: VibeteaEvent): string {
 // -----------------------------------------------------------------------------
 
 /**
- * Renders a single event row.
+ * Props for the EventRow component.
  */
-function EventRow({ event }: { readonly event: VibeteaEvent }) {
-  const icon = EVENT_TYPE_ICONS[event.type];
+interface EventRowProps {
+  /** The event to render. */
+  readonly event: VibeteaEvent;
+  /** Whether the row should animate on entrance. */
+  readonly shouldAnimate: boolean;
+  /** Whether user prefers reduced motion. */
+  readonly prefersReducedMotion: boolean;
+}
+
+/**
+ * Renders a single event row with optional entrance animation.
+ */
+function EventRow({
+  event,
+  shouldAnimate,
+  prefersReducedMotion,
+}: EventRowProps) {
+  const Icon = EVENT_TYPE_ICONS[event.type];
   const colorClass = EVENT_TYPE_COLORS[event.type];
   const description = getEventDescription(event);
   const formattedTime = formatTimestamp(event.timestamp);
 
-  return (
-    <div
-      className="group flex items-center gap-3 px-4 py-3 hover:bg-gray-800/50 transition-colors border-b border-gray-800/50"
-      role="listitem"
-      aria-label={`${event.type} event at ${formattedTime}: ${description}`}
-    >
+  // Determine if we should actually animate
+  const animate = shouldAnimate && !prefersReducedMotion;
+
+  const content = (
+    <>
       {/* Event type icon and badge */}
       <div
-        className={`flex items-center gap-2 px-2 py-1 rounded-md border ${colorClass}`}
+        className={`flex items-center justify-center gap-2 px-2.5 py-1 rounded-md border min-w-[90px] ${colorClass}`}
       >
-        <span className="text-base" aria-hidden="true">
-          {icon}
-        </span>
+        <Icon className="w-4 h-4 flex-shrink-0" aria-hidden="true" />
         <span className="text-xs font-medium capitalize">{event.type}</span>
       </div>
 
       {/* Event description */}
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-gray-100 truncate">{description}</p>
-        <p className="text-xs text-gray-500 truncate">
+        <p className="text-sm text-[#f5f5f5] truncate">{description}</p>
+        <p className="text-xs text-[#6b6b6b] truncate">
           {event.source}
           {getSessionId(event) !== undefined
             ? ` | ${getSessionId(event)?.slice(0, 8)}...`
@@ -243,32 +361,80 @@ function EventRow({ event }: { readonly event: VibeteaEvent }) {
       </div>
 
       {/* Timestamp */}
-      <time
-        dateTime={event.timestamp}
-        className="text-xs text-gray-400 font-mono shrink-0"
+      <div className="flex items-center shrink-0 pl-3 ml-2 border-l border-[#2a2a2a]">
+        <time
+          dateTime={event.timestamp}
+          className="text-xs text-[#a0a0a0] font-mono tabular-nums"
+        >
+          {formattedTime}
+        </time>
+      </div>
+    </>
+  );
+
+  const rowClassName =
+    'group flex items-center gap-3 px-4 py-3 border-b border-[#1a1a1a] transition-[background-color,border-color] duration-150 hover:bg-[#1a1a1a]/70 hover:border-[#2a2a2a]';
+
+  // If animating, use framer-motion's m.div
+  if (animate) {
+    return (
+      <m.div
+        initial={{ opacity: 0, x: -20 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={SPRING_CONFIGS.standard}
+        className={rowClassName}
+        role="listitem"
+        aria-label={`${event.type} event at ${formattedTime}: ${description}`}
       >
-        {formattedTime}
-      </time>
+        {content}
+      </m.div>
+    );
+  }
+
+  // No animation - render plain div
+  return (
+    <div
+      className={rowClassName}
+      role="listitem"
+      aria-label={`${event.type} event at ${formattedTime}: ${description}`}
+    >
+      {content}
     </div>
   );
 }
 
 /**
  * Button to jump back to the latest events.
+ * Uses spring-based hover/focus feedback per FR-007.
  */
 function JumpToLatestButton({
   onClick,
   newEventCount,
+  prefersReducedMotion,
 }: {
   readonly onClick: () => void;
   readonly newEventCount: number;
+  readonly prefersReducedMotion: boolean;
 }) {
+  // Spring-based hover animation (FR-007)
+  const hoverProps = prefersReducedMotion
+    ? undefined
+    : {
+        scale: 1.05,
+        boxShadow: '0 0 16px 4px rgba(59, 130, 246, 0.4)',
+        transition: SPRING_CONFIGS.gentle,
+      };
+
+  const tapProps = prefersReducedMotion ? undefined : { scale: 0.95 };
+
   return (
-    <button
+    <m.button
       type="button"
       onClick={onClick}
-      className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-full shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+      className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-full shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
       aria-label={`Jump to latest events. ${newEventCount} new events available.`}
+      whileHover={hoverProps}
+      whileTap={tapProps}
     >
       <svg
         className="w-4 h-4"
@@ -290,16 +456,67 @@ function JumpToLatestButton({
           {newEventCount > 99 ? '99+' : newEventCount}
         </span>
       )}
-    </button>
+    </m.button>
   );
 }
 
 /**
- * Empty state when no events are available.
+ * Props for the EmptyState component.
  */
-function EmptyState() {
+interface EmptyStateProps {
+  /** Current WebSocket connection status */
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/**
+ * Get context-aware empty state message based on connection status.
+ *
+ * @param connectionStatus - Current WebSocket connection status
+ * @returns Object with primary message and call-to-action text
+ */
+function getEmptyStateMessages(connectionStatus: ConnectionStatus): {
+  readonly primary: string;
+  readonly callToAction: string;
+} {
+  switch (connectionStatus) {
+    case 'connecting':
+      return {
+        primary: 'Connecting to server...',
+        callToAction: 'Events will stream in once connected',
+      };
+    case 'reconnecting':
+      return {
+        primary: 'Reconnecting to server...',
+        callToAction: 'Events will resume once reconnected',
+      };
+    case 'disconnected':
+      return {
+        primary: 'Not connected',
+        callToAction: 'Click Connect to start receiving events',
+      };
+    case 'connected':
+    default:
+      return {
+        primary: 'No events yet',
+        callToAction:
+          'Events will appear here as Claude Code activity is detected',
+      };
+  }
+}
+
+/**
+ * Empty state when no events are available.
+ * Displays context-aware messages based on connection status.
+ */
+function EmptyState({ connectionStatus }: EmptyStateProps) {
+  const { primary, callToAction } = getEmptyStateMessages(connectionStatus);
+
   return (
-    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+    <div
+      className="flex flex-col items-center justify-center h-full text-gray-500"
+      role="status"
+      aria-live="polite"
+    >
       <svg
         className="w-12 h-12 mb-4"
         fill="none"
@@ -314,8 +531,8 @@ function EmptyState() {
           d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
         />
       </svg>
-      <p className="text-sm">No events yet</p>
-      <p className="text-xs mt-1">Events will appear here when received</p>
+      <p className="text-sm font-medium">{primary}</p>
+      <p className="text-xs mt-1 text-center max-w-xs">{callToAction}</p>
     </div>
   );
 }
@@ -344,16 +561,32 @@ function EmptyState() {
  * ```
  */
 export function EventStream({ className = '' }: EventStreamProps) {
-  // Selective subscription: only re-render when filtered events change
+  // Selective subscription: only re-render when filtered events or connection status change
   const events = useEventStore(selectFilteredEvents);
+  const connectionStatus = useEventStore((state) => state.status);
+
+  // Animation hooks
+  const shouldAnimateThrottle = useAnimationThrottle();
+  const prefersReducedMotion = useReducedMotion();
 
   // Refs
   const parentRef = useRef<HTMLDivElement>(null);
   const previousEventCountRef = useRef<number>(events.length);
 
+  // Track event IDs present on initial mount (these should not animate)
+  const initialEventIdsRef = useRef<Set<string> | null>(null);
+
+  // Track which event IDs have already been animated (to avoid re-animating on re-render)
+  const animatedEventIdsRef = useRef<Set<string>>(new Set());
+
   // State
   const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState<boolean>(true);
   const [newEventCount, setNewEventCount] = useState<number>(0);
+
+  // Initialize the set of initial event IDs on first render
+  if (initialEventIdsRef.current === null) {
+    initialEventIdsRef.current = new Set(events.map((e) => e.id));
+  }
 
   // Since events are stored newest-first (index 0 is most recent),
   // we reverse the order for display so newest appears at the bottom
@@ -445,7 +678,7 @@ export function EventStream({ className = '' }: EventStreamProps) {
         aria-label="Event stream"
         aria-live="polite"
       >
-        <EmptyState />
+        <EmptyState connectionStatus={connectionStatus} />
       </div>
     );
   }
@@ -478,6 +711,31 @@ export function EventStream({ className = '' }: EventStreamProps) {
               return null;
             }
 
+            // Determine if this event should animate
+            // An event should animate if:
+            // 1. It was NOT present on initial load
+            // 2. It's within the age threshold (< 5 seconds old)
+            // 3. It hasn't already been animated
+            // 4. Animation throttle allows it
+            let eventShouldAnimate = false;
+            const isInitialEvent =
+              initialEventIdsRef.current?.has(event.id) ?? true;
+            const hasBeenAnimated = animatedEventIdsRef.current.has(event.id);
+
+            if (!isInitialEvent && !hasBeenAnimated) {
+              const isWithinAgeThreshold = shouldEventAnimate(
+                event.timestamp,
+                Date.now(),
+                ANIMATION_TIMING.eventAnimationMaxAgeMs
+              );
+
+              if (isWithinAgeThreshold && shouldAnimateThrottle()) {
+                eventShouldAnimate = true;
+                // Mark this event as animated so we don't re-animate on re-render
+                animatedEventIdsRef.current.add(event.id);
+              }
+            }
+
             return (
               <div
                 key={event.id}
@@ -490,7 +748,11 @@ export function EventStream({ className = '' }: EventStreamProps) {
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
               >
-                <EventRow event={event} />
+                <EventRow
+                  event={event}
+                  shouldAnimate={eventShouldAnimate}
+                  prefersReducedMotion={prefersReducedMotion}
+                />
               </div>
             );
           })}
@@ -502,6 +764,7 @@ export function EventStream({ className = '' }: EventStreamProps) {
         <JumpToLatestButton
           onClick={handleJumpToLatest}
           newEventCount={newEventCount}
+          prefersReducedMotion={prefersReducedMotion}
         />
       )}
     </div>

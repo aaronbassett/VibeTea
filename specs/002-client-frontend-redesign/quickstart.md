@@ -21,9 +21,8 @@ git checkout 002-client-frontend-redesign
 cd client
 npm install
 
-# Install new dependencies for this feature
-npm install framer-motion@^11.18.0 recharts@^2.15.0
-npm install -D figlet@^1.8.0 @types/figlet
+# Dependencies are already installed in package.json:
+# framer-motion@^12.31.0, recharts@^3.7.0, figlet@^1.10.0
 
 # Start development server
 npm run dev
@@ -52,14 +51,17 @@ npm run dev
 | `npm test` | Run Vitest unit tests |
 | `npm run test:watch` | Run tests in watch mode |
 
-## New Scripts (to be added)
+## Additional Scripts
 
 ```bash
-# Generate ASCII art at build time (add to package.json)
-npm run generate:ascii
+# Generate ASCII art (runs automatically before build)
+npm run prebuild
 
-# Run Storybook (after setup)
+# Run Storybook for component development
 npm run storybook
+
+# Build Storybook for static deployment
+npm run build-storybook
 ```
 
 ## Project Structure for This Feature
@@ -130,16 +132,17 @@ window.matchMedia('(prefers-reduced-motion: reduce)').matches = true
 # Events arriving faster than 10/sec should render without animation
 ```
 
-## Storybook Setup (DS-002)
+## Storybook (DS-002)
 
-After initial setup, run Storybook for component development:
+Storybook is already configured. Run for component development:
 
 ```bash
-# Initialize Storybook (one-time)
-npx storybook@latest init --builder vite
-
-# Run Storybook
+# Start Storybook dev server
 npm run storybook
+# Runs at http://localhost:6006
+
+# Build static Storybook
+npm run build-storybook
 ```
 
 ## Type Checking
@@ -193,9 +196,11 @@ npx vite-bundle-visualizer
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| framer-motion | ^11.18.0 | Spring animations, gesture support |
-| recharts | ^2.15.0 | Graph visualizations |
-| figlet | ^1.8.0 | Build-time ASCII art generation |
+| framer-motion | ^12.31.0 | Spring animations, gesture support |
+| recharts | ^3.7.0 | Graph visualizations |
+| figlet | ^1.10.0 | Build-time ASCII art generation |
+| @tanstack/react-virtual | ^3.13.18 | Virtual scrolling for event stream |
+| Storybook | 8.6.15 | Component documentation |
 
 ## Quick Reference
 

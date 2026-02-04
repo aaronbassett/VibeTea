@@ -92,8 +92,10 @@ describe('App Token Handling', () => {
   it('renders token form when no token is stored', () => {
     render(<App />);
 
-    // Should show the token form
-    expect(screen.getByText('VibeTea Dashboard')).toBeInTheDocument();
+    // Should show the ASCII header and token form
+    expect(
+      screen.getByRole('img', { name: /vibetea ascii logo/i })
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/enter your authentication token/i)
     ).toBeInTheDocument();
