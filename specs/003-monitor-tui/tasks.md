@@ -269,10 +269,10 @@
 - [x] T134 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
-- [ ] T135 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T136 [GIT] Create/update PR to main with phase summary
-- [ ] T137 [GIT] Verify all CI checks pass
-- [ ] T138 [GIT] Report PR ready status
+- [x] T135 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T136 [GIT] Create/update PR to main with phase summary
+- [x] T137 [GIT] Verify all CI checks pass
+- [x] T138 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 3 complete - connection status visible in header
 
