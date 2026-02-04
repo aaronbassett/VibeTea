@@ -442,10 +442,10 @@
 - [x] T228 [US9] Create retro/P11.md for this phase
 
 ### Tests for User Story 9
-- [ ] T229 [GIT] Commit: initialize phase 11 retro
-- [ ] T230 [P] [US9] Unit test for project path slug parsing in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
-- [ ] T231 [P] [US9] Unit test for active session detection (no summary event) in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
-- [ ] T232 [GIT] Commit: add project_tracker tests
+- [x] T229 [GIT] Commit: initialize phase 11 retro
+- [x] T230 [P] [US9] Unit test for project path slug parsing in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
+- [x] T231 [P] [US9] Unit test for active session detection (no summary event) in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
+- [x] T232 [GIT] Commit: add project_tracker tests
 
 ### Implementation for User Story 9
 - [ ] T233 [US9] Implement project_tracker module in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
