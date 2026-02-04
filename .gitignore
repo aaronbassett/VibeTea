@@ -40,3 +40,6 @@ Thumbs.db
 
 # Git worktrees
 .worktrees/
+
+# Local development orchestration
+ralph.toml

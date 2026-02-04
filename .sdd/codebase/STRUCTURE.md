@@ -10,7 +10,7 @@
 VibeTea/
 ├── monitor/                    # Rust CLI for watching Claude Code sessions
 │   ├── src/
-│   │   ├── main.rs            # Entry point, CLI commands (init, run, export-key)
+│   │   ├── main.rs            # Entry point, CLI commands (default: TUI, init, export-key, run)
 │   │   ├── lib.rs             # Module exports
 │   │   ├── config.rs          # Environment configuration loading
 │   │   ├── watcher.rs         # File system watcher (inotify/FSEvents/ReadDirectoryChangesW)
@@ -20,19 +20,17 @@ VibeTea/
 │   │   ├── sender.rs          # HTTP client with retry and buffering
 │   │   ├── types.rs           # Event type definitions
 │   │   ├── error.rs           # Error types
-│   │   ├── trackers/          # Enhanced tracking modules (Phase 4-11)
-│   │   │   ├── mod.rs         # Tracker module exports
-│   │   │   ├── agent_tracker.rs     # Task tool agent spawn detection
-│   │   │   ├── skill_tracker.rs     # Skill/slash command invocation tracking (Phase 5)
-│   │   │   ├── stats_tracker.rs     # Token usage, session metrics, activity patterns, model distribution (Phase 8-10)
-│   │   │   ├── todo_tracker.rs      # Todo list progress tracking (Phase 6)
-│   │   │   ├── file_history_tracker.rs # File edit tracking (Phase 8+)
-│   │   │   └── project_tracker.rs   # Project session activity tracking (Phase 11)
-│   │   └── utils/             # Shared utilities (debouncing, tokenization, etc.)
-│   │       ├── mod.rs         # Utilities exports
-│   │       ├── debounce.rs    # Event debouncing for coalescing rapid changes
-│   │       ├── session_filename.rs # Utility for parsing session filenames
-│   │       └── tokenize.rs    # Skill name extraction (Phase 5)
+│   │   └── tui/               # Terminal user interface (default entry point)
+│   │       ├── mod.rs         # TUI module orchestration and lifecycle
+│   │       └── widgets/       # Reusable TUI widget components
+│   │           ├── mod.rs     # Widget catalog and re-exports
+│   │           ├── logo.rs    # ASCII art logo with gradient animation
+│   │           ├── setup_form.rs # Server URL and registration code input form
+│   │           ├── header.rs  # Connection status bar with server info
+│   │           ├── event_stream.rs # Scrollable list of session events
+│   │           ├── credentials.rs # Device credentials display
+│   │           ├── stats_footer.rs # Session statistics and keybinding hints
+│   │           └── size_warning.rs # Terminal size warning widget (Phase 11)
 │   ├── tests/
 │   │   ├── privacy_test.rs    # Privacy filtering tests
 │   │   ├── sender_recovery_test.rs  # Retry logic tests
@@ -62,7 +60,7 @@ VibeTea/
 │   │   ├── components/
 │   │   │   ├── ConnectionStatus.tsx   # WebSocket connection indicator
 │   │   │   ├── TokenForm.tsx          # Authentication token input
-│   │   │   ├── EventStream.tsx        # Virtualized event list with activity_pattern and model_distribution handlers (Phase 9-10)
+│   │   │   ├── EventStream.tsx        # Virtualized event list
 │   │   │   ├── SessionOverview.tsx    # Active sessions table
 │   │   │   └── Heatmap.tsx           # Activity over time visualization
 │   │   ├── hooks/
@@ -70,7 +68,7 @@ VibeTea/
 │   │   │   ├── useEventStore.ts      # Zustand store (state + selectors)
 │   │   │   └── useSessionTimeouts.ts # Session state machine (Active → Inactive → Ended)
 │   │   ├── types/
-│   │   │   └── events.ts             # TypeScript event interfaces (ActivityPatternPayload, ModelDistributionPayload added Phase 9-10)
+│   │   │   └── events.ts             # TypeScript event interfaces
 │   │   ├── utils/
 │   │   │   └── formatting.ts         # Timestamp, event type formatting
 │   │   ├── __tests__/
@@ -116,26 +114,62 @@ VibeTea/
 
 | File | Purpose | Key Types |
 |------|---------|-----------|
-| `main.rs` | CLI entry (init/run/export-key commands), signal handling | `Cli`, `Command` |
+| `main.rs` | CLI entry (default: TUI, init, run, export-key commands), signal handling | `Cli`, `Command` |
 | `config.rs` | Load from env vars: `VIBETEA_*` | `Config` |
-| `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` and `~/.claude/history.jsonl` | `FileWatcher`, `WatchEvent` |
-| `parser.rs` | Parse JSONL, extract Session/Activity/Tool/Agent events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
+| `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` | `FileWatcher`, `WatchEvent` |
+| `parser.rs` | Parse JSONL, extract Session/Activity/Tool events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
 | `crypto.rs` | Ed25519 keypair with dual loading strategy (env var + file fallback) and key export | `Crypto`, `KeySource`, `CryptoError` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
-| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent`, `TodoProgressEvent`, `ProjectActivityEvent` |
+| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType` |
 | `error.rs` | Error types | `MonitorError`, custom errors |
-| `trackers/mod.rs` | Tracker module organization | Exports `agent_tracker`, `skill_tracker`, `stats_tracker`, `todo_tracker`, `file_history_tracker`, `project_tracker` |
-| `trackers/agent_tracker.rs` | Task tool agent spawn parsing | `TaskToolInput`, `parse_task_tool_use()`, `try_extract_agent_spawn()` |
-| `trackers/skill_tracker.rs` (Phase 5) | Skill/slash command parsing from history.jsonl | `SkillTracker`, `parse_history_entry()`, `create_skill_invocation_event()` |
-| `trackers/stats_tracker.rs` (Phase 8-10) | Token usage, session metrics, activity patterns, model distribution from stats-cache.json | `StatsTracker`, `StatsCache`, `ModelTokens`, `StatsEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent` |
-| `trackers/todo_tracker.rs` (Phase 6) | Todo list progress and abandonment detection | `TodoTracker`, `TodoEntry`, `TodoStatus`, `TodoProgressEvent`, `parse_todo_file()`, `count_todo_statuses()`, `is_abandoned()` |
-| `trackers/file_history_tracker.rs` (Phase 8+) | File edit history tracking | `FileHistoryTracker`, `FileChangeEvent` |
-| `trackers/project_tracker.rs` (Phase 11) | Project session activity tracking | `ProjectTracker`, `ProjectTrackerConfig`, `ProjectActivityEvent`, `parse_project_slug()`, `has_summary_event()`, `extract_session_id()` |
-| `utils/mod.rs` | Utility module exports | Exports `debounce`, `tokenize`, `session_filename` |
-| `utils/debounce.rs` | Event debouncing to coalesce rapid changes | `Debouncer`, `DebouncerError` |
-| `utils/session_filename.rs` | Parsing session identifiers from filenames | `parse_todo_filename()`, `parse_project_filename()` |
-| `utils/tokenize.rs` (Phase 5) | Skill name extraction | `extract_skill_name()` |
+
+### Monitor CLI Commands
+
+The Monitor now supports four modes:
+
+| Command | File Location | Purpose | Arguments |
+|---------|---|---------|-----------|
+| `(no args)` or `tui` | `monitor/src/main.rs:137-149` | Launch interactive TUI (default) | (none, optional --config) |
+| `init` | `monitor/src/main.rs:109-118` | Generate Ed25519 keypair | `--force` (optional) |
+| `export-key` | `monitor/src/main.rs:119-127` | Export private key for CI/CD | `--path <DIR>` (optional, defaults to `~/.vibetea`) |
+| `run` | `monitor/src/main.rs:128-135` | Start headless monitor daemon | (none, requires `VIBETEA_SERVER_URL`) |
+
+**Phase 11 Addition: TUI as Default Entry Point**
+- Lines 137-142: Default command handling (TUI is default when no subcommand)
+- Lines 145: `Command::Tui => run_tui()` dispatches to TUI mode
+- TUI provides interactive configuration and real-time event monitoring
+- Headless `run` command remains available for scripting and background monitoring
+
+### `monitor/src/tui/` - Terminal User Interface
+
+The TUI module provides an interactive terminal interface for configuring and monitoring Claude Code sessions.
+
+| File | Purpose | Key Types |
+|------|---------|-----------|
+| `mod.rs` | TUI lifecycle, event loop, state management | `Tui`, `App`, `AppState` |
+| `widgets/mod.rs` | Widget catalog and re-exports | — |
+
+### `monitor/src/tui/widgets/` - TUI Widgets
+
+Reusable widget components built on ratatui:
+
+| File | Purpose | Key Types | Added In |
+|------|---------|-----------|----------|
+| `logo.rs` | ASCII art logo with gradient animation | `LogoWidget`, `LogoVariant` | Phase 10 |
+| `setup_form.rs` | Server URL and registration code input form | `SetupFormWidget` | Phase 10 |
+| `header.rs` | Connection status bar with server info and indicators | `HeaderWidget`, `ConnectionStatusWidget` | Phase 10 |
+| `event_stream.rs` | Scrollable list of session events with filtering | `EventStreamWidget` | Phase 10 |
+| `credentials.rs` | Device credentials display (public key, device name) | `CredentialsWidget` | Phase 10 |
+| `stats_footer.rs` | Session statistics and keybinding hints | `StatsFooterWidget` | Phase 10 |
+| `size_warning.rs` | Terminal size warning when dimensions are too small | `SizeWarningWidget`, `TerminalSizeStatus` | Phase 11 |
+
+**Widget Details:**
+- **size_warning.rs** (Phase 11): Displays warning when terminal is below 80x24 minimum
+  - Functions: `check_terminal_size()`, `get_terminal_size_status()`
+  - Constants: `MIN_TERMINAL_WIDTH`, `MIN_TERMINAL_HEIGHT`
+  - Handles gracefully for zero-size areas and edge cases
+  - Comprehensive tests for all size scenarios and boundary conditions
 
 ### Crypto Module Details (`monitor/src/crypto.rs`)
 
@@ -169,16 +203,6 @@ The crypto module provides Ed25519 key management with flexible loading strategi
 - Error paths also zero buffers before returning errors
 - Marked with FR-020 comments for security audit
 
-### Monitor CLI Commands
-
-The Monitor now supports three subcommands:
-
-| Command | File Location | Purpose | Arguments |
-|---------|---|---------|-----------|
-| `init` | `monitor/src/main.rs:138-178` | Generate Ed25519 keypair | `--force` (optional) |
-| `export-key` | `monitor/src/main.rs:180-202` | Export private key for CI/CD | `--path <DIR>` (optional, defaults to `~/.vibetea`) |
-| `run` | `monitor/src/main.rs:204-337` | Start monitor daemon | (none, requires `VIBETEA_SERVER_URL`) |
-
 **Phase 4 Addition: export-key Command**
 - Lines 101-109: CLI definition (ExportKey struct)
 - Lines 180-202: Implementation (run_export_key function)
@@ -209,13 +233,13 @@ The Monitor now supports three subcommands:
 | `main.tsx` | ReactDOM.createRoot() | — |
 | `components/ConnectionStatus.tsx` | Status badge (connecting/connected/disconnected) | `ConnectionStatus` component |
 | `components/TokenForm.tsx` | Input for auth token, localStorage persistence | `TokenForm` component |
-| `components/EventStream.tsx` | Virtualized list of events with filtering; handles activity_pattern and model_distribution events (Phase 9-10) | `EventStream` component |
+| `components/EventStream.tsx` | Virtualized list of events with filtering | `EventStream` component |
 | `components/SessionOverview.tsx` | Table of active sessions with stats | `SessionOverview` component |
 | `components/Heatmap.tsx` | Activity heatmap binned by time | `Heatmap` component |
 | `hooks/useWebSocket.ts` | WebSocket lifecycle, reconnection with backoff | `useWebSocket()` hook |
 | `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters | `useEventStore()` hook |
 | `hooks/useSessionTimeouts.ts` | Session state machine (Active → Inactive → Ended) | `useSessionTimeouts()` hook |
-| `types/events.ts` | TypeScript interfaces with ActivityPatternPayload and ModelDistributionPayload (Phase 9-10) | `VibeteaEvent`, `Session`, `ActivityPatternPayload`, `ModelDistributionPayload` |
+| `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session` |
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
 
@@ -285,32 +309,33 @@ Instead of manual binary download, workflows can use:
 ### Monitor Module
 
 Self-contained CLI with these responsibilities:
-1. **Watch** files via `FileWatcher` (both session JSONL and history.jsonl and todos/ directory and stats-cache.json and projects directory)
-2. **Parse** JSONL via `SessionParser`
-3. **Filter** events via `PrivacyPipeline`
-4. **Sign** events via `Crypto` (with dual-source key loading and export)
-5. **Send** to server via `Sender`
-6. **Export** keys via `export-key` command
-7. **Track** project sessions via `ProjectTracker` (Phase 11)
+1. **Launch** TUI by default (interactive mode)
+2. **Watch** files via `FileWatcher` (headless `run` mode)
+3. **Parse** JSONL via `SessionParser`
+4. **Filter** events via `PrivacyPipeline`
+5. **Sign** events via `Crypto` (with dual-source key loading and export)
+6. **Send** to server via `Sender`
+7. **Export** keys via `export-key` command
 
 No cross-dependencies with Server or Client.
 
 ```
 monitor/src/main.rs
+├── Command::Tui → run_tui()
+│   ├── tui/mod.rs (TUI lifecycle)
+│   │   └── widgets/ (UI components)
 ├── Command::Init → run_init()
 ├── Command::ExportKey → run_export_key()
-├── Command::Run → run_monitor()
-│   ├── config.rs (load env)
-│   ├── crypto.rs (load keys from env var OR file, track KeySource)
-│   ├── watcher.rs → sender.rs
-│   │   ↓
-│   ├── parser.rs → privacy.rs
-│   │   ↓
-│   ├── ProjectTracker (Phase 11) → channel → sender.queue()
-│   │   ↓
-│   └── sender.rs (HTTP, retry, buffering)
-│       ├── crypto.rs (sign events)
-│       └── types.rs (Event schema)
+└── Command::Run → run_monitor()
+    ├── config.rs (load env)
+    ├── crypto.rs (load keys from env var OR file, track KeySource)
+    ├── watcher.rs → sender.rs
+    │   ↓
+    ├── parser.rs → privacy.rs
+    │   ↓
+    └── sender.rs (HTTP, retry, buffering)
+        ├── crypto.rs (sign events)
+        └── types.rs (Event schema)
 ```
 
 ### Server Module
@@ -354,10 +379,10 @@ client/src/App.tsx (root)
 ├── components/
 │   ├── TokenForm.tsx (auth)
 │   ├── ConnectionStatus.tsx (status badge)
-│   ├── EventStream.tsx (virtualized list with Phase 9-10 activity_pattern and model_distribution handlers)
+│   ├── EventStream.tsx (virtualized list)
 │   ├── SessionOverview.tsx (table)
 │   └── Heatmap.tsx (visualization)
-└── types/events.ts (TypeScript interfaces with Phase 9-10 payload types)
+└── types/events.ts (TypeScript interfaces)
 ```
 
 ### GitHub Actions Composite Action Module (Phase 6)
@@ -386,6 +411,8 @@ No dependencies on source code (binary-only).
 | **New Monitor command** | `monitor/src/main.rs` (add to `Command` enum) | `Command::Status` |
 | **New Monitor feature** | `monitor/src/<feature>.rs` (new module) | `monitor/src/compression.rs` |
 | **New key loading method** | `monitor/src/crypto.rs` (add method to `Crypto`) | `Crypto::load_from_stdin()` |
+| **New TUI widget** | `monitor/src/tui/widgets/<widget>.rs` (new module) | `monitor/src/tui/widgets/popup.rs` |
+| **New TUI feature** | `monitor/src/tui/mod.rs` or new module | Event handlers, state management |
 | **New Server endpoint** | `server/src/routes.rs` (add route handler) | `POST /events/:id/ack` |
 | **New Server middleware** | `server/src/routes.rs` or `server/src/` (new module) | `server/src/middleware.rs` |
 | **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
@@ -395,7 +422,7 @@ No dependencies on source code (binary-only).
 | **GitHub Actions workflow** | `.github/workflows/` (copy ci.yml as template) | `.github/workflows/release.yml` |
 | **GitHub Actions composite action** | `.github/actions/<action-name>/` (new directory) | `.github/actions/notify-slack/action.yml` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
-| **Tests** | Colocate with source: `file.rs` → internal `#[cfg(test)] mod tests`, Server/Monitor integration tests in `tests/` | — |
+| **Tests** | Colocate with source: `file.rs` → `file_test.rs` (Rust), `file.ts` → `__tests__/file.test.ts` (TS) | — |
 
 ## Import Paths & Module Organization
 
@@ -410,14 +437,10 @@ use vibetea_monitor::crypto::{Crypto, KeySource};
 use vibetea_monitor::watcher::FileWatcher;
 use vibetea_monitor::sender::Sender;
 use vibetea_monitor::types::Event;
-use vibetea_monitor::trackers::agent_tracker;
-use vibetea_monitor::trackers::skill_tracker::SkillTracker;  // Phase 5
-use vibetea_monitor::trackers::stats_tracker::{StatsTracker, StatsEvent};  // Phase 8-10
-use vibetea_monitor::trackers::todo_tracker::TodoTracker;    // Phase 6
-use vibetea_monitor::trackers::file_history_tracker::FileHistoryTracker;  // Phase 8+
-use vibetea_monitor::trackers::project_tracker::ProjectTracker;  // Phase 11
-use vibetea_monitor::utils::tokenize::extract_skill_name;    // Phase 5
-use vibetea_monitor::utils::debounce::Debouncer;             // Phase 6
+use vibetea_monitor::tui::Tui;
+
+// In monitor/src/tui/mod.rs
+use vibetea_monitor::tui::widgets::{SizeWarningWidget, check_terminal_size};
 
 // In server/src/routes.rs
 use vibetea_server::auth::verify_signature;
@@ -429,8 +452,6 @@ use vibetea_server::types::Event;
 **Modules**:
 - `monitor/src/lib.rs` re-exports public API
 - `server/src/lib.rs` re-exports public API
-- `monitor/src/trackers/mod.rs` exports tracker submodules
-- `monitor/src/utils/mod.rs` exports utility modules
 - Internal modules use relative `use` statements
 
 ### Client (TypeScript)
@@ -481,9 +502,11 @@ runs:
 
 | Component | File | Launch Command |
 |-----------|------|-----------------|
-| **Monitor** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- run` |
+| **Monitor (TUI, default)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor` or `vibetea-monitor` |
+| **Monitor (TUI, explicit)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- tui` or `vibetea-monitor tui` |
 | **Monitor (init)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- init` |
 | **Monitor (export-key)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- export-key` |
+| **Monitor (run, headless)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- run` |
 | **Server** | `server/src/main.rs` | `cargo run -p vibetea-server` |
 | **Client** | `client/src/main.tsx` | `npm run dev` (from `client/`) |
 | **GitHub Actions** | `.github/actions/vibetea-monitor/action.yml` | `uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main` |
@@ -505,10 +528,10 @@ Files that are auto-generated or should not be manually edited:
 
 | Category | Pattern | Example |
 |----------|---------|---------|
-| Module names | `snake_case` | `parser.rs`, `privacy.rs` |
-| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload` |
-| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()` |
-| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX` |
+| Module names | `snake_case` | `parser.rs`, `privacy.rs`, `size_warning.rs` |
+| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `SizeWarningWidget` |
+| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()`, `check_terminal_size()` |
+| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX`, `MIN_TERMINAL_WIDTH` |
 | Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs` |
 | Enum variants | `PascalCase` | `KeySource::EnvironmentVariable`, `KeySource::File` |
 
@@ -539,8 +562,8 @@ Files that are auto-generated or should not be manually edited:
 ### Monitor
 
 ```
-✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, error, trackers, utils
-✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, zeroize, directories
+✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, error, tui
+✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, zeroize, ratatui
 ✗ CANNOT import:  server modules, client code
 ```
 

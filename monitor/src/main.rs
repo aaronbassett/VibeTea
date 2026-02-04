@@ -3,11 +3,17 @@
 //! This binary watches Claude Code session files and forwards privacy-filtered
 //! events to the VibeTea server.
 //!
+//! # Usage
+//!
+//! When run without arguments, launches the interactive TUI (terminal user interface).
+//!
 //! # Commands
 //!
+//! - `vibetea-monitor` (no args): Launch interactive TUI (default)
+//! - `vibetea-monitor tui`: Launch interactive TUI (explicit)
 //! - `vibetea-monitor init`: Generate Ed25519 keypair for server authentication
 //! - `vibetea-monitor export-key`: Export private key for GitHub Actions
-//! - `vibetea-monitor run`: Start the monitor daemon
+//! - `vibetea-monitor run`: Start headless monitor daemon (for scripting)
 //!
 //! # Environment Variables
 //!
@@ -37,6 +43,7 @@ use vibetea_monitor::trackers::project_tracker::ProjectTracker;
 use vibetea_monitor::trackers::skill_tracker::SkillTracker;
 use vibetea_monitor::trackers::stats_tracker::{StatsEvent, StatsTracker};
 use vibetea_monitor::trackers::todo_tracker::TodoTracker;
+use vibetea_monitor::tui::{install_panic_hook, Tui};
 use vibetea_monitor::types::{
     AgentSpawnEvent, Event, EventPayload, EventType, FileChangeEvent, ProjectActivityEvent,
     SessionAction, SkillInvocationEvent, TodoProgressEvent, ToolStatus,
@@ -75,6 +82,9 @@ ENVIRONMENT VARIABLES:
     VIBETEA_BASENAME_ALLOWLIST Comma-separated file extensions to include
 
 EXAMPLES:
+    # Launch interactive TUI (default)
+    vibetea-monitor
+
     # Generate a new keypair
     vibetea-monitor init
 
@@ -84,18 +94,26 @@ EXAMPLES:
     # Export private key for GitHub Actions
     vibetea-monitor export-key
 
-    # Start the monitor
+    # Start headless monitor daemon (for scripting)
     export VIBETEA_SERVER_URL=https://vibetea.fly.dev
     vibetea-monitor run
 ")]
 struct Cli {
+    /// Subcommand to run. If omitted, launches the interactive TUI.
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 /// CLI subcommands.
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Launch interactive TUI mode.
+    ///
+    /// Provides a terminal user interface for configuring and monitoring
+    /// Claude Code sessions. This is the default mode when no subcommand
+    /// is specified.
+    Tui,
+
     /// Generate Ed25519 keypair for server authentication.
     ///
     /// Creates a new keypair in ~/.vibetea (or VIBETEA_KEY_PATH).
@@ -116,10 +134,11 @@ enum Command {
         path: Option<PathBuf>,
     },
 
-    /// Start the monitor daemon.
+    /// Start headless monitor daemon.
     ///
     /// Watches Claude Code session files and forwards events to the server.
     /// Requires VIBETEA_SERVER_URL environment variable.
+    /// Use this mode for scripting and background monitoring.
     Run,
 }
 
@@ -127,7 +146,11 @@ fn main() -> Result<()> {
     // Parse command line arguments using clap
     let cli = Cli::parse();
 
-    match cli.command {
+    // Default to TUI mode when no subcommand is provided
+    let command = cli.command.unwrap_or(Command::Tui);
+
+    match command {
+        Command::Tui => run_tui(),
         Command::Init { force } => run_init(force),
         Command::ExportKey { path } => run_export_key(path),
         Command::Run => {
@@ -207,6 +230,145 @@ fn run_export_key(path: Option<PathBuf>) -> Result<()> {
             std::process::exit(1);
         }
     }
+}
+
+/// Runs the interactive TUI mode.
+///
+/// This function initializes the terminal for TUI rendering, sets up event handling,
+/// and runs the main TUI event loop. The terminal is automatically restored to its
+/// original state when the function returns (or if a panic occurs).
+///
+/// # Terminal Management
+///
+/// - Installs a panic hook to restore terminal state on panic
+/// - Enters raw mode and alternate screen via [`Tui::new()`]
+/// - Terminal is restored via RAII when [`Tui`] is dropped
+///
+/// # Signal Handling Strategy
+///
+/// The TUI handles shutdown signals through crossterm's event system:
+///
+/// - **SIGINT (Ctrl+C)**: Detected as a [`KeyEvent`] with `KeyCode::Char('c')` and
+///   `KeyModifiers::CONTROL`. The event loop explicitly checks for this combination
+///   and breaks cleanly, allowing the [`Tui`]'s Drop implementation to restore
+///   the terminal.
+///
+/// - **SIGTERM**: Since the TUI is currently synchronous, SIGTERM handling relies on
+///   the OS default behavior. However, because [`Tui`] implements Drop with terminal
+///   restoration logic, and we install a panic hook via [`install_panic_hook()`],
+///   the terminal will be properly restored in most termination scenarios.
+///
+/// The full async event loop (implemented in later tasks) will integrate with
+/// tokio signals for more robust SIGTERM handling.
+///
+/// # Event Loop
+///
+/// The TUI event loop (to be implemented in later tasks):
+/// 1. Polls for terminal input (keyboard, resize)
+/// 2. Generates periodic tick events for animations
+/// 3. Handles shutdown signals gracefully
+fn run_tui() -> Result<()> {
+    // NFR-005: Do NOT initialize logging in TUI mode.
+    // Logging to stderr would corrupt the TUI display.
+    // The tracing subscriber is only initialized in run_monitor() for headless mode.
+
+    // Install panic hook to restore terminal state on panic.
+    // This must be called BEFORE creating the Tui to ensure cleanup
+    // even if Tui::new() itself panics.
+    install_panic_hook();
+
+    // Initialize the TUI terminal wrapper.
+    // This enters raw mode and alternate screen.
+    let mut tui = Tui::new().context("Failed to initialize terminal for TUI")?;
+
+    // Clear the screen to start fresh
+    tui.clear().context("Failed to clear terminal")?;
+
+    // TODO: T244+ - Implement full TUI event loop
+    // For now, display a placeholder message and exit.
+    // The actual event loop will be implemented in subsequent tasks.
+    //
+    // Future implementation will:
+    // 1. Create EventHandler with event channels
+    // 2. Set up AppState with initial Screen::Setup
+    // 3. Run render loop responding to TuiEvents
+    // 4. Handle graceful shutdown
+
+    // Draw a simple placeholder frame
+    tui.draw(|frame| {
+        use ratatui::layout::{Alignment, Constraint, Direction, Layout};
+        use ratatui::style::{Color, Style};
+        use ratatui::widgets::{Block, Borders, Paragraph};
+
+        let area = frame.area();
+
+        // Create a centered block with placeholder text
+        let block = Block::default()
+            .title(" VibeTea Monitor TUI ")
+            .title_alignment(Alignment::Center)
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+
+        let text = Paragraph::new(
+            "TUI mode initialized successfully.\n\n\
+             The full event loop will be implemented in subsequent tasks.\n\n\
+             Press 'q' or Ctrl+C to exit.",
+        )
+        .alignment(Alignment::Center)
+        .block(block);
+
+        // Center the widget vertically
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(35),
+                Constraint::Length(8),
+                Constraint::Percentage(55),
+            ])
+            .split(area);
+
+        frame.render_widget(text, vertical[1]);
+    })
+    .context("Failed to render TUI frame")?;
+
+    // Wait for quit signal (Ctrl+C, Escape, or 'q') before exiting.
+    // This mirrors the input handling in tui/input.rs where these keys
+    // produce DashboardAction::Quit or SetupAction::Quit.
+    loop {
+        if crossterm::event::poll(std::time::Duration::from_millis(100))
+            .context("Failed to poll for events")?
+        {
+            if let crossterm::event::Event::Key(key_event) =
+                crossterm::event::read().context("Failed to read terminal event")?
+            {
+                use crossterm::event::{KeyCode, KeyModifiers};
+
+                match key_event.code {
+                    // Ctrl+C - graceful shutdown on SIGINT equivalent
+                    KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        break;
+                    }
+                    // Escape - universal quit key
+                    KeyCode::Esc => {
+                        break;
+                    }
+                    // 'q' - standard TUI quit key
+                    KeyCode::Char('q') => {
+                        break;
+                    }
+                    // Ignore other keys
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Explicitly restore the terminal (though Drop would also handle this)
+    tui.restore().context("Failed to restore terminal")?;
+
+    println!("VibeTea Monitor TUI exited successfully.");
+
+    Ok(())
 }
 
 /// Runs the monitor daemon.

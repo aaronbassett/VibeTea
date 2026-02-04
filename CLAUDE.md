@@ -13,3 +13,12 @@
 - Use `ed25519_dalek::VerifyingKey::verify_strict()` for RFC 8032 compliant signature verification
 - Use `zeroize` crate for any intermediate buffers containing private key material
 - Memory should be zeroed on **both** success and error paths for defense in depth
+
+### TUI Features (Phase 11)
+- **Default mode**: Running `vibetea-monitor` without arguments launches the TUI
+- **Headless mode**: Use `vibetea-monitor run` for scripting/CI
+- **Terminal safety**: RAII-based terminal restoration via `Tui` struct with panic hook
+- **NO_COLOR support**: Set `NO_COLOR` environment variable (any value) to disable colors
+- **Minimum terminal size**: 80x24 characters required for proper display
+- **60ms tick rate**: `DEFAULT_TICK_RATE_MS` in `tui/app.rs` for ~16 FPS rendering
+- **NFR-005 compliance**: Logging is suppressed in TUI mode to avoid display corruption

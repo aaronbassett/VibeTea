@@ -57,6 +57,10 @@ lru = "0.12"
 # Line diffing for file history tracking
 similar = "2.6"
 
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
 [dev-dependencies]
 tokio-test.workspace = true
 tempfile = "3.15"
