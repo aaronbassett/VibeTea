@@ -388,8 +388,8 @@
 
 ### Implementation
 - [x] T212 [GIT] Commit: initialize phase 10 retro
-- [ ] T213 [US8] Initialize Storybook with Vite builder in client/ using npx storybook@latest init (use devs:typescript-dev agent)
-- [ ] T214 [GIT] Commit: initialize Storybook
+- [x] T213 [US8] Initialize Storybook with Vite builder in client/ using npx storybook@latest init (use devs:typescript-dev agent)
+- [x] T214 [GIT] Commit: initialize Storybook
 - [ ] T215 [US8] Configure Storybook for Tailwind 4 and framer-motion in client/.storybook/main.ts (use devs:typescript-dev agent)
 - [ ] T216 [GIT] Commit: configure Storybook for Tailwind and motion
 - [ ] T217 [P] [US8] Create ASCIIHeader.stories.tsx with animateOnLoad variations (use devs:react-dev agent)
