@@ -276,8 +276,8 @@
 
 ### Phase Completion
 - [x] T110 Run /sdd:map incremental for Phase 7 changes
-- [ ] T111 [GIT] Commit: final codebase document update
-- [ ] T112 Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T111 [GIT] Commit: final codebase document update
+- [x] T112 Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T113 [GIT] Commit: finalize phase 7 retro
 - [ ] T114 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [ ] T115 [GIT] Create/update PR to main with final summary
