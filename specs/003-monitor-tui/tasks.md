@@ -537,10 +537,10 @@
 - [x] T266 [GIT] Commit: finalize phase 11 retro
 
 ### Phase Completion
-- [ ] T267 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T268 [GIT] Create/update PR to main with phase summary
-- [ ] T269 [GIT] Verify all CI checks pass
-- [ ] T270 [GIT] Report PR ready status
+- [x] T267 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T268 [GIT] Create/update PR to main with phase summary
+- [x] T269 [GIT] Verify all CI checks pass
+- [x] T270 [GIT] Report PR ready status
 
 ---
 
