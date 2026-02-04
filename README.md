@@ -131,6 +131,112 @@ VibeTea uses two authentication mechanisms:
 - Token passed via `?token=` query parameter on WebSocket connections
 - Configured via `VIBETEA_AUTH_TOKEN` on both server and client
 
+## GitHub Actions Setup
+
+Track Claude Code events during CI workflows (PR reviews, code generation, etc.) by running the VibeTea monitor in GitHub Actions.
+
+### Prerequisites
+
+1. A running VibeTea server with your public key registered
+2. An existing keypair on your local machine (run `vibetea-monitor init` if needed)
+
+### Step 1: Export Your Private Key
+
+Export your existing private key in base64 format for use as a GitHub Actions secret:
+
+```bash
+# Export to clipboard (macOS)
+vibetea-monitor export-key | pbcopy
+
+# Export to clipboard (Linux with xclip)
+vibetea-monitor export-key | xclip -selection clipboard
+
+# Or just print it
+vibetea-monitor export-key
+```
+
+### Step 2: Configure GitHub Secrets
+
+Add these secrets to your repository (Settings → Secrets and variables → Actions):
+
+| Secret | Required | Description |
+|--------|----------|-------------|
+| `VIBETEA_PRIVATE_KEY` | Yes | Base64-encoded private key from `export-key` command |
+| `VIBETEA_SERVER_URL` | Yes | Your VibeTea server URL (e.g., `https://vibetea.fly.dev`) |
+| `VIBETEA_AUTH_TOKEN` | No | Only if your server requires client authentication |
+
+### Step 3: Add Monitor to Your Workflow
+
+Add the monitor to your GitHub Actions workflow:
+
+```yaml
+name: CI with VibeTea Monitoring
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    env:
+      VIBETEA_PRIVATE_KEY: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+      VIBETEA_SERVER_URL: ${{ secrets.VIBETEA_SERVER_URL }}
+      VIBETEA_SOURCE_ID: "github-${{ github.repository }}-${{ github.run_id }}"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Download monitor binary
+      - name: Download VibeTea Monitor
+        run: |
+          curl -L -o vibetea-monitor \
+            "https://github.com/aaronbassett/VibeTea/releases/latest/download/vibetea-monitor-linux-x64"
+          chmod +x vibetea-monitor
+
+      # Start monitor in background
+      - name: Start VibeTea Monitor
+        run: |
+          ./vibetea-monitor run &
+          echo "VibeTea monitor started with source ID: $VIBETEA_SOURCE_ID"
+
+      # Your CI steps here (Claude Code PR review, tests, etc.)
+      - name: Run Tests
+        run: cargo test
+
+      # Monitor automatically shuts down when workflow ends
+```
+
+### Environment Variables
+
+When running in GitHub Actions, the monitor uses these environment variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VIBETEA_PRIVATE_KEY` | Yes | Base64-encoded Ed25519 private key seed |
+| `VIBETEA_SERVER_URL` | Yes | Server URL to send events to |
+| `VIBETEA_SOURCE_ID` | No | Custom source identifier (defaults to hostname) |
+
+**Key precedence**: When `VIBETEA_PRIVATE_KEY` is set, it takes precedence over any file-based key. This allows the same binary to work locally (file key) and in CI (env var key).
+
+### Troubleshooting
+
+**Error: Invalid key format**
+- Ensure the key is base64-encoded (standard alphabet, not URL-safe)
+- Check for extra whitespace or newlines in the secret value
+- Re-export using `vibetea-monitor export-key`
+
+**Error: 401 Unauthorized**
+- Verify your public key is registered with the VibeTea server
+- Check that `VIBETEA_SOURCE_ID` matches the registered source (if using custom ID)
+
+**Events not appearing**
+- Check workflow logs for connection errors
+- Verify `VIBETEA_SERVER_URL` is accessible from GitHub Actions runners
+- Note: The monitor is non-blocking; network failures won't fail your workflow
+
 ## API Reference
 
 ### Server Endpoints
