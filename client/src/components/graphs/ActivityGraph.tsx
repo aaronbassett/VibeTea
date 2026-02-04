@@ -30,7 +30,11 @@ import { LazyMotion, domAnimation, m } from 'framer-motion';
 import { COLORS, SPRING_CONFIGS } from '../../constants/design-tokens';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
-import type { ActivityGraphProps, ActivityDataPoint, TimeRange } from '../../types/graphs';
+import type {
+  ActivityGraphProps,
+  ActivityDataPoint,
+  TimeRange,
+} from '../../types/graphs';
 import type { VibeteaEvent } from '../../types/events';
 
 // -----------------------------------------------------------------------------
@@ -41,9 +45,12 @@ import type { VibeteaEvent } from '../../types/events';
  * Time bucket configurations for each time range.
  * Each range produces 12 data points for consistent visualization.
  */
-const BUCKET_CONFIGS: Record<TimeRange, { bucketSizeMs: number; count: number }> = {
-  '1h': { bucketSizeMs: 5 * 60 * 1000, count: 12 },    // 5-minute buckets
-  '6h': { bucketSizeMs: 30 * 60 * 1000, count: 12 },   // 30-minute buckets
+const BUCKET_CONFIGS: Record<
+  TimeRange,
+  { bucketSizeMs: number; count: number }
+> = {
+  '1h': { bucketSizeMs: 5 * 60 * 1000, count: 12 }, // 5-minute buckets
+  '6h': { bucketSizeMs: 30 * 60 * 1000, count: 12 }, // 30-minute buckets
   '24h': { bucketSizeMs: 2 * 60 * 60 * 1000, count: 12 }, // 2-hour buckets
 };
 
@@ -129,7 +136,7 @@ function bucketEventsByTime(
   const buckets: ActivityDataPoint[] = [];
 
   for (let i = 0; i < config.count; i++) {
-    const bucketStart = startTime + (i * config.bucketSizeMs);
+    const bucketStart = startTime + i * config.bucketSizeMs;
     const timestamp = new Date(bucketStart).toISOString();
     const label = formatTimeLabel(timestamp, timeRange);
 
@@ -150,7 +157,9 @@ function bucketEventsByTime(
     }
 
     // Calculate which bucket this event belongs to
-    const bucketIndex = Math.floor((eventTime - startTime) / config.bucketSizeMs);
+    const bucketIndex = Math.floor(
+      (eventTime - startTime) / config.bucketSizeMs
+    );
 
     // Ensure index is within bounds
     if (bucketIndex >= 0 && bucketIndex < config.count) {
@@ -229,7 +238,8 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
  * Empty state when no events are available for the selected time range.
  */
 function EmptyState({ timeRange }: { readonly timeRange: TimeRange }) {
-  const rangeText = timeRange === '1h' ? 'hour' : timeRange === '6h' ? '6 hours' : '24 hours';
+  const rangeText =
+    timeRange === '1h' ? 'hour' : timeRange === '6h' ? '6 hours' : '24 hours';
 
   return (
     <div
