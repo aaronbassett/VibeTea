@@ -1024,7 +1024,8 @@ mod tests {
     #[test]
     fn dashboard_action_is_clone() {
         let action = DashboardAction::ScrollDown;
-        let cloned = action.clone();
+        // DashboardAction is Copy, so we can directly use the value
+        let cloned = action; // Copy instead of clone
         assert_eq!(action, cloned);
     }
 
