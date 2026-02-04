@@ -351,8 +351,8 @@
 - [x] T191 [US7] Add time range toggle (1h/6h/24h) to ActivityGraph with callback support (use devs:react-dev agent)
 - [x] T192 [GIT] Commit: add time range toggle to ActivityGraph
 - [x] T193 [US7] Create EventDistributionChart component at client/src/components/graphs/EventDistributionChart.tsx using Recharts (use devs:react-dev agent)
-- [ ] T194 [GIT] Commit: add EventDistributionChart component
-- [ ] T195 [US7] Apply warm palette colors to both graph components (stroke, fill using COLORS constant) (use devs:react-dev agent)
+- [x] T194 [GIT] Commit: add EventDistributionChart component
+- [x] T195 [US7] Apply warm palette colors to both graph components (stroke, fill using COLORS constant) (use devs:react-dev agent)
 - [ ] T196 [GIT] Commit: apply warm palette to graphs
 - [ ] T197 [US7] Enable Recharts accessibilityLayer for ARIA labels and keyboard navigation (use devs:react-dev agent)
 - [ ] T198 [GIT] Commit: add accessibility layer to graphs
