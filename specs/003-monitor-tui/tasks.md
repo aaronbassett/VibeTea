@@ -373,32 +373,32 @@
 **Independent Test**: Launch monitor, enter custom session name, complete setup, verify credentials shows custom name
 
 ### Phase Start
-- [ ] T183 [GIT] Verify working tree is clean before starting Phase 8
-- [ ] T184 [GIT] Pull and rebase on origin/main if needed
-- [ ] T185 [US6] Create retro/P8.md for this phase
-- [ ] T186 [GIT] Commit: initialize phase 8 retro
+- [x] T183 [GIT] Verify working tree is clean before starting Phase 8
+- [x] T184 [GIT] Pull and rebase on origin/main if needed
+- [x] T185 [US6] Create retro/P8.md for this phase
+- [x] T186 [GIT] Commit: initialize phase 8 retro
 
 ### Session Name Input
-- [ ] T187 [US6] Enhance session name input field with character input/delete in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T188 [GIT] Commit: enhance session name input handling
-- [ ] T189 [US6] Add inline validation error display in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T190 [GIT] Commit: add inline validation errors
+- [x] T187 [US6] Enhance session name input field with character input/delete in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T188 [GIT] Commit: enhance session name input handling
+- [x] T189 [US6] Add inline validation error display in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T190 [GIT] Commit: add inline validation errors (combined with T188)
 
 ### Validation Rules
-- [ ] T191 [US6] Implement validation rules per FR-026 (64 char limit, alphanumeric/-/_) in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T192 [GIT] Commit: implement session name validation rules
+- [x] T191 [US6] Implement validation rules per FR-026 (64 char limit, alphanumeric/-/_) in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T192 [GIT] Commit: implement session name validation rules (combined with T188)
 
 ### Codebase Mapping and Retro
-- [ ] T193 [US6] Run /sdd:map incremental for Phase 8 changes
-- [ ] T194 [GIT] Commit: update codebase documents for phase 8
-- [ ] T195 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T196 [GIT] Commit: finalize phase 8 retro
+- [x] T193 [US6] Run /sdd:map incremental for Phase 8 changes
+- [x] T194 [GIT] Commit: update codebase documents for phase 8
+- [x] T195 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T196 [GIT] Commit: finalize phase 8 retro
 
 ### Phase Completion
-- [ ] T197 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T198 [GIT] Create/update PR to main with phase summary
-- [ ] T199 [GIT] Verify all CI checks pass
-- [ ] T200 [GIT] Report PR ready status
+- [x] T197 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T198 [GIT] Create/update PR to main with phase summary
+- [x] T199 [GIT] Verify all CI checks pass
+- [x] T200 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 6 complete - custom session names supported
 
