@@ -268,8 +268,8 @@
 ### Polish Tasks
 - [x] T103 [P] Run cargo clippy -p vibetea-monitor and fix warnings
 - [x] T104 [P] Run cargo fmt -p vibetea-monitor
-- [ ] T105 [GIT] Commit: lint and format cleanup
-- [ ] T106 Run full test suite: cargo test -p vibetea-monitor -- --test-threads=1
+- [x] T105 [GIT] Commit: lint and format cleanup
+- [x] T106 Run full test suite: cargo test -p vibetea-monitor -- --test-threads=1
 - [ ] T107 [GIT] Commit: verify all tests pass
 - [ ] T108 Validate quickstart.md scenarios manually
 - [ ] T109 [GIT] Commit: quickstart validation complete
