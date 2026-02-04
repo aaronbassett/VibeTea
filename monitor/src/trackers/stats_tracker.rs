@@ -1064,10 +1064,7 @@ mod tests {
             .filter(|e| matches!(e, StatsEvent::TokenUsage(_)))
             .count();
         assert_eq!(session_metrics_count, 1, "Should have 1 session metrics");
-        assert_eq!(
-            activity_pattern_count, 1,
-            "Should have 1 activity pattern"
-        );
+        assert_eq!(activity_pattern_count, 1, "Should have 1 activity pattern");
         assert_eq!(
             model_distribution_count, 1,
             "Should have 1 model distribution"
