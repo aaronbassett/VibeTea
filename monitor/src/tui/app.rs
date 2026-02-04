@@ -1337,6 +1337,45 @@ pub struct EventStats {
     pub events_failed: u64,
 }
 
+/// Session credentials for display in the credentials panel (FR-009, FR-010).
+///
+/// This struct holds the authentication credentials that users need to configure
+/// the VibeTea server to accept events from this monitor instance. The public key
+/// should be added to the server's `VIBETEA_PUBLIC_KEYS` environment variable.
+///
+/// # Fields
+///
+/// - `session_name`: The source_id used to identify this monitor session
+/// - `public_key`: Base64-encoded Ed25519 public key for copy-paste to server config
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::Credentials;
+///
+/// let credentials = Credentials {
+///     session_name: "my-workstation".to_string(),
+///     public_key: "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo=".to_string(),
+/// };
+///
+/// assert_eq!(credentials.session_name, "my-workstation");
+/// ```
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Credentials {
+    /// Session name (source_id) used for identification.
+    ///
+    /// This is the name configured during setup that identifies this monitor
+    /// instance when viewing events on the server.
+    pub session_name: String,
+
+    /// Base64-encoded Ed25519 public key.
+    ///
+    /// This key must be registered with the VibeTea server by adding it to
+    /// the `VIBETEA_PUBLIC_KEYS` environment variable. The format is suitable
+    /// for direct copy-paste.
+    pub public_key: String,
+}
+
 /// Connection status for the WebSocket link to the VibeTea server.
 ///
 /// Represents the current state of the connection to the server,
