@@ -50,6 +50,7 @@ use crossterm::event::{self, Event as CrosstermEvent, KeyEvent};
 use ratatui::style::{Color, Modifier, Style};
 use tokio::sync::{mpsc, oneshot};
 
+use crate::sender::SenderMetrics;
 use crate::types::{Event, EventType};
 
 // =============================================================================
@@ -1322,19 +1323,70 @@ impl AppState {
 /// Statistics for event sending throughput.
 ///
 /// Tracks metrics about events being sent to the VibeTea server,
-/// including counts, rates, and timing information.
+/// including total event counts, successful sends, and failures.
+/// These statistics are displayed in the footer of the dashboard
+/// as specified in User Story 5 (FR-012).
 ///
-/// # Note
+/// # Fields
 ///
-/// This is a placeholder type. The full implementation will be added
-/// in a later task with fields for event counts, throughput rates,
-/// success/failure tracking, and timing statistics.
+/// - `total_events`: Total number of events observed (sent + failed + currently queued)
+/// - `events_sent`: Events successfully delivered to the server
+/// - `events_failed`: Events that failed to send after all retry attempts
+///
+/// # Conversion from SenderMetrics
+///
+/// This struct can be created from [`SenderMetrics`] using the `From` trait:
+///
+/// ```
+/// use vibetea_monitor::tui::app::EventStats;
+/// use vibetea_monitor::sender::SenderMetrics;
+///
+/// let metrics = SenderMetrics {
+///     queued: 5,
+///     sent: 100,
+///     failed: 2,
+///     evicted: 0,
+/// };
+///
+/// let stats = EventStats::from(&metrics);
+/// assert_eq!(stats.total_events, 107); // 5 + 100 + 2
+/// assert_eq!(stats.events_sent, 100);
+/// assert_eq!(stats.events_failed, 2);
+/// ```
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EventStats {
+    /// Total number of events processed or observed.
+    ///
+    /// This includes events that have been sent successfully, events that failed
+    /// to send, and events currently queued for sending. Calculated as:
+    /// `sent + failed + queued`.
+    pub total_events: u64,
+
     /// Total number of events sent successfully.
+    ///
+    /// Represents events that were delivered to the server and received
+    /// a successful acknowledgment.
     pub events_sent: u64,
+
     /// Total number of events that failed to send.
+    ///
+    /// Represents events that could not be delivered after all retry
+    /// attempts were exhausted.
     pub events_failed: u64,
+}
+
+impl From<&SenderMetrics> for EventStats {
+    /// Creates an `EventStats` from a reference to `SenderMetrics`.
+    ///
+    /// The total events count is calculated as the sum of queued, sent,
+    /// and failed events from the sender metrics.
+    fn from(metrics: &SenderMetrics) -> Self {
+        Self {
+            total_events: metrics.queued as u64 + metrics.sent + metrics.failed,
+            events_sent: metrics.sent,
+            events_failed: metrics.failed,
+        }
+    }
 }
 
 /// Session credentials for display in the credentials panel (FR-009, FR-010).
@@ -2845,6 +2897,35 @@ mod tests {
     #[test]
     fn event_stats_default() {
         let stats = EventStats::default();
+        assert_eq!(stats.total_events, 0);
+        assert_eq!(stats.events_sent, 0);
+        assert_eq!(stats.events_failed, 0);
+    }
+
+    #[test]
+    fn event_stats_from_sender_metrics() {
+        let metrics = SenderMetrics {
+            queued: 5,
+            sent: 100,
+            failed: 3,
+            evicted: 10,
+        };
+
+        let stats = EventStats::from(&metrics);
+
+        // total_events = queued + sent + failed (evicted not counted)
+        assert_eq!(stats.total_events, 108);
+        assert_eq!(stats.events_sent, 100);
+        assert_eq!(stats.events_failed, 3);
+    }
+
+    #[test]
+    fn event_stats_from_empty_sender_metrics() {
+        let metrics = SenderMetrics::default();
+
+        let stats = EventStats::from(&metrics);
+
+        assert_eq!(stats.total_events, 0);
         assert_eq!(stats.events_sent, 0);
         assert_eq!(stats.events_failed, 0);
     }
@@ -2897,12 +2978,14 @@ mod tests {
     #[test]
     fn tui_event_metrics_update_contains_stats() {
         let stats = EventStats {
+            total_events: 105,
             events_sent: 100,
             events_failed: 5,
         };
         let event = TuiEvent::MetricsUpdate(stats.clone());
 
         if let TuiEvent::MetricsUpdate(s) = event {
+            assert_eq!(s.total_events, 105);
             assert_eq!(s.events_sent, 100);
             assert_eq!(s.events_failed, 5);
         } else {
@@ -3182,6 +3265,7 @@ mod tests {
         assert!(state.session_name.is_empty());
         assert!(state.public_key.is_empty());
         assert_eq!(state.connection_status, ConnectionStatus::Disconnected);
+        assert_eq!(state.stats.total_events, 0);
         assert_eq!(state.stats.events_sent, 0);
         assert_eq!(state.stats.events_failed, 0);
         // Verify new fields
@@ -3197,6 +3281,7 @@ mod tests {
             public_key: "test-key".to_string(),
             connection_status: ConnectionStatus::Connected,
             stats: EventStats {
+                total_events: 12,
                 events_sent: 10,
                 events_failed: 2,
             },
@@ -3206,6 +3291,7 @@ mod tests {
         assert_eq!(cloned.session_name, "test-session");
         assert_eq!(cloned.public_key, "test-key");
         assert_eq!(cloned.connection_status, ConnectionStatus::Connected);
+        assert_eq!(cloned.stats.total_events, 12);
         assert_eq!(cloned.stats.events_sent, 10);
         assert_eq!(cloned.stats.events_failed, 2);
     }
