@@ -251,6 +251,10 @@ fn run_export_key(path: Option<PathBuf>) -> Result<()> {
 /// 2. Generates periodic tick events for animations
 /// 3. Handles shutdown signals gracefully
 fn run_tui() -> Result<()> {
+    // NFR-005: Do NOT initialize logging in TUI mode.
+    // Logging to stderr would corrupt the TUI display.
+    // The tracing subscriber is only initialized in run_monitor() for headless mode.
+
     // Install panic hook to restore terminal state on panic.
     // This must be called BEFORE creating the Tui to ensure cleanup
     // even if Tui::new() itself panics.
@@ -315,8 +319,8 @@ fn run_tui() -> Result<()> {
         if crossterm::event::poll(std::time::Duration::from_millis(100))
             .context("Failed to poll for events")?
         {
-            if let crossterm::event::Event::Key(_) = crossterm::event::read()
-                .context("Failed to read terminal event")?
+            if let crossterm::event::Event::Key(_) =
+                crossterm::event::read().context("Failed to read terminal event")?
             {
                 break;
             }
