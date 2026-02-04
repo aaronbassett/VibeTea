@@ -33,9 +33,10 @@ use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
 use vibetea_monitor::trackers::skill_tracker::SkillTracker;
 use vibetea_monitor::trackers::stats_tracker::StatsTracker;
+use vibetea_monitor::trackers::todo_tracker::TodoTracker;
 use vibetea_monitor::types::{
     AgentSpawnEvent, Event, EventPayload, EventType, SessionAction, SkillInvocationEvent,
-    TokenUsageEvent, ToolStatus,
+    TodoProgressEvent, TokenUsageEvent, ToolStatus,
 };
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
@@ -279,6 +280,27 @@ async fn run_monitor() -> Result<()> {
         }
     };
 
+    // Create channel for todo progress events from todo tracker
+    let (todo_tx, mut todo_rx) = mpsc::channel::<TodoProgressEvent>(config.buffer_size);
+
+    // Initialize todo tracker for task list progress monitoring
+    let todo_tracker = match TodoTracker::new(todo_tx) {
+        Ok(tracker) => {
+            info!(
+                todos_dir = %tracker.todos_dir().display(),
+                "Todo tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize todo tracker (todo progress tracking disabled)"
+            );
+            None
+        }
+    };
+
     info!("Monitor running. Press Ctrl+C to stop.");
 
     // Main event loop
@@ -298,6 +320,7 @@ async fn run_monitor() -> Result<()> {
                     &privacy_pipeline,
                     &mut sender,
                     &config.source_id,
+                    todo_tracker.as_ref(),
                 ).await;
             }
 
@@ -314,6 +337,15 @@ async fn run_monitor() -> Result<()> {
             Some(skill_event) = skill_rx.recv() => {
                 process_skill_invocation_event(
                     skill_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process todo progress events from todo tracker
+            Some(todo_event) = todo_rx.recv() => {
+                process_todo_progress_event(
+                    todo_event,
                     &mut sender,
                     &config.source_id,
                 ).await;
@@ -347,6 +379,7 @@ async fn process_watch_event(
     privacy_pipeline: &PrivacyPipeline,
     sender: &mut Sender,
     source_id: &str,
+    todo_tracker: Option<&TodoTracker>,
 ) {
     match watch_event {
         WatchEvent::FileCreated(path) => {
@@ -400,6 +433,20 @@ async fn process_watch_event(
                 let parsed_events = parser.parse_line(&line);
 
                 for parsed_event in parsed_events {
+                    // Check if this is a session end event (Summary)
+                    // Mark session as ended in todo tracker for abandonment detection
+                    if let ParsedEventKind::Summary = &parsed_event.kind {
+                        if let Some(tracker) = todo_tracker {
+                            tracker
+                                .mark_session_ended(&parser.session_id().to_string())
+                                .await;
+                            debug!(
+                                session_id = %parser.session_id(),
+                                "Marked session as ended for todo abandonment detection"
+                            );
+                        }
+                    }
+
                     if let Some(event) = convert_to_event(
                         parsed_event,
                         parser.session_id(),
@@ -496,6 +543,40 @@ async fn process_skill_invocation_event(
     // Try to flush buffered events
     if let Err(e) = sender.flush().await {
         warn!(error = %e, "Failed to flush skill invocation events, will retry later");
+    }
+}
+
+/// Processes a todo progress event from the todo tracker.
+async fn process_todo_progress_event(
+    todo_event: TodoProgressEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        session_id = %todo_event.session_id,
+        completed = todo_event.completed,
+        pending = todo_event.pending,
+        in_progress = todo_event.in_progress,
+        abandoned = todo_event.abandoned,
+        "Processing todo progress event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::TodoProgress,
+        EventPayload::TodoProgress(todo_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush todo progress events, will retry later");
     }
 }
 
