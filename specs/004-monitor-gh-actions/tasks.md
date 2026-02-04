@@ -263,11 +263,11 @@
 - [x] T099 [GIT] Verify working tree is clean before starting Phase 7
 - [x] T100 [GIT] Pull and rebase on origin/main if needed
 - [x] T101 Create retro/P7.md for this phase
-- [ ] T102 [GIT] Commit: initialize phase 7 retro
+- [x] T102 [GIT] Commit: initialize phase 7 retro
 
 ### Polish Tasks
-- [ ] T103 [P] Run cargo clippy -p vibetea-monitor and fix warnings
-- [ ] T104 [P] Run cargo fmt -p vibetea-monitor
+- [x] T103 [P] Run cargo clippy -p vibetea-monitor and fix warnings
+- [x] T104 [P] Run cargo fmt -p vibetea-monitor
 - [ ] T105 [GIT] Commit: lint and format cleanup
 - [ ] T106 Run full test suite: cargo test -p vibetea-monitor -- --test-threads=1
 - [ ] T107 [GIT] Commit: verify all tests pass
