@@ -357,10 +357,10 @@
 - [x] T178 [GIT] Commit: finalize phase 7 retro
 
 ### Phase Completion
-- [ ] T179 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T180 [GIT] Create/update PR to main with phase summary
-- [ ] T181 [GIT] Verify all CI checks pass
-- [ ] T182 [GIT] Report PR ready status
+- [x] T179 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T180 [GIT] Create/update PR to main with phase summary
+- [x] T181 [GIT] Verify all CI checks pass
+- [x] T182 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 5 complete - event statistics visible in footer
 
