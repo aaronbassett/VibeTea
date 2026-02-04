@@ -595,6 +595,38 @@ impl DashboardState {
         self.event_buffer.push(event);
         self.scroll.update_total_events(self.event_buffer.len());
     }
+
+    /// Updates the event statistics with new values.
+    ///
+    /// This method replaces the current stats with the provided values,
+    /// typically called when receiving metrics updates from the event sender.
+    ///
+    /// # Arguments
+    ///
+    /// * `stats` - The new event statistics to display
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{DashboardState, EventStats};
+    ///
+    /// let mut dashboard = DashboardState::default();
+    ///
+    /// let new_stats = EventStats {
+    ///     total_events: 100,
+    ///     events_sent: 95,
+    ///     events_failed: 5,
+    /// };
+    ///
+    /// dashboard.update_stats(new_stats);
+    ///
+    /// assert_eq!(dashboard.stats.total_events, 100);
+    /// assert_eq!(dashboard.stats.events_sent, 95);
+    /// assert_eq!(dashboard.stats.events_failed, 5);
+    /// ```
+    pub fn update_stats(&mut self, stats: EventStats) {
+        self.stats = stats;
+    }
 }
 
 /// Theme configuration for the TUI.
@@ -3365,6 +3397,30 @@ mod tests {
         assert!(state.scroll.auto_scroll());
         // Offset should stay at 0 (showing newest)
         assert_eq!(state.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn dashboard_state_update_stats_replaces_old_values() {
+        let mut state = DashboardState {
+            stats: EventStats {
+                total_events: 10,
+                events_sent: 8,
+                events_failed: 2,
+            },
+            ..Default::default()
+        };
+
+        let new_stats = EventStats {
+            total_events: 100,
+            events_sent: 95,
+            events_failed: 5,
+        };
+
+        state.update_stats(new_stats);
+
+        assert_eq!(state.stats.total_events, 100);
+        assert_eq!(state.stats.events_sent, 95);
+        assert_eq!(state.stats.events_failed, 5);
     }
 
     // =============================================================================
