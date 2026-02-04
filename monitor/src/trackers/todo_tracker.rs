@@ -2239,7 +2239,6 @@ mod tests {
     async fn test_process_debounced_changes_integration() {
         // Integration test: manually invoke the processing logic
         // to verify events are emitted correctly
-        use crate::utils::debounce::Debouncer;
 
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let session_id = "00000000-1111-2222-3333-444444444444";
