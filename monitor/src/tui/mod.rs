@@ -46,6 +46,6 @@ pub use app::{
     ScrollState, SetupField, SetupFormState, Symbols, Theme, TuiEvent, ASCII_SYMBOLS,
     DEFAULT_EVENT_BUFFER_CAPACITY, DEFAULT_TICK_RATE_MS, UNICODE_SYMBOLS,
 };
-pub use input::{handle_setup_key, SetupAction};
+pub use input::{handle_dashboard_key, handle_setup_key, DashboardAction, SetupAction};
 pub use terminal::{install_panic_hook, Tui};
 pub use ui::{render, render_setup_screen};
