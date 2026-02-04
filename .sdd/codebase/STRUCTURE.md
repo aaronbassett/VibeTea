@@ -1,7 +1,7 @@
 # Project Structure
 
 > **Purpose**: Document directory layout, module boundaries, and where to add new code.
-> **Generated**: 2026-02-03
+> **Generated**: 2026-02-04
 > **Last Updated**: 2026-02-04
 
 ## Directory Layout
@@ -20,12 +20,16 @@ VibeTea/
 │   │   ├── sender.rs          # HTTP client with retry and buffering
 │   │   ├── types.rs           # Event type definitions
 │   │   ├── error.rs           # Error types
-│   │   ├── trackers/          # Enhanced tracking modules (Phase 4-5)
+│   │   ├── trackers/          # Enhanced tracking modules (Phase 4-6)
 │   │   │   ├── mod.rs         # Tracker module exports
 │   │   │   ├── agent_tracker.rs     # Task tool agent spawn detection
 │   │   │   ├── skill_tracker.rs     # Skill/slash command invocation tracking (Phase 5)
-│   │   │   └── stats_tracker.rs     # Token usage metrics
+│   │   │   ├── stats_tracker.rs     # Token usage metrics
+│   │   │   └── todo_tracker.rs      # Todo list progress tracking (Phase 6)
 │   │   └── utils/             # Shared utilities (debouncing, tokenization, etc.)
+│   │       ├── mod.rs         # Utilities exports
+│   │       ├── debounce.rs    # Event debouncing for coalescing rapid changes
+│   │       ├── session_filename.rs # Utility for parsing session filenames
 │   │       └── tokenize.rs    # Skill name extraction (Phase 5)
 │   ├── tests/
 │   │   ├── privacy_test.rs    # Privacy filtering tests
@@ -97,19 +101,23 @@ VibeTea/
 
 | File | Purpose | Key Types |
 |------|---------|-----------|
-| `main.rs` | CLI entry (init/run commands), signal handling | `Cli`, `Command` |
+| `main.rs` | CLI entry (init/run commands), signal handling, tracker initialization | `Cli`, `Command` |
 | `config.rs` | Load from env vars: `VIBETEA_*` | `Config` |
 | `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` and `~/.claude/history.jsonl` | `FileWatcher`, `WatchEvent` |
 | `parser.rs` | Parse JSONL, extract Session/Activity/Tool/Agent events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
 | `crypto.rs` | Ed25519 keypair (generate, load, save) | `Crypto` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
-| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent` |
+| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TodoProgressEvent` |
 | `error.rs` | Error types | `MonitorError`, custom errors |
-| `trackers/mod.rs` | Tracker module organization | Exports `agent_tracker`, `skill_tracker`, `stats_tracker` |
+| `trackers/mod.rs` | Tracker module organization | Exports `agent_tracker`, `skill_tracker`, `stats_tracker`, `todo_tracker` |
 | `trackers/agent_tracker.rs` | Task tool agent spawn parsing | `TaskToolInput`, `parse_task_tool_use()`, `try_extract_agent_spawn()` |
 | `trackers/skill_tracker.rs` (Phase 5) | Skill/slash command parsing from history.jsonl | `SkillTracker`, `parse_history_entry()`, `create_skill_invocation_event()` |
 | `trackers/stats_tracker.rs` | Token usage metrics | `StatsTracker`, `TokenUsageEvent` |
+| `trackers/todo_tracker.rs` (Phase 6) | Todo list progress and abandonment detection | `TodoTracker`, `TodoEntry`, `TodoStatus`, `TodoProgressEvent`, `parse_todo_file()`, `count_todo_statuses()`, `is_abandoned()` |
+| `utils/mod.rs` | Utility module exports | Exports `debounce`, `tokenize`, `session_filename` |
+| `utils/debounce.rs` | Event debouncing to coalesce rapid changes | `Debouncer`, `DebouncerError` |
+| `utils/session_filename.rs` | Parsing session identifiers from filenames | `parse_todo_filename()`, `parse_project_filename()` |
 | `utils/tokenize.rs` (Phase 5) | Skill name extraction | `extract_skill_name()` |
 
 ### `server/src/` - Server Component
@@ -148,9 +156,9 @@ VibeTea/
 ### Monitor Module
 
 Self-contained CLI with these responsibilities:
-1. **Watch** files via `FileWatcher` (both session JSONL and history.jsonl)
+1. **Watch** files via `FileWatcher` (both session JSONL and history.jsonl and todos/ directory)
 2. **Parse** JSONL via `SessionParser`
-3. **Extract enhanced events** via `trackers` (agent spawns, skill invocations, token usage)
+3. **Extract enhanced events** via `trackers` (agent spawns, skill invocations, token usage, todo progress)
 4. **Filter** events via `PrivacyPipeline`
 5. **Sign** events via `Crypto`
 6. **Send** to server via `Sender`
@@ -162,7 +170,8 @@ monitor/src/main.rs
 ├── config.rs (load env)
 ├── watcher.rs → sender.rs
 │   ├─ session JSONL files
-│   └─ history.jsonl (Phase 5)
+│   ├─ history.jsonl (Phase 5)
+│   └─ todos/ directory (Phase 6)
 │   ↓
 ├── parser.rs → trackers/
 │   ├→ agent_tracker.rs (detect Task tool_use)
@@ -172,6 +181,12 @@ monitor/src/main.rs
 │   ├→ parse_history_entry()
 │   ├→ extract_skill_name() (from utils/tokenize.rs)
 │   └→ create_skill_invocation_event()
+│   ↓
+├── trackers/todo_tracker.rs (Phase 6)
+│   ├→ parse_todo_file()
+│   ├→ count_todo_statuses()
+│   ├→ is_abandoned()
+│   └→ mark_session_ended() (integration with session summary events)
 │   ↓
 ├── sender.rs (HTTP, retry, buffering)
 │   ├── crypto.rs (sign events)
@@ -231,9 +246,9 @@ client/src/App.tsx (root)
 |---------------------|--------------|---------|
 | **New Monitor command** | `monitor/src/main.rs` (add to `Command` enum) | `Command::Status` |
 | **New Monitor feature** | `monitor/src/<feature>.rs` (new module) | `monitor/src/compression.rs` |
-| **New tracker module** | `monitor/src/trackers/<tracker>.rs` (new module) + export in `trackers/mod.rs` | `monitor/src/trackers/todo_tracker.rs` for todo tracking |
+| **New tracker module** | `monitor/src/trackers/<tracker>.rs` (new module) + export in `trackers/mod.rs` | `monitor/src/trackers/file_history_tracker.rs` for file tracking |
 | **New event extraction** | `monitor/src/trackers/` or enhance `monitor/src/parser.rs` | Add new `ParsedEventKind` variant |
-| **New utility function** | `monitor/src/utils/<category>.rs` for Rust utilities | `monitor/src/utils/tokenize.rs` (Phase 5) |
+| **New utility function** | `monitor/src/utils/<category>.rs` for Rust utilities | `monitor/src/utils/hashing.rs` |
 | **New Server endpoint** | `server/src/routes.rs` (add route handler) | `POST /events/:id/ack` |
 | **New Server middleware** | `server/src/routes.rs` or `server/src/` (new module) | `server/src/middleware.rs` |
 | **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
@@ -241,7 +256,7 @@ client/src/App.tsx (root)
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
 | **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
-| **Tests** | Colocate with source: `file.rs` → `file_test.rs` (Rust), `file.ts` → `__tests__/file.test.ts` (TS) | — |
+| **Tests** | Colocate with source: `file.rs` → internal `#[cfg(test)] mod tests`, Server/Monitor integration tests in `tests/` | — |
 
 ## Import Paths & Module Organization
 
@@ -257,7 +272,9 @@ use vibetea_monitor::sender::Sender;
 use vibetea_monitor::types::Event;
 use vibetea_monitor::trackers::agent_tracker;
 use vibetea_monitor::trackers::skill_tracker::SkillTracker;  // Phase 5
+use vibetea_monitor::trackers::todo_tracker::TodoTracker;    // Phase 6
 use vibetea_monitor::utils::tokenize::extract_skill_name;    // Phase 5
+use vibetea_monitor::utils::debounce::Debouncer;             // Phase 6
 
 // In server/src/routes.rs
 use vibetea_server::auth::verify_signature;
@@ -270,7 +287,7 @@ use vibetea_server::types::Event;
 - `monitor/src/lib.rs` re-exports public API
 - `server/src/lib.rs` re-exports public API
 - `monitor/src/trackers/mod.rs` exports tracker submodules
-- `monitor/src/utils/mod.rs` exports utility modules (if created)
+- `monitor/src/utils/mod.rs` exports utility modules
 - Internal modules use relative `use` statements
 
 ### Client (TypeScript)
@@ -319,11 +336,11 @@ Files that are auto-generated or should not be manually edited:
 
 | Category | Pattern | Example |
 |----------|---------|---------|
-| Module names | `snake_case` | `parser.rs`, `privacy.rs`, `agent_tracker.rs`, `skill_tracker.rs` |
-| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `AgentSpawnEvent`, `SkillInvocationEvent` |
-| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()`, `parse_task_tool_use()`, `extract_skill_name()` |
-| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX`, `DEFAULT_CHANNEL_CAPACITY` |
-| Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs`, `agent_tracker` has internal test module |
+| Module names | `snake_case` | `parser.rs`, `privacy.rs`, `agent_tracker.rs`, `skill_tracker.rs`, `todo_tracker.rs` |
+| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TodoProgressEvent` |
+| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()`, `parse_task_tool_use()`, `extract_skill_name()`, `count_todo_statuses()` |
+| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX`, `DEFAULT_CHANNEL_CAPACITY`, `DEFAULT_DEBOUNCE_MS` |
+| Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs`, `agent_tracker` has internal test module, `todo_tracker` has extensive test module |
 
 ### TypeScript Components and Functions
 
@@ -342,7 +359,7 @@ Files that are auto-generated or should not be manually edited:
 
 ```
 ✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, trackers, utils, error
-✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, chrono
+✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, chrono, directories
 ✗ CANNOT import:  server modules, client code
 ```
 
@@ -350,7 +367,7 @@ Files that are auto-generated or should not be manually edited:
 
 ```
 ✓ CAN import:     types, config, auth, broadcast, rate_limit, error, routes
-✓ CAN import:     std, tokio, axum, serde, ed25519-dalek
+✓ CAN import:     std, tokio, axum, serde, ed25519-dalek, subtle
 ✗ CANNOT import:  monitor modules, client code
 ```
 
@@ -361,57 +378,70 @@ Files that are auto-generated or should not be manually edited:
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
 ```
 
-## Enhanced Tracking Subsystem (Phase 4-5)
+## Enhanced Tracking Subsystem (Phase 4-6)
 
 ### Adding a New Tracker Module
 
-To add a new tracker (e.g., `todo_tracker` for todo tracking):
+To add a new tracker (e.g., `file_history_tracker` for file tracking):
 
-1. **Create the module**: `monitor/src/trackers/todo_tracker.rs`
-2. **Export it**: Add `pub mod todo_tracker;` to `monitor/src/trackers/mod.rs`
+1. **Create the module**: `monitor/src/trackers/file_history_tracker.rs`
+2. **Export it**: Add `pub mod file_history_tracker;` to `monitor/src/trackers/mod.rs`
 3. **Define extraction functions**: `parse_<source>()`, `create_<event>()`
 4. **Integrate with main loop**: Spawn async task in `main.rs` or call from parser
-5. **Add event type**: New `EventPayload` and `EventType` variants in `types.rs`
+5. **Add event type**: New `EventPayload` and `EventType` variants in `monitor/src/types.rs` and `server/src/types.rs`
 6. **Write tests**: Include comprehensive test module in the tracker
+7. **Update documentation**: Add section to ARCHITECTURE.md and STRUCTURE.md
 
 Example structure:
 ```rust
-// monitor/src/trackers/todo_tracker.rs
-use crate::types::TodoEvent;
+// monitor/src/trackers/file_history_tracker.rs
+use crate::types::FileChangeEvent;
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct TodoEntry { ... }
+pub struct FileEntry { ... }
 
-pub fn parse_todo_entry(line: &str) -> Result<TodoEntry, ParseError> { ... }
+pub fn parse_file_entry(line: &str) -> Result<FileEntry, ParseError> { ... }
 
-pub fn create_todo_event(...) -> TodoEvent { ... }
+pub fn create_file_event(...) -> FileChangeEvent { ... }
 
 #[cfg(test)]
 mod tests { ... }
 ```
 
-### skill_tracker Module (Phase 5) - Concrete Example
+### todo_tracker Module (Phase 6) - Concrete Example
 
-The skill_tracker demonstrates the full pattern for a new tracker:
+The todo_tracker demonstrates the full pattern for a new tracker with session lifecycle integration:
 
-1. **Location**: `monitor/src/trackers/skill_tracker.rs`
-2. **Data Source**: `~/.claude/history.jsonl` (append-only file)
-3. **File Watching**: Uses `notify` crate like main watcher
-4. **Entry Point**: Spawned as async task in `main.rs` via `SkillTracker::new()`
-5. **Event Type**: `SkillInvocationEvent` (session_id, skill_name, project, timestamp)
-6. **Helper Utility**: Uses `extract_skill_name()` from `utils/tokenize.rs` for parsing `/commit` → `commit`
-7. **Privacy**: Extracts only skill name; command arguments not transmitted
-8. **Processing**: Immediate (no debounce) to match user action frequency
+1. **Location**: `monitor/src/trackers/todo_tracker.rs`
+2. **Data Source**: `~/.claude/todos/<session-uuid>-agent-<session-uuid>.json` (JSON array files)
+3. **File Watching**: Uses `notify` crate for directory monitoring
+4. **Entry Point**: Spawned as async task in `main.rs` via `TodoTracker::new()`
+5. **Event Type**: `TodoProgressEvent` (session_id, completed, in_progress, pending, abandoned)
+6. **Helper Utilities**: Uses `parse_todo_filename()` from `utils/session_filename.rs`
+7. **Privacy**: Extracts only status counts; task content never transmitted
+8. **Processing**:
+   - Debounced at 100ms to coalesce rapid status updates
+   - Session lifecycle tracking via `mark_session_ended()` for abandonment detection
+9. **Session Integration**: Requires coordination with main event loop to detect session summaries
+
+Key architectural patterns:
+- **File watching**: Non-recursive directory watch, JSON file detection, filtering
+- **Debouncing**: Coalesces rapid writes using `Debouncer<PathBuf, PathBuf>`
+- **State management**: Maintains `Arc<RwLock<HashSet<String>>>` of ended sessions
+- **Async processing**: Spawned as background task, events sent via channel
+- **Privacy preservation**: Lenient parsing for corrupted/partial files, never exposing task content
+- **Testing**: Extensive unit tests covering parsing, counting, abandonment, integration scenarios
 
 ### Key Design Principles for Trackers
 
 - **Privacy-first**: Extract only metadata, never code or sensitive content
 - **Modular**: Each tracker is independent and can be disabled
-- **Testable**: Include comprehensive unit tests with realistic JSONL examples
+- **Testable**: Include comprehensive unit tests with realistic file examples
 - **Integrated**: Feed results into the same `sender.queue()` for consistency
 - **Documented**: Include module doc comments with Format, Privacy, Architecture, Example sections
 - **Independent Data Source**: Each tracker watches its own file(s)
 - **Async Task Pattern**: Trackers run as concurrent async tasks, not inline in parser
+- **Session Aware**: When appropriate, trackers should integrate with session lifecycle events
 
 ---
 

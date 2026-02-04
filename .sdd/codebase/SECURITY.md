@@ -71,6 +71,7 @@ The authentication flow for event submission (POST /events):
 | Headers | String length and content checks | Manual validation in routes |
 | Signatures | Base64 format and cryptographic verification | `ed25519_dalek` |
 | Event payload | Serde deserialization with typed fields | `Event` struct in `types.rs` |
+| Todo files | JSON array parsing with entry validation | `serde` with lenient fallback parsing in `todo_tracker.rs` |
 
 ### Sanitization
 
@@ -80,6 +81,7 @@ The authentication flow for event submission (POST /events):
 | Request body | Size limit (1 MB max) | `routes.rs:72` and `DefaultBodyLimit` |
 | Headers | Non-empty validation | `routes.rs:263-273` (X-Source-ID), `277-290` (X-Signature) |
 | Base64 data | Decoding validation | `auth.rs:204-206`, `218-220` |
+| Todo content | Never transmitted (metadata only) | `monitor/src/trackers/todo_tracker.rs:45-48` |
 
 ## Data Protection
 
@@ -92,6 +94,8 @@ The authentication flow for event submission (POST /events):
 | Subscriber token | Stored in environment variable | `VIBETEA_SUBSCRIBER_TOKEN` env var |
 | Event payloads | Not encrypted at rest | In-memory broadcasting only |
 | Signatures | Base64-encoded, verified against message | Not stored |
+| Todo task content | Never extracted or transmitted | Files read locally, only counts emitted |
+| Todo file paths | Validated with UUID pattern matching | `monitor/src/trackers/todo_tracker.rs:504-506` |
 
 ### Cryptography
 
@@ -123,14 +127,26 @@ The authentication flow for event submission (POST /events):
 | Append-only processing | Tail-like behavior tracks file position | `skill_tracker.rs:81, 480` (offset tracking) |
 | Byte offset tracking | AtomicU64 with SeqCst ordering prevents re-reading | `skill_tracker.rs:405-413` |
 
+### Todo Tracking Privacy (Phase 6)
+
+| Aspect | Implementation | Location |
+|--------|----------------|----------|
+| Todo file monitoring | Watches `~/.claude/todos/` for file changes | `monitor/src/trackers/todo_tracker.rs:587-609` |
+| Data extraction | Task status counts only (completed, in_progress, pending) | `TodoProgressEvent` struct |
+| Task content excluded | Task descriptions never extracted or transmitted | `todo_tracker.rs:45-48` (privacy documentation) |
+| Filename validation | UUID pattern matching prevents arbitrary files | `todo_tracker.rs:862-866` |
+| Lenient parsing | Handles partially written files gracefully | `todo_tracker.rs:422-436` (parse_todo_file_lenient) |
+| Session tracking | Correlates with summary events for abandonment detection | `todo_tracker.rs:549-584` (abandonment detection) |
+| Metadata only principle | Only status counts and abandonment flag transmitted | `todo_tracker.rs:508-547` (event creation) |
+
 ### Data Handling Philosophy
 
-- **Privacy-first design**: The `TaskToolInput` and skill tracking only extract non-sensitive metadata
-- **Metadata extraction**: Only tool types, descriptions, skill names - never prompts or command arguments
-- **No prompt logging**: Prompts are never extracted, parsed, or transmitted to monitoring systems
+- **Privacy-first design**: TodoTracker and other trackers extract only non-sensitive metadata
+- **Metadata extraction**: Only status counts, skill names, agent types - never content, prompts, or arguments
+- **No content logging**: Task content, prompts, and command arguments are never extracted or transmitted
 - **Type-safe privacy**: Privacy enforcement is built into struct definitions, not runtime validation
-- **Command argument stripping**: Skill invocations capture only the skill name, not the arguments passed to it
-- **Atomic file offset tracking**: Prevents race conditions when tail-reading append-only files
+- **File validation**: Strict filename pattern matching prevents reading unintended files
+- **Graceful degradation**: Lenient parsing continues on invalid entries rather than failing completely
 
 ## Rate Limiting
 
@@ -205,6 +221,7 @@ VibeTea is a WebSocket/HTTP API server designed for backend-to-backend communica
 | Configuration errors | Error message | `main.rs:53` (error level) |
 | Server startup | Port, auth mode, public key count | `main.rs:74-79` (info level) |
 | File watcher initialization | History file path | `skill_tracker.rs:474-476` (info level) |
+| Todo watcher initialization | Todos directory path | `todo_tracker.rs:712-716` (info level) |
 
 All logging is structured JSON output via `tracing` crate.
 

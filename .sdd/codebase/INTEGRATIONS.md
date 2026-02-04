@@ -1,13 +1,13 @@
 # External Integrations
 
-**Status**: Phase 5 Implementation Complete - Skill invocation tracking from history.jsonl
+**Status**: Phase 6 Implementation In Progress - Todo list tracking with abandonment detection
 **Generated**: 2026-02-04
 **Last Updated**: 2026-02-04
 
 ## Summary
 
 VibeTea is a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy filtering, signs with Ed25519, and transmits to server via HTTP
+- **Monitor**: Captures Claude Code session events from local JSONL files and todo files, applies privacy filtering, signs with Ed25519, and transmits to server via HTTP
 - **Server**: Receives, validates, verifies signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for real-time visualization with token-based authentication
 
@@ -131,6 +131,115 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - Event creation (5 tests)
 - File operations (12+ async tests)
 
+### Claude Code Todo Files (Phase 6)
+
+**Source**: `~/.claude/todos/<session-uuid>-agent-<session-uuid>.json`
+**Format**: JSON Array of todo objects
+**Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents)
+
+**Todo Tracker Location**: `monitor/src/trackers/todo_tracker.rs` (2345 lines)
+**Utility Location**: `monitor/src/utils/debounce.rs`, `monitor/src/utils/session_filename.rs`
+
+**Purpose**: Track todo list progress and detect abandoned tasks per session
+
+**Todo File Structure**:
+```json
+[
+  {
+    "content": "Task description text",
+    "status": "completed",
+    "activeForm": "Completing task..."
+  },
+  {
+    "content": "Another task",
+    "status": "in_progress",
+    "activeForm": "Working on task..."
+  },
+  {
+    "content": "Pending task",
+    "status": "pending",
+    "activeForm": null
+  }
+]
+```
+
+**Fields**:
+- `content`: Task description (never transmitted for privacy)
+- `status`: One of `completed`, `in_progress`, `pending`
+- `activeForm`: Optional active form text shown during task execution
+
+**Privacy-First Approach**:
+- Only status counts extracted: completed, in_progress, pending
+- Task content (`content` field) never read or transmitted
+- Abandonment detection for analysis (did tasks go incomplete?)
+- Session context preserved for correlation
+
+**Todo Tracker Module** (`monitor/src/trackers/todo_tracker.rs`):
+
+1. **Core Types**:
+   - `TodoProgressEvent` - Emitted when todo list changes
+   - `TodoEntry` - Individual todo item
+   - `TodoStatus` - Enum: Completed, InProgress, Pending
+   - `TodoStatusCounts` - Aggregated counts by status
+   - `TodoTracker` - File watcher for todos directory
+   - `TodoTrackerConfig` - Configuration (debounce duration)
+   - `TodoParseError` / `TodoTrackerError` - Comprehensive error types
+
+2. **Parsing Functions**:
+   - `parse_todo_file(content)` - Strict JSON array parsing
+   - `parse_todo_file_lenient(content)` - Lenient parsing, skips invalid entries
+   - `parse_todo_entry(value)` - Single entry validation
+   - `count_todo_statuses(entries)` - Aggregate counts
+   - `extract_session_id_from_filename(path)` - UUID extraction
+
+3. **Abandonment Detection**:
+   - `is_abandoned(counts, session_ended)` - True if session ended with incomplete tasks
+   - `create_todo_progress_event(session_id, counts, abandoned)` - Event construction
+   - Requires explicit session ended tracking via `mark_session_ended()`
+
+4. **File Watching**:
+   - Monitors `~/.claude/todos/` directory (non-recursive)
+   - Detects .json file creation and modification
+   - Validates filename format: `<uuid>-agent-<uuid>.json`
+   - Debounces rapid changes (100ms default)
+   - Uses notify crate for cross-platform compatibility
+   - Maintains RwLock<HashSet> of ended sessions
+   - Lenient parsing handles partially-written files
+
+5. **Session Lifecycle Integration**:
+   - `mark_session_ended(session_id)` - Call when summary event received
+   - `is_session_ended(session_id)` - Query ended status
+   - `clear_session_ended(session_id)` - Reset ended status
+   - Abandonment flag set only if session ended AND incomplete tasks exist
+
+**Configuration**:
+- Default location: `~/.claude/todos/`
+- Debounce interval: 100ms (coalesce rapid writes)
+- No environment variables required (uses `directories` crate)
+
+**Test Coverage**: 100+ comprehensive tests:
+- Filename parsing (8 tests)
+- Status counting (6 tests)
+- Abandonment detection (6 tests)
+- Entry parsing (8 tests)
+- File parsing (8 tests)
+- Lenient parsing (4 tests)
+- Trait implementations (3 tests)
+- Error messages (2 tests)
+- Configuration (2 tests)
+- File operations and async (12+ tests)
+
+**Debouncing Implementation** (`monitor/src/utils/debounce.rs`):
+- Generic `Debouncer<K, V>` for generic key-value coalescing
+- Configurable duration (100ms for todos)
+- mpsc channel based event emission
+- Prevents duplicate processing of rapid file changes
+
+**Filename Parsing** (`monitor/src/utils/session_filename.rs`):
+- `parse_todo_filename(path)` - Extracts session UUID from filename
+- Pattern: `<session-uuid>-agent-<session-uuid>.json`
+- Returns Option<String> with first UUID
+
 ## Privacy & Data Sanitization
 
 ### Privacy Pipeline Architecture
@@ -173,6 +282,7 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 | Agent | Pass through unchanged |
 | AgentSpawn | Pass through unchanged |
 | SkillInvocation | Pass through unchanged |
+| TodoProgress | Pass through unchanged (only counts) |
 | Summary | Text replaced with "Session ended" |
 | Error | Pass through unchanged |
 
@@ -180,6 +290,11 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - Not set: All extensions allowed
 - Set to `.rs,.ts`: Only those extensions transmitted
 - Mismatch: Context filtered to `None`
+
+**Todo Privacy**:
+- TodoProgressEvent contains only counts and abandonment flag
+- No task content or descriptions transmitted
+- Counts are aggregate, non-sensitive metadata
 
 ### Privacy Test Suite
 
@@ -243,7 +358,7 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 
 ## External APIs
 
-There are no external third-party API integrations in Phase 5. The system is self-contained:
+There are no external third-party API integrations in Phase 6. The system is self-contained:
 - All data sources are local files
 - All services are internal (Monitor, Server, Client)
 - No SaaS dependencies or external service calls
@@ -383,13 +498,17 @@ There are no external third-party API integrations in Phase 5. The system is sel
 - ConnectionStatus component for visual feedback
 - useWebSocket hook with auto-reconnect
 
-### Monitor → File System (JSONL Watching)
+### Monitor → File System (JSONL & Todo Watching)
 
-**Target**: `~/.claude/projects/**/*.jsonl` and `~/.claude/history.jsonl`
+**Targets**:
+- `~/.claude/projects/**/*.jsonl` - Session events
+- `~/.claude/history.jsonl` - Skill invocations
+- `~/.claude/todos/*.json` - Todo lists
+
 **Mechanism**: `notify` crate file system events
-**Update Strategy**: Incremental line reading with position tracking
+**Update Strategy**: Incremental line reading with position tracking (sessions/history), file debouncing (todos)
 
-**Flow**:
+**Session File Flow**:
 1. FileWatcher initialized with watch directory
 2. Recursive file system monitoring begins
 3. File creation detected → WatchEvent::FileCreated
@@ -407,12 +526,24 @@ There are no external third-party API integrations in Phase 5. The system is sel
 6. Event emitted via mpsc channel
 7. Byte offset updated
 
+**Todo File Monitoring** (Phase 6):
+1. TodoTracker initialized with todos directory
+2. Watcher monitors `~/.claude/todos/` non-recursively
+3. File creation/modification detected
+4. Filename validated: `<uuid>-agent-<uuid>.json`
+5. File content read as JSON array
+6. Entries parsed and counted (lenient)
+7. Abandonment flag set based on session ended status
+8. TodoProgressEvent emitted via mpsc channel
+9. Changes debounced at 100ms to coalesce rapid writes
+
 **Efficiency Features**:
-- Position tracking prevents re-reading
+- Position tracking prevents re-reading (sessions/history)
 - Only new lines since last position extracted
 - BufReader with Seek for efficient iteration
 - Arc<RwLock<>> for thread-safe concurrent access
 - Atomic offset for lock-free reads in skill tracker
+- Debouncing prevents duplicate processing (todos)
 
 ## Development & Local Configuration
 
@@ -495,7 +626,7 @@ Event {
 }
 ```
 
-**Supported Event Types** (Phase 5):
+**Supported Event Types** (Phase 6):
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `session` | sessionId, action, project | Session lifecycle |
@@ -504,6 +635,7 @@ Event {
 | `agent` | sessionId, state | Agent state changes |
 | `agent_spawn` | sessionId, agent_type, description | Task tool agents |
 | `skill_invocation` | sessionId, skill_name, project | Slash commands |
+| `todo_progress` | sessionId, completed, in_progress, pending, abandoned | Todo tracking |
 | `summary` | sessionId, summary | Session end |
 | `error` | sessionId, category | Error reporting |
 
@@ -524,7 +656,7 @@ Event {
 - Environment-based filtering
 - Structured context in logs
 
-**No External Service Integration** (Phase 5):
+**No External Service Integration** (Phase 6):
 - Logs to stdout/stderr only
 - Future: Integration with logging services (Datadog, ELK)
 
@@ -555,6 +687,12 @@ Event {
 - Command arguments intentionally omitted
 - Project paths for context only
 - Privacy-first design throughout
+
+**Todo Files** (Phase 6):
+- Only status counts transmitted (completed, in_progress, pending)
+- Task content never read or transmitted
+- Abandonment flag is only metadata
+- Session correlation via session_id only
 
 ### Data in Transit
 

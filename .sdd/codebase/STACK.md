@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 5 Implementation Complete - Skill/slash command tracking via history.jsonl
+**Status**: Phase 6 Implementation In Progress - Todo list tracking with abandonment detection
 **Generated**: 2026-02-04
 **Last Updated**: 2026-02-04
 
@@ -8,7 +8,7 @@
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, skill tracking, HTTP transmission |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, skill tracking, todo tracking, HTTP transmission |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution and rate limiting |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization and real-time monitoring |
 
@@ -32,10 +32,10 @@
 | anyhow             | 1.0     | Flexible error handling and context | Server, Monitor |
 | tracing            | 0.1     | Structured logging framework | Server, Monitor |
 | tracing-subscriber | 0.3     | Logging implementation with JSON and env-filter | Server, Monitor |
-| notify             | 8.0     | Cross-platform file system watching (inotify/FSEvents) | Monitor watcher, skill tracker |
+| notify             | 8.0     | Cross-platform file system watching (inotify/FSEvents) | Monitor watcher, skill tracker, todo tracker |
 | base64             | 0.22    | Base64 encoding/decoding for signatures and keys | Server, Monitor |
 | rand               | 0.9     | Cryptographically secure random number generation | Server, Monitor |
-| directories        | 6.0     | Platform-specific standard directory paths | Monitor config |
+| directories        | 6.0     | Platform-specific standard directory paths | Monitor config, todo tracker |
 | gethostname        | 1.0     | System hostname retrieval for monitor source ID | Monitor config |
 | subtle             | 2.6     | Constant-time comparison to prevent timing attacks | Server auth |
 | futures-util       | 0.3     | WebSocket stream utilities and async helpers | Server |
@@ -94,7 +94,7 @@
 |------|---------|
 | `Cargo.toml` (workspace) | Rust workspace configuration with shared dependencies and edition settings |
 | `server/Cargo.toml` | Server package manifest with axum HTTP framework |
-| `monitor/Cargo.toml` | Monitor package manifest with crypto, file watching, CLI, and skill tracking |
+| `monitor/Cargo.toml` | Monitor package manifest with crypto, file watching, CLI, skill tracking, and todo tracking |
 | `client/vite.config.ts` | Vite build configuration with React, Tailwind, compression, WebSocket proxy |
 | `client/tsconfig.json` | TypeScript strict mode configuration (ES2020 target) |
 | `client/eslint.config.js` | ESLint flat config with TypeScript support |
@@ -130,6 +130,7 @@
 | Events | serde_json | Standardized event schema across all components |
 | Claude Code Sessions | JSONL (JSON Lines) | Privacy-first parsing extracting metadata only |
 | History File | JSONL (JSON Lines) | One JSON object per line, append-only file |
+| Todo Files | JSON Array | Array of todo entries with status fields |
 | Cryptographic Keys | Base64 + raw bytes | Public keys base64-encoded, private keys raw 32-byte seeds |
 
 ## Build Output
@@ -180,8 +181,11 @@
   - `agent_tracker.rs` - Task tool agent spawn detection
   - `stats_tracker.rs` - Token and session statistics
   - `skill_tracker.rs` - Skill/slash command tracking from history.jsonl (1837 lines)
+  - `todo_tracker.rs` - Todo list progress and abandonment detection (2345 lines)
 - `utils/` - Utility functions
   - `tokenize.rs` - Skill name extraction from display strings
+  - `session_filename.rs` - Todo and session filename parsing
+  - `debounce.rs` - File change event debouncing
 
 ## Deployment Targets
 
@@ -191,55 +195,81 @@
 | Client | CDN | Static files | Optimized builds with Brotli compression |
 | Monitor | Local | Native binary | Users download and run locally |
 
-## Phase 5 - Skill Tracker Implementation
+## Phase 6 - Todo List Tracking (In Progress)
 
-**Completion Date**: 2026-02-03
+**Status**: Implementation in progress
 
-### New Module: `monitor/src/trackers/skill_tracker.rs` (1837 lines)
+### New Module: `monitor/src/trackers/todo_tracker.rs` (2345 lines)
 
 **Core Types**:
-- `SkillInvocationEvent` - Event emitted when user invokes a skill
-- `HistoryEntry` - Parsed entry from history.jsonl file
-- `SkillTracker` - File watcher for `~/.claude/history.jsonl`
-- `SkillTrackerConfig` - Configuration option for startup behavior
-- `SkillTrackerError` - Comprehensive error handling
+- `TodoProgressEvent` - Event emitted when todo list changes
+- `TodoEntry` - Individual todo item with content and status
+- `TodoStatus` - Enum: Completed, InProgress, Pending
+- `TodoStatusCounts` - Aggregated counts by status
+- `TodoTracker` - File watcher for `~/.claude/todos/`
+- `TodoTrackerConfig` - Configuration (debounce interval)
+- `TodoParseError` / `TodoTrackerError` - Comprehensive error handling
 
 **Parsing Functions**:
-- `parse_history_entry()` - Parses single JSON line with validation
-- `parse_history_entries()` - Parses multiple lines with lenient skipping
-- `create_skill_invocation_event()` - Constructs event from entry
+- `parse_todo_file()` - Strict JSON array parsing
+- `parse_todo_file_lenient()` - Lenient parsing skipping invalid entries
+- `parse_todo_entry()` - Single entry validation
+- `count_todo_statuses()` - Aggregate status counting
+- `extract_session_id_from_filename()` - UUID extraction from filename
+
+**Abandonment Detection**:
+- `is_abandoned()` - Determines if todo list abandoned (session ended + incomplete tasks)
+- `create_todo_progress_event()` - Constructs event with metadata
 
 **File Watching**:
-- Monitors `~/.claude/history.jsonl` with `notify` crate
-- Tail-like behavior with atomic byte offset tracking
-- Handles file truncation gracefully
-- Events emitted via mpsc channel
+- Monitors `~/.claude/todos/` directory
+- Detects JSON file creation and modification
+- Debounces file changes (100ms default)
+- Uses notify crate for cross-platform FSEvents/inotify
+- Maintains session ended state via RwLock<HashSet>
+- Lenient parsing handles partially-written files
 
-**Test Coverage**: 60+ comprehensive tests validating parsing, file operations, async behavior
+**Test Coverage**: 100+ comprehensive tests covering:
+- Filename parsing and validation (8 tests)
+- Status counting (6 tests)
+- Abandonment detection (6 tests)
+- Entry parsing (8 tests)
+- File parsing (8 tests)
+- Lenient parsing (4 tests)
+- TodoStatus traits (3 tests)
+- TodoStatusCounts methods (3 tests)
+- Error messages (2 tests)
+- Configuration (2 tests)
+- File operations and async (12+ tests)
 
-### New Module: `monitor/src/utils/tokenize.rs`
+### Enhanced Utilities
 
-**Skill Name Extraction**:
-- `extract_skill_name()` - Parses skill command name from display
-- Handles colons: `/sdd:plan` → `sdd:plan`
-- Handles hyphens: `/review-pr` → `review-pr`
-- Handles quoted names and arguments
+**`monitor/src/utils/debounce.rs`**:
+- `Debouncer<K, V>` - Generic debouncing implementation
+- Coalesces rapid file change notifications
+- Configurable duration (100ms default for todo files)
+
+**`monitor/src/utils/session_filename.rs`**:
+- `parse_todo_filename()` - Extract session ID from todo filename
+- Pattern: `<session-uuid>-agent-<session-uuid>.json`
+- Returns Option with parsed UUID string
 
 ### Enhanced Integration
 
 **Main Event Loop** (`monitor/src/main.rs`):
-- SkillTracker initialization with error handling
-- Skill event channel processing
-- Integration with event sender
+- TodoTracker initialization during startup
+- Todo event channel processing
+- Session ended tracking integration
 
 **Event Types** (`monitor/src/types.rs`):
-- `EventType::SkillInvocation` - New enum variant
-- `EventPayload::SkillInvocation` - Payload wrapper
+- `EventType::TodoProgress` - New enum variant
+- `EventPayload::TodoProgress` - Payload wrapper with counts and abandoned flag
 
 **Privacy-First Approach**:
-- Only skill name extracted from display
-- Command arguments intentionally omitted
-- Project path and timestamp included for context
+- Only status counts extracted (completed, in_progress, pending)
+- Task content never read or transmitted
+- Session ended state tracked from summary events
+- Abandonment detection without exposing task details
 
 ## Key Features & Capabilities
 
@@ -247,7 +277,7 @@
 - Distributed event system: Monitor → Server → Client
 - Privacy-by-design throughout pipeline
 - Cryptographic authentication for event integrity
-- Efficient file watching with position tracking
+- Efficient file watching with position tracking and debouncing
 - Virtual scrolling for high-volume event display
 
 ### Monitoring Capabilities
@@ -255,6 +285,7 @@
 - Tool invocation tracking with context
 - Task tool agent spawn detection and tracking
 - Skill/slash command invocation tracking (Phase 5)
+- Todo list progress and abandonment detection (Phase 6)
 - Token usage and statistics accumulation
 - Real-time activity heatmaps
 
@@ -263,6 +294,7 @@
 - Rate limiting protection
 - Graceful shutdown with event flushing
 - Lenient JSONL parsing
+- Debouncing for file change coalescing
 - Auto-reconnection with backoff
 
 ### Security

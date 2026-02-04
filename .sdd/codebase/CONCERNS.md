@@ -15,6 +15,7 @@ Items that should be addressed soon:
 | TD-001 | `server/src/routes.rs` | No HTTPS enforcement at application level | Security risk | High |
 | TD-002 | `server/src/` | No request/response size validation for WebSocket messages | DoS risk | Medium |
 | TD-003 | `monitor/src/crypto.rs` | Private key file stored unencrypted on disk | Data compromise risk | High |
+| TD-060 | `monitor/src/trackers/todo_tracker.rs` | No deduplication of events when file is modified multiple times rapidly | Duplicate events | Low |
 
 ### Medium Priority
 
@@ -28,6 +29,8 @@ Items to address when working in the area:
 | TD-013 | `server/src/auth.rs` | No key rotation mechanism documented | Operational complexity | Medium |
 | TD-050 | `monitor/src/trackers/skill_tracker.rs` | File watcher watches entire directory; could catch unrelated files | Minor overhead | Low |
 | TD-051 | `monitor/src/trackers/skill_tracker.rs` | No debounce on file events; rapid appends may cause multiple reads | Performance | Low |
+| TD-061 | `monitor/src/trackers/todo_tracker.rs` | Abandoned sessions set grows unbounded; no cleanup mechanism | Memory leak | Medium |
+| TD-062 | `monitor/src/trackers/todo_tracker.rs` | No metrics on debouncer queue size or processing latency | Observability gap | Low |
 
 ### Low Priority
 
@@ -38,6 +41,7 @@ Nice to have improvements:
 | TD-020 | `server/src/` | HTTP/2 upgrade could improve performance | Performance | Medium |
 | TD-021 | `monitor/src/` | No key backup/recovery mechanism documented | Operational risk | Low |
 | TD-022 | `server/src/routes.rs` | Error responses could be more granular for debugging | Developer experience | Low |
+| TD-063 | `monitor/src/trackers/todo_tracker.rs` | No validation that todo JSON matches official Claude Code format | Robustness | Low |
 
 ## Security Concerns
 
@@ -53,6 +57,8 @@ Security-related issues requiring attention:
 | SEC-006 | `server/src/` | Constant-time comparison only for WebSocket token | Medium | Extend to all sensitive string comparisons |
 | SEC-007 | `server/src/rate_limit.rs` | DoS vector: unlimited unique source IDs can exhaust memory | Medium | Add per-endpoint limit on unique source ID count |
 | SEC-008 | `monitor/src/trackers/skill_tracker.rs` | history.jsonl file not validated for ownership | Low | Verify file permissions before reading; document assumption that file is user-owned |
+| SEC-009 | `monitor/src/trackers/todo_tracker.rs` | todos directory watching is non-recursive but could still pick up subdirectory changes | Low | Verify file parent matches todos_dir exactly; currently implemented correctly at line 858 |
+| SEC-010 | `monitor/src/trackers/todo_tracker.rs` | Empty task content in todo file is valid and transmitted | Low | Document that empty tasks are allowed; consider minimum content validation |
 
 ## Known Bugs
 
@@ -62,6 +68,7 @@ Active bugs that haven't been fixed:
 |----|-------------|------------|----------|
 | BUG-001 | WebSocket clients can receive events from unsubscribed sources if filter is not applied | Always specify `source` parameter in WebSocket query | Low |
 | BUG-002 | Rate limiter NaN handling: saturating_mul used but edge case with very high rates possible | Keep rates < 1e10 tokens/second | Low |
+| BUG-003 | Todo file with multiple rapid changes may emit multiple events due to debouncing window | Events will eventually coalesce; bursts typically resolve in 100-200ms | Low |
 
 ## Performance Concerns
 
@@ -73,6 +80,7 @@ Known performance issues:
 | PERF-002 | `server/src/routes.rs` | JSON deserialization on every request | CPU usage | Consider msgpack if bandwidth is concern |
 | PERF-003 | `monitor/src/crypto.rs` | File I/O for key loading on each signing operation | Monitor startup latency | Load keys once at startup |
 | PERF-004 | `monitor/src/trackers/skill_tracker.rs` | File position tracking with atomic (SeqCst ordering) | Minimal overhead | Acceptable; critical for tail-like behavior |
+| PERF-005 | `monitor/src/trackers/todo_tracker.rs` | RwLock on ended_sessions set with read on every file change | Minimal overhead | Only affects high-frequency todo updates; typically acceptable |
 
 ## Fragile Areas
 
@@ -86,6 +94,7 @@ Code areas that are brittle or risky to modify:
 | `monitor/src/crypto.rs` | Signing is security-critical; keys must not leak | Never log keys; use constant-time operations only |
 | `monitor/src/trackers/agent_tracker.rs` | Privacy-critical: must never extract or transmit prompt content | Maintain type-safe design (no prompt field in struct); review any struct field additions |
 | `monitor/src/trackers/skill_tracker.rs` | File watching and offset tracking are fragile to filesystem changes | Handle file truncation gracefully; test with rapid appends and concurrent access |
+| `monitor/src/trackers/todo_tracker.rs` | File watching, debouncing, and session state tracking are interconnected | Ensure abandoned_sessions cleanup is implemented; add integration tests for rapid file changes |
 
 ## Deprecated Code
 
@@ -113,7 +122,7 @@ Dependencies that may need attention:
 | `ed25519_dalek` | Cryptographic library requires correct version (check for updates) | Monitor for security advisories |
 | `tokio` | Heavy dependency; ensure async patterns are correct | Monitor for performance regressions |
 | `axum` | HTTP framework; ensure HTTPS enforcement at proxy | Verify proxy configuration in deployment |
-| `notify` | File watcher library used by skill_tracker | Monitor for issues with file system event reliability |
+| `notify` | File watcher library used by skill_tracker and todo_tracker | Monitor for issues with file system event reliability |
 
 ## Monitoring Gaps
 
@@ -126,6 +135,8 @@ Areas lacking proper observability:
 | `server/src/rate_limit.rs` | Memory usage of rate limiter state | Can't predict capacity exhaustion |
 | `monitor/` | Event submission success/failure metrics | Can't detect monitor connectivity issues |
 | `monitor/src/trackers/skill_tracker.rs` | File watcher error count and lag | Can't detect history.jsonl processing delays |
+| `monitor/src/trackers/todo_tracker.rs` | Debouncer queue depth and event emission latency | Can't detect processing bottlenecks |
+| `monitor/src/trackers/todo_tracker.rs` | Ended sessions count and cleanup frequency | Can't detect memory leaks in session tracking |
 
 ## Improvement Opportunities
 
@@ -137,7 +148,8 @@ Areas that could benefit from refactoring:
 | `server/src/` | Limited validation of configuration values | Schema validation at startup | Catch config errors earlier |
 | `server/src/auth.rs` | Signature verification is monolithic | Break into sub-functions | Easier testing, readability |
 | `server/src/` | No request tracing/correlation IDs | Add X-Request-ID support | Better debugging |
-| `monitor/src/trackers/` | Three separate tracker implementations (agent, stats, skill) | Unified tracker interface | Easier to add new trackers |
+| `monitor/src/trackers/` | Three/four separate tracker implementations | Unified tracker interface | Easier to add new trackers |
+| `monitor/src/trackers/todo_tracker.rs` | Abandoned sessions set with no cleanup | Implement periodic cleanup task | Prevent memory leaks |
 
 ## Potential Vulnerabilities to Review
 
@@ -159,6 +171,10 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 
 8. **File offset overflow**: Atomic u64 offset could theoretically overflow with files larger than 2^63 bytes, though practically unlikely.
 
+9. **Todo file format validation**: Todo files are lenient parsed; deeply nested JSON could cause performance issues.
+
+10. **Debouncer channel capacity**: Debouncer uses channel of capacity 1000; rapid file changes could overflow if processing is slow.
+
 ## Privacy-Related Concerns
 
 ### Phase 4: Agent Tracking Privacy
@@ -177,11 +193,21 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 | PRIV-005 | `monitor/src/trackers/skill_tracker.rs` | history.jsonl file contains user session data | Implemented | File is append-only and user-owned; only metadata (skill name, timestamp) is transmitted |
 | PRIV-006 | `monitor/src/trackers/skill_tracker.rs` | Privacy validation in tests | Implemented | Tests verify that arguments are skipped (`skill_tracker.rs:1068-1078`) |
 
+### Phase 6: Todo Tracking Privacy
+
+| ID | Area | Description | Status | Notes |
+|----|------|-------------|--------|-------|
+| PRIV-007 | `monitor/src/trackers/todo_tracker.rs` | Task content never extracted or transmitted | Implemented | Only status counts (completed, in_progress, pending) are emitted |
+| PRIV-008 | `monitor/src/trackers/todo_tracker.rs` | Type-safe privacy via struct design | Implemented | `TodoProgressEvent` has no content field; privacy guaranteed at compile-time |
+| PRIV-009 | `monitor/src/trackers/todo_tracker.rs` | Lenient parsing doesn't leak invalid entries | Implemented | Invalid entries silently skipped during parsing (`parse_todo_file_lenient`) |
+| PRIV-010 | `monitor/src/trackers/todo_tracker.rs` | Filename validation prevents reading arbitrary files | Implemented | UUID pattern matching in `parse_todo_filename` ensures only claude files are processed |
+
 ### Privacy Design Patterns
 
 The trackers implement privacy-by-design:
 - **Agent tracker**: Struct definition prevents prompt extraction (`TaskToolInput` has no `prompt` field)
 - **Skill tracker**: Function-level extraction prevents argument capturing (`extract_skill_name` only returns first token)
+- **Todo tracker**: Struct definition prevents content transmission (`TodoProgressEvent` has only status counts)
 - **Type system enforcement**: Privacy is impossible to violate at compile-time
 - **Test coverage**: Privacy constraints are explicitly tested
 
@@ -195,8 +221,9 @@ This approach is more robust than runtime validation because it's impossible to 
 - Cryptographic operations use well-tested libraries (`ed25519_dalek`, `subtle`)
 - No SQL injection vectors (no SQL used)
 - No code injection vectors (no eval/exec)
-- Privacy controls built into type system (no prompt field in task tracking)
-- Skill arguments not extracted from history.jsonl processing
+- Privacy controls built into type system (no prompt or content fields in tracking structs)
+- Command arguments and task content not extracted from file monitoring
+- All file watching includes strict filename validation (UUID pattern matching)
 
 ---
 

@@ -67,7 +67,8 @@ monitor/src/
 ├── parser.rs              # JSONL parsing
 └── trackers/
     ├── agent_tracker.rs   # Agent spawn detection (Phase 4) with 28+ tests
-    └── skill_tracker.rs   # Skill invocation tracking (Phase 5) with 20+ tests
+    ├── skill_tracker.rs   # Skill invocation tracking (Phase 5) with 20+ tests
+    └── todo_tracker.rs    # Todo list monitoring (Phase 6) with 79 tests
 ```
 
 **Test organization strategy**: Co-located `#[cfg(test)] mod tests` blocks at end of each module file.
@@ -343,6 +344,148 @@ Key patterns for Phase 5 skill_tracker:
 - **Error cases**: Test missing fields, invalid JSON, malformed entries
 - **Event creation**: Verify timestamp conversion from ms to UTC DateTime
 
+### Todo Tracker Tests (Phase 6 - NEW)
+
+The `todo_tracker` module establishes comprehensive test patterns with 79 unit tests organized in marked sections:
+
+**Pattern: Organized test sections with clear task IDs**
+
+From `monitor/src/trackers/todo_tracker.rs` (lines 946-2344):
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    // =========================================================================
+    // T118: Todo Filename Parsing Tests
+    // =========================================================================
+
+    #[test]
+    fn extract_session_id_valid_filename() {
+        let path = Path::new(
+            "/home/user/.claude/todos/6e45a55c-3124-4cc8-ad85-040a5c316009-agent-6e45a55c-3124-4cc8-ad85-040a5c316009.json",
+        );
+        let session_id = extract_session_id_from_filename(path).unwrap();
+        assert_eq!(session_id, "6e45a55c-3124-4cc8-ad85-040a5c316009");
+    }
+
+    // =========================================================================
+    // T119: Todo Status Counting Tests
+    // =========================================================================
+
+    #[test]
+    fn count_statuses_mixed_entries() {
+        let entries = vec![
+            TodoEntry { content: "A".to_string(), status: TodoStatus::Completed, active_form: None },
+            TodoEntry { content: "B".to_string(), status: TodoStatus::Completed, active_form: None },
+            TodoEntry { content: "C".to_string(), status: TodoStatus::InProgress, active_form: Some("...".to_string()) },
+        ];
+        let counts = count_todo_statuses(&entries);
+        assert_eq!(counts.completed, 2);
+        assert_eq!(counts.in_progress, 1);
+    }
+
+    // =========================================================================
+    // T120: Abandonment Detection Tests
+    // =========================================================================
+
+    #[test]
+    fn abandonment_session_ended_with_incomplete_tasks() {
+        let counts = TodoStatusCounts { completed: 2, in_progress: 0, pending: 3 };
+        assert!(is_abandoned(&counts, true));  // Session ended + incomplete = abandoned
+    }
+
+    // =========================================================================
+    // Todo Entry Parsing Tests
+    // =========================================================================
+
+    #[test]
+    fn parse_entry_valid_completed() {
+        let json: serde_json::Value = serde_json::from_str(
+            r#"{"content": "Fix bug", "status": "completed", "activeForm": null}"#,
+        ).unwrap();
+        let entry = parse_todo_entry(&json).unwrap();
+        assert_eq!(entry.content, "Fix bug");
+        assert_eq!(entry.status, TodoStatus::Completed);
+    }
+
+    // =========================================================================
+    // Async Integration Tests with File System
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_tracker_creation_with_valid_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let (tx, _rx) = mpsc::channel(100);
+        let result = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx);
+        assert!(result.is_ok(), "Should create tracker for valid directory");
+        assert_eq!(result.unwrap().todos_dir(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_detects_new_todo_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a new todo file
+        let session_id = "6e45a55c-3124-4cc8-ad85-040a5c316009";
+        create_test_todo_file(&temp_dir, session_id, SAMPLE_TODO);
+
+        // Should receive a todo progress event
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for new todo file");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert!(!event.abandoned);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_abandonment_detection() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "f1e2d3c4-b5a6-0987-fedc-ba9876543210";
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Mark the session as ended BEFORE creating the file
+        tracker.mark_session_ended(session_id).await;
+
+        // Create a todo file with incomplete tasks
+        let incomplete_todo = r#"[
+            {"content": "Task 1", "status": "completed", "activeForm": null},
+            {"content": "Task 2", "status": "pending", "activeForm": null}
+        ]"#;
+        create_test_todo_file(&temp_dir, session_id, incomplete_todo);
+
+        // Should receive an event with abandoned=true
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event");
+
+        let event = result.unwrap().unwrap();
+        assert!(event.abandoned, "Should be marked as abandoned");
+    }
+}
+```
+
+Key patterns for Phase 6 todo_tracker:
+- **Comprehensive test sections**: Tests organized with clear task IDs (T118-T120) and section headers
+- **79 total tests**: Covers parsing, counting, abandonment detection, edge cases, and async integration
+- **Async test patterns**: Uses `#[tokio::test]` for async integration tests with real file watching
+- **Temporary file handling**: Uses `tempfile::TempDir` for isolated test file operations
+- **Timeout management**: Uses `tokio::time::timeout()` for time-limited async assertions
+- **Realistic test data**: Uses actual JSON format matching `~/.claude/todos/` structure
+- **Privacy verification**: Tests validate that only status counts/metadata captured, not task content
+- **Abandonment logic**: Tests verify the combination of session end + incomplete tasks = abandoned
+
 ### Integration Tests
 
 **Strategy for Rust integration tests**:
@@ -424,6 +567,25 @@ fn create_test_history_entry(display: &str, session_id: &str) -> HistoryEntry {
 }
 ```
 
+### Phase 6 Todo Tracker Fixtures
+
+```rust
+const SAMPLE_TODO: &str = r#"[
+    {"content": "Task 1", "status": "completed", "activeForm": null},
+    {"content": "Task 2", "status": "in_progress", "activeForm": "Working on task 2..."},
+    {"content": "Task 3", "status": "pending", "activeForm": null}
+]"#;
+
+fn create_test_todo_file(dir: &TempDir, session_id: &str, content: &str) -> PathBuf {
+    let filename = format!("{}-agent-{}.json", session_id, session_id);
+    let todo_path = dir.path().join(&filename);
+    let mut file = std::fs::File::create(&todo_path).expect("Failed to create todo file");
+    file.write_all(content.as_bytes()).expect("Failed to write content");
+    file.flush().expect("Failed to flush");
+    todo_path
+}
+```
+
 ## Coverage Requirements
 
 ### Target Coverage
@@ -460,6 +622,7 @@ Critical path tests that verify basic functionality:
 - `config.rs`: Configuration loads from environment variables
 - `agent_tracker.rs`: Task tool input parsing works (Phase 4)
 - `skill_tracker.rs`: History entry parsing works (Phase 5)
+- `todo_tracker.rs`: Todo file parsing and abandonment detection works (Phase 6)
 
 ### Regression Tests
 
@@ -488,6 +651,9 @@ cargo test --workspace --test-threads=1
 
 # Run specific test
 cargo test --workspace test_name
+
+# Run monitor tests only (includes todo_tracker)
+cargo test -p vibetea-monitor --test-threads=1
 ```
 
 ### CI Pipeline
@@ -500,7 +666,7 @@ The CI workflow would run:
 
 2. Rust tests (Cargo)
    - Server tests with `--test-threads=1`
-   - Monitor tests with `--test-threads=1`
+   - Monitor tests with `--test-threads=1` (includes todo_tracker)
    - All tests must pass
 
 3. Code quality checks
