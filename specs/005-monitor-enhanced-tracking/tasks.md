@@ -237,32 +237,32 @@
 **Independent Test**: Create tasks, complete some, leave others pending, end session, verify correct categorization.
 
 ### Phase Start
-- [ ] T114 [GIT] Verify working tree is clean before starting Phase 6
-- [ ] T115 [GIT] Pull and rebase on origin/main if needed
-- [ ] T116 [US4] Create retro/P6.md for this phase
+- [x] T114 [GIT] Verify working tree is clean before starting Phase 6
+- [x] T115 [GIT] Pull and rebase on origin/main if needed
+- [x] T116 [US4] Create retro/P6.md for this phase
 
 ### Tests for User Story 4
-- [ ] T117 [GIT] Commit: initialize phase 6 retro
-- [ ] T118 [P] [US4] Unit test for todo filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T119 [P] [US4] Unit test for todo status counting in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T120 [P] [US4] Unit test for abandonment detection via summary event in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T121 [GIT] Commit: add todo_tracker tests
+- [x] T117 [GIT] Commit: initialize phase 6 retro
+- [x] T118 [P] [US4] Unit test for todo filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T119 [P] [US4] Unit test for todo status counting in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T120 [P] [US4] Unit test for abandonment detection via summary event in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T121 [GIT] Commit: add todo_tracker tests
 
 ### Implementation for User Story 4
-- [ ] T122 [US4] Implement TodoEntry and TodoFile structs in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T123 [GIT] Commit: add TodoEntry and TodoFile structs
-- [ ] T124 [US4] Implement todo_tracker module with file watching in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T125 [GIT] Commit: implement todo_tracker file watching
-- [ ] T126 [US4] Implement session-todo correlation via filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T127 [GIT] Commit: implement session-todo correlation
-- [ ] T128 [US4] Implement abandonment detection via summary event correlation in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T129 [GIT] Commit: implement abandonment detection
-- [ ] T130 [US4] Wire todo_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [ ] T131 [GIT] Commit: wire todo_tracker to watcher
-- [ ] T132 [US4] Add 100ms debounce for todo file changes in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [ ] T133 [GIT] Commit: add debounce to todo_tracker
-- [ ] T134 [US4] Add client store handler for todo_progress events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T135 [GIT] Commit: add client todo_progress handler
+- [x] T122 [US4] Implement TodoEntry and TodoFile structs in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T123 [GIT] Commit: add TodoEntry and TodoFile structs
+- [x] T124 [US4] Implement todo_tracker module with file watching in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T125 [GIT] Commit: implement todo_tracker file watching
+- [x] T126 [US4] Implement session-todo correlation via filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T127 [GIT] Commit: implement session-todo correlation
+- [x] T128 [US4] Implement abandonment detection via summary event correlation in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T129 [GIT] Commit: implement abandonment detection
+- [x] T130 [US4] Wire todo_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [x] T131 [GIT] Commit: wire todo_tracker to watcher
+- [x] T132 [US4] Add 100ms debounce for todo file changes in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [x] T133 [GIT] Commit: add debounce to todo_tracker
+- [x] T134 [US4] Add client store handler for todo_progress events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T135 [GIT] Commit: add client todo_progress handler
 - [ ] T136 [US4] Run /sdd:map incremental for Phase 6 changes
 - [ ] T137 [GIT] Commit: update codebase documents for phase 6
 - [ ] T138 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
