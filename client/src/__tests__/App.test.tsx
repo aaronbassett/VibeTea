@@ -136,7 +136,7 @@ describe('App Authentication Routing', () => {
   });
 
   it('renders dashboard when authenticated', async () => {
-    // Mock authenticated session
+    // Mock authenticated session with all required fields
     const mockUser = {
       id: 'test-user-id',
       email: 'test@example.com',
@@ -144,25 +144,32 @@ describe('App Authentication Routing', () => {
         full_name: 'Test User',
         avatar_url: 'https://example.com/avatar.jpg',
       },
-    };
+    } as unknown;
 
     const mockSession = {
       user: mockUser,
       access_token: 'test-access-token',
       refresh_token: 'test-refresh-token',
-    };
+      expires_in: 3600,
+      token_type: 'bearer',
+    } as unknown;
 
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: mockSession },
       error: null,
-    });
+    } as never);
 
     // Also need to mock onAuthStateChange to emit the session
     vi.mocked(supabase.auth.onAuthStateChange).mockImplementation(
-      (callback) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (callback: any) => {
         // Immediately call with the session
         setTimeout(() => callback('SIGNED_IN', mockSession), 0);
-        return { data: { subscription: { unsubscribe: vi.fn() } } };
+        return {
+          data: {
+            subscription: { id: '1', callback, unsubscribe: vi.fn() },
+          },
+        };
       }
     );
 
@@ -178,23 +185,30 @@ describe('App Authentication Routing', () => {
       id: 'test-user-id',
       email: 'test@example.com',
       user_metadata: { full_name: 'Test User' },
-    };
+    } as unknown;
 
     const mockSession = {
       user: mockUser,
       access_token: 'test-access-token',
       refresh_token: 'test-refresh-token',
-    };
+      expires_in: 3600,
+      token_type: 'bearer',
+    } as unknown;
 
     vi.mocked(supabase.auth.getSession).mockResolvedValue({
       data: { session: mockSession },
       error: null,
-    });
+    } as never);
 
     vi.mocked(supabase.auth.onAuthStateChange).mockImplementation(
-      (callback) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (callback: any) => {
         setTimeout(() => callback('SIGNED_IN', mockSession), 0);
-        return { data: { subscription: { unsubscribe: vi.fn() } } };
+        return {
+          data: {
+            subscription: { id: '1', callback, unsubscribe: vi.fn() },
+          },
+        };
       }
     );
 
