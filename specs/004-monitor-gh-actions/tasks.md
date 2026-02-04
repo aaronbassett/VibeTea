@@ -245,8 +245,8 @@
 
 ### Phase Completion
 - [x] T091 [US4] Run /sdd:map incremental for Phase 6 changes
-- [ ] T092 [GIT] Commit: update codebase documents for phase 6
-- [ ] T093 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T092 [GIT] Commit: update codebase documents for phase 6
+- [x] T093 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T094 [GIT] Commit: finalize phase 6 retro
 - [ ] T095 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [ ] T096 [GIT] Create/update PR to main with phase summary
