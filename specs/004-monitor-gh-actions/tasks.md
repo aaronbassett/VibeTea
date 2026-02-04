@@ -207,10 +207,10 @@
 - [x] T076 [GIT] Commit: update codebase documents for phase 5
 - [x] T077 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
 - [x] T078 [GIT] Commit: finalize phase 5 retro
-- [ ] T079 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T080 [GIT] Create/update PR to main with phase summary
-- [ ] T081 [GIT] Verify all CI checks pass
-- [ ] T082 [GIT] Report PR ready status
+- [x] T079 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T080 [GIT] Create/update PR to main with phase summary
+- [x] T081 [GIT] Verify all CI checks pass
+- [x] T082 [GIT] Report PR ready status
 
 ---
 
