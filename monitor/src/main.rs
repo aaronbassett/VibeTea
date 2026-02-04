@@ -33,12 +33,13 @@ use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
 use vibetea_monitor::trackers::file_history_tracker::FileHistoryTracker;
+use vibetea_monitor::trackers::project_tracker::ProjectTracker;
 use vibetea_monitor::trackers::skill_tracker::SkillTracker;
 use vibetea_monitor::trackers::stats_tracker::{StatsEvent, StatsTracker};
 use vibetea_monitor::trackers::todo_tracker::TodoTracker;
 use vibetea_monitor::types::{
-    AgentSpawnEvent, Event, EventPayload, EventType, FileChangeEvent, SessionAction,
-    SkillInvocationEvent, TodoProgressEvent, ToolStatus,
+    AgentSpawnEvent, Event, EventPayload, EventType, FileChangeEvent, ProjectActivityEvent,
+    SessionAction, SkillInvocationEvent, TodoProgressEvent, ToolStatus,
 };
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
@@ -384,6 +385,27 @@ async fn run_monitor() -> Result<()> {
         }
     };
 
+    // Create channel for project activity events from project tracker
+    let (project_tx, mut project_rx) = mpsc::channel::<ProjectActivityEvent>(config.buffer_size);
+
+    // Initialize project tracker for active project monitoring
+    let _project_tracker = match ProjectTracker::new(project_tx) {
+        Ok(tracker) => {
+            info!(
+                projects_dir = %tracker.projects_dir().display(),
+                "Project tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize project tracker (project activity tracking disabled)"
+            );
+            None
+        }
+    };
+
     info!("Monitor running. Press Ctrl+C to stop.");
 
     // Main event loop
@@ -438,6 +460,15 @@ async fn run_monitor() -> Result<()> {
             Some(file_change_event) = file_change_rx.recv() => {
                 process_file_change_event(
                     file_change_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process project activity events from project tracker
+            Some(project_event) = project_rx.recv() => {
+                process_project_activity_event(
+                    project_event,
                     &mut sender,
                     &config.source_id,
                 ).await;
@@ -739,6 +770,38 @@ async fn process_file_change_event(
     // Try to flush buffered events
     if let Err(e) = sender.flush().await {
         warn!(error = %e, "Failed to flush file change events, will retry later");
+    }
+}
+
+/// Processes a project activity event from the project tracker.
+async fn process_project_activity_event(
+    project_event: ProjectActivityEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        project_path = %project_event.project_path,
+        session_id = %project_event.session_id,
+        is_active = project_event.is_active,
+        "Processing project activity event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::ProjectActivity,
+        EventPayload::ProjectActivity(project_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush project activity events, will retry later");
     }
 }
 
