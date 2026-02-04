@@ -9,6 +9,7 @@ export default [
   {
     ignores: ['dist/**', 'node_modules/**', 'storybook-static/**'],
   },
+  js.configs.recommended,
   {
     files: ['**/*.js', '**/*.cjs'],
     languageOptions: {
@@ -17,7 +18,6 @@ export default [
       },
     },
   },
-  js.configs.recommended,
   {
     files: ['**/*.{ts,tsx}'],
     languageOptions: {
