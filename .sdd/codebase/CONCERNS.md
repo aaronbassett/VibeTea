@@ -24,8 +24,9 @@
 | SEC-007 | Event persistence | Events are in-memory only; no persistence means events lost on restart | Medium | Document as design decision; recommend replay mechanism at application level | Open |
 | SEC-008 | Export-key stdout purity | Diagnostic/error messages must be stderr-only to enable safe piping | Low | Export-key explicitly prints errors to stderr; only key goes to stdout | Mitigated (Phase 4) |
 | SEC-009 | GitHub Actions secret exposure | Private key accessible in GitHub Actions environment; potential exposure via leaked logs | Medium | Use GitHub secret masking; never log VIBETEA_PRIVATE_KEY; minimize output from monitor process | Mitigated (Phase 5) |
+| SEC-010 | Composite action error handling | Action warns on network failure but continues workflow; potential silent monitoring failures | Medium | Document in README; monitor logs for warnings; consider explicit failure modes | Mitigated (Phase 6) |
 
-## Security Improvements (Phase 3-5)
+## Security Improvements (Phase 3-6)
 
 ### Phase 3 Features
 
@@ -54,6 +55,16 @@
 | FR-030 | Dynamic source ID in Actions | Source ID includes repo and run ID for traceability | Implemented | `.github/workflows/ci-with-monitor.yml:39` |
 | FR-031 | Graceful monitor shutdown | SIGTERM handler flushes buffered events before exit | Documented | `.github/workflows/ci-with-monitor.yml:105-113` |
 
+### Phase 6 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-032 | Composite GitHub Action | Reusable action wrapper for monitor binary download and startup | Implemented | `.github/actions/vibetea-monitor/action.yml` |
+| FR-033 | Action inputs/outputs | Parameterized inputs (server-url, private-key, version) and outputs (monitor-pid, started) | Implemented | `.github/actions/vibetea-monitor/action.yml:24-55` |
+| FR-034 | Action documentation | README updated with action usage, inputs, outputs, and examples | Implemented | `README.md:212-292` |
+| FR-035 | Non-blocking action errors | Network/config failures log warnings but don't fail workflow | Implemented | `.github/actions/vibetea-monitor/action.yml:101-120` |
+| FR-036 | Dynamic source ID interpolation | Action default source ID uses repo and run_id for uniqueness | Implemented | `.github/actions/vibetea-monitor/action.yml:96` |
+
 ## Technical Debt
 
 ### High Priority
@@ -71,6 +82,7 @@
 | TD-004 | Type safety | EventPayload uses untagged enum which could be fragile with certain JSON structures | API contract ambiguity | Medium | Open |
 | TD-005 | Logging | Some debug/trace logs are verbose and could impact performance under load | Performance in high-traffic scenarios | Low | Open |
 | TD-008 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
+| TD-009 | Composite action cleanup | Post-job cleanup requires manual SIGTERM step; no automatic cleanup mechanism | Potential zombie processes | Medium | Open |
 
 ### Low Priority
 
@@ -98,6 +110,7 @@
 | `monitor/tests/key_export_test.rs` | Export-key tests modify env vars and spawn subprocesses; must use `#[serial]` | All tests use `#[serial]` decorator (15 export-key tests) |
 | `monitor/src/main.rs` | New export-key logic handles private key material and must not log it | Verify stdout purity in tests; all key writes are stderr only |
 | `.github/workflows/ci-with-monitor.yml` | Workflow manages private key and process; signal handling is critical | Test with dry-run first; ensure SIGTERM properly terminates and flushes |
+| `.github/actions/vibetea-monitor/action.yml` | Composite action manages binary download and monitor process lifecycle | Ensure secret masking works; test with actual GitHub Actions runner |
 
 ## Deprecated Code
 
@@ -130,6 +143,7 @@
 | PERF-002 | Event broadcast | Broadcaster uses bounded channel; lagging subscribers lose events | Client experience degrades | Expected behavior; clients reconnect |
 | PERF-003 | JSON serialization | Every event serialized per WebSocket subscriber | CPU under high load | No mitigation; consider compression |
 | PERF-004 | GitHub Actions binary download | Release binary download on every workflow run | Network overhead | Consider caching binary or building from source |
+| PERF-005 | Composite action overhead | Action adds step overhead for binary download and validation | Minimal workflow slowdown | Overhead is ~5-10 seconds per workflow; acceptable for CI |
 
 ## Monitoring Gaps
 
@@ -141,6 +155,7 @@
 | WebSocket health | No metrics on connection duration or message throughput | Hard to diagnose subscription issues | Consider adding connection metrics |
 | Export-key usage | No audit trail of key exports | Can't track which systems have exported keys | Consider adding telemetry or structured logging |
 | GitHub Actions monitor | No metrics on monitor process uptime/failures in CI | Can't detect if monitoring silently fails | Consider structured logging to Actions output |
+| Composite action usage | No telemetry on adoption or failure rates | Can't track action usage patterns | Could add optional telemetry to action |
 
 ## Improvement Opportunities
 
@@ -154,6 +169,7 @@
 | Private key rotation | Manual process | Automated rotation with versioning | Reduced risk of key compromise |
 | Export-key defaults | Explicit --path flag required | Auto-discovery of ~/.vibetea or env var | Smoother UX for end users |
 | GitHub Actions integration | Manual secret setup | Documentation or automated secret creation script | Easier onboarding for CI/CD |
+| Composite action | Basic functionality | Advanced features (log output, retry logic) | Better debugging and resilience |
 
 ## Security Debt Items
 
@@ -165,6 +181,7 @@
 | DEBT-004 | Client identity | WebSocket clients are anonymous beyond token | Add optional client ID/name for audit purposes | Open |
 | DEBT-005 | Key export audit | No record of when/where keys are exported | Implement export logging with timestamp/system info | Open |
 | DEBT-006 | GitHub Actions secret usage | Monitor process has access to private key; potential logging risk | Implement log filtering to never output env vars | Phase 5 risk |
+| DEBT-007 | Composite action versioning | Action pinned to @main; no semantic versioning | Implement version tags and GitHub releases | Phase 6 opportunity |
 
 ## Potential Attack Vectors
 
@@ -183,6 +200,8 @@
 | Export-key output leakage | Diagnostic messages sent to stderr only | Mitigated (Phase 4) |
 | Key export in cleartext | Keys exported as base64; assumes secure transport (HTTPS/CI secrets) | Requires operator discipline |
 | GitHub Actions log leakage | Private key is env var, subject to accidental logging | Partially mitigated by GitHub secret masking (Phase 5) |
+| Composite action binary tampering | Binary downloaded from GitHub releases without signature verification | Partially mitigated by HTTPS; recommend checksum verification |
+| Man-in-the-middle on binary download | Binary download from GitHub releases via HTTP curl | Mitigated by HTTPS (curl -fsSL) |
 
 ---
 

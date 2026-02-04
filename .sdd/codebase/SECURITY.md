@@ -152,7 +152,7 @@
 | Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:429` |
 | Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:42` |
 
-## Key Export Functionality (Phase 4-5)
+## Key Export Functionality (Phase 4-6)
 
 ### Export-Key Command
 
@@ -174,8 +174,11 @@
 | GitHub Actions setup | Export key for CI/CD environment | Pipe output to GitHub secret creation | Phase 5 |
 | Key migration | Move keys between systems | Base64 output compatible with `VIBETEA_PRIVATE_KEY` | Phase 4 |
 | Backup verification | Verify exported key roundtrips | Integration tests verify signing consistency | Phase 4 |
+| Composite GitHub Action | Pre-built reusable action wrapper | Used in GitHub Actions workflows | Phase 6 |
 
-### GitHub Actions Integration (Phase 5)
+### GitHub Actions Integration (Phase 5-6)
+
+#### Phase 5: Manual Workflow Setup
 
 | Component | Implementation | Location |
 |-----------|-----------------|----------|
@@ -184,6 +187,41 @@
 | Source ID | Dynamic: `github-{repo}-{run_id}` | `.github/workflows/ci-with-monitor.yml:39` |
 | Binary download | Pre-built binary from releases | `.github/workflows/ci-with-monitor.yml:49-50` |
 | Process management | Background task with signal handling | `.github/workflows/ci-with-monitor.yml:63-70, 108-113` |
+
+#### Phase 6: Composite GitHub Action
+
+| Component | Implementation | Location |
+|-----------|-----------------|----------|
+| Action name | `VibeTea Monitor` | `.github/actions/vibetea-monitor/action.yml:16-17` |
+| Action inputs | `server-url`, `private-key`, `source-id`, `version`, `shutdown-timeout` | `.github/actions/vibetea-monitor/action.yml:24-46` |
+| Action outputs | `monitor-pid`, `monitor-started` | `.github/actions/vibetea-monitor/action.yml:48-55` |
+| Binary download step | Handles version resolution and platform-specific URLs | `.github/actions/vibetea-monitor/action.yml:61-87` |
+| Monitor startup step | Sets environment variables, validates config, starts process | `.github/actions/vibetea-monitor/action.yml:90-144` |
+| Graceful shutdown | Documents SIGTERM signal handling and cleanup | `.github/actions/vibetea-monitor/action.yml:146-166` |
+| Non-blocking errors | Network failures don't fail workflow; warnings logged | `.github/actions/vibetea-monitor/action.yml:101-120` |
+
+### Composite Action Security Properties
+
+| Property | Implementation | Location |
+|----------|-----------------|----------|
+| Environment variables passed safely | Uses GitHub Actions env context | `.github/actions/vibetea-monitor/action.yml:93-96` |
+| Secret masking | Private key automatically masked by GitHub Actions | `VIBETEA_PRIVATE_KEY` parameter |
+| Source ID interpolation | Dynamic generation with repo and run_id | `.github/actions/vibetea-monitor/action.yml:96` |
+| Process lifecycle | Monitor runs in background; output via job logs | `.github/actions/vibetea-monitor/action.yml:127-144` |
+| Signal handling documented | Post-job cleanup requires manual SIGTERM step | `.github/actions/vibetea-monitor/action.yml:146-166` |
+| Failure tolerance | Missing binary or config logs warning, doesn't fail | `.github/actions/vibetea-monitor/action.yml:101-120` |
+
+### Action Integration with README
+
+| Section | Content | Location |
+|---------|---------|----------|
+| GitHub Actions Setup | Prerequisites and key export instructions | `README.md:134-166` |
+| Manual Workflow Setup | Step-by-step instructions for manual workflows | `README.md:169-210` |
+| Reusable Action Usage | Basic usage with the composite action | `README.md:212-252` |
+| Custom Source ID | Example with custom source identifier | `README.md:254-263` |
+| Pinned Version | Example with specific monitor version | `README.md:265-274` |
+| Action Inputs | Complete input parameter reference | `README.md:276-284` |
+| Action Outputs | Available output parameters | `README.md:286-291` |
 
 ### Security Properties of Export
 
@@ -247,7 +285,9 @@
 | Server registration | Manual environment variable setup |
 | Public key fingerprint | `monitor/src/crypto.rs:429` - public_key_fingerprint() (8 chars) |
 
-### GitHub Actions Key Management (Phase 5)
+### GitHub Actions Key Management (Phase 5-6)
+
+#### Manual Workflow Setup
 
 | Step | Command | Security |
 |------|---------|----------|
@@ -255,6 +295,15 @@
 | 2. Store | Add to GitHub Secrets as `VIBETEA_PRIVATE_KEY` | GitHub encrypts at rest |
 | 3. Use | Injected as env var during workflow | Masked in logs; available to monitor process |
 | 4. Cleanup | Automatically cleared after workflow | GitHub Actions cleanup |
+
+#### Composite Action Usage
+
+| Step | Implementation | Security |
+|------|-----------------|----------|
+| 1. Input | `private-key` parameter with `secrets.VIBETEA_PRIVATE_KEY` | GitHub automatically masks in logs |
+| 2. Load | Action passes private-key to monitor via env var | Masked by GitHub Actions |
+| 3. Start | Monitor starts in background with env vars set | Process inherits masked variable |
+| 4. Cleanup | Manual SIGTERM step or automatic job cleanup | Documents recommended post-job step |
 
 ## Security Headers
 

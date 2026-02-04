@@ -239,12 +239,12 @@
   - Basic usage
   - Custom source ID
   - Pinned version
-- [ ] T090 [GIT] Commit: add action usage documentation to README
+- [x] T090 [GIT] Commit: add action usage documentation to README
 
 **Checkpoint**: All user stories should now be independently functional
 
 ### Phase Completion
-- [ ] T091 [US4] Run /sdd:map incremental for Phase 6 changes
+- [x] T091 [US4] Run /sdd:map incremental for Phase 6 changes
 - [ ] T092 [GIT] Commit: update codebase documents for phase 6
 - [ ] T093 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T094 [GIT] Commit: finalize phase 6 retro

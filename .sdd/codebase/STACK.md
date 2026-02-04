@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 5 - GitHub Actions integration workflow example
+**Status**: Phase 6 - GitHub Actions composite action for monitor integration
 **Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
@@ -10,6 +10,7 @@
 | Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, CLI with export-key |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
+| GitHub Actions | YAML/Bash | - | Composite action for monitor integration and workflow orchestration |
 
 ## Frameworks & Runtime Libraries
 
@@ -96,6 +97,7 @@
 | `Cargo.toml` (workspace) | Cargo | Rust workspace configuration and shared dependencies |
 | `server/Cargo.toml` | Cargo | Server package configuration |
 | `monitor/Cargo.toml` | Cargo | Monitor package configuration |
+| `.github/actions/vibetea-monitor/action.yml` | GitHub Actions | Composite action for monitor deployment (Phase 6) |
 
 ## Runtime Environment
 
@@ -110,7 +112,7 @@
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
 | CLI Support | clap Subcommand enum for command parsing (init, run, export-key via clap derive macros, Phase 4) |
-| CI/CD Integration | GitHub Actions workflow with monitor deployment and background execution (Phase 5) |
+| CI/CD Integration | GitHub Actions workflow with monitor deployment and background execution (Phase 5), composite action wrapper (Phase 6) |
 
 ## Communication Protocols & Formats
 
@@ -184,6 +186,14 @@
 - `main.rs` - **Phase 4**: CLI entry point with init, run, and export-key commands (clap Subcommand enum)
 - `lib.rs` - Public interface
 
+### GitHub Actions (Phase 6)
+- `.github/actions/vibetea-monitor/action.yml` - **Phase 6**: Composite action for monitor integration
+  - Downloads monitor binary from releases
+  - Configures environment variables
+  - Starts monitor in background
+  - Manages process lifecycle
+  - Outputs monitor PID and status for downstream cleanup
+
 ## Deployment Targets
 
 | Component | Target | Container | Notes |
@@ -192,10 +202,41 @@
 | Client | CDN | Static files | Optimized builds with compression |
 | Monitor | Local + GitHub Actions | Native binary + workflow | Users download locally or use in CI workflows (Phase 5) |
 
-## GitHub Actions Integration (Phase 5)
+## GitHub Actions Integration (Phase 6)
+
+### Composite Action File
+**Location**: `.github/actions/vibetea-monitor/action.yml` (167 lines)
+
+### Features
+- **Composite action**: Simplified reusable workflow action for monitor integration
+- **Binary download**: Fetches pre-built monitor from releases with version control
+- **Background execution**: Starts monitor daemon with process tracking
+- **Environment setup**: Accepts private key, server URL, and source ID as inputs
+- **Process management**: Outputs monitor PID and status for lifecycle management
+- **Graceful shutdown**: Documented pattern for cleanup step
+- **Non-blocking**: Network failures don't fail workflows
+
+### Action Inputs
+- `server-url` (required): VibeTea server URL
+- `private-key` (required): Base64-encoded Ed25519 private key
+- `source-id` (optional): Custom source identifier (defaults to `github-<repo>-<run_id>`)
+- `version` (optional): Monitor version to download (default: `latest`)
+- `shutdown-timeout` (optional): Seconds to wait for graceful shutdown (default: `5`)
+
+### Action Outputs
+- `monitor-pid`: Process ID of running monitor
+- `monitor-started`: Boolean indicating successful startup
+
+### Workflow Integration
+- Simplifies monitor setup from multi-step manual process to single reusable action
+- Handles binary download with fallback warnings
+- Validates required environment variables before starting monitor
+- Enables version pinning for reproducible CI/CD pipelines
+
+## GitHub Actions Workflow File
 
 ### Workflow File
-**Location**: `.github/workflows/ci-with-monitor.yml`
+**Location**: `.github/workflows/ci-with-monitor.yml` (114 lines)
 
 ### Features:
 - **Monitor Binary Download**: Fetches pre-built monitor from releases (x86_64-unknown-linux-gnu)
@@ -407,6 +448,25 @@
 
 ## Phase 6 Additions
 
+**GitHub Actions Composite Action** (`.github/actions/vibetea-monitor/action.yml` - 167 lines):
+- **Type**: GitHub Actions composite action for reusable monitor integration
+- **Binary Management**: Downloads monitor from releases with version control
+- **Input Parameters**:
+  - `server-url` (required): VibeTea server URL
+  - `private-key` (required): Base64-encoded Ed25519 private key
+  - `source-id` (optional): Custom source identifier (defaults to `github-<repo>-<run_id>`)
+  - `version` (optional): Monitor version (default: `latest`)
+  - `shutdown-timeout` (optional): Grace period for shutdown (default: `5` seconds)
+- **Output Values**:
+  - `monitor-pid`: Process ID of running monitor
+  - `monitor-started`: Boolean indicating startup success
+- **Features**:
+  - Validates required environment variables before start
+  - Graceful fallback on download failure
+  - Process health check after startup
+  - Documentation for manual cleanup step
+  - Non-blocking: Warnings instead of errors on network issues
+
 **Monitor Crypto Module** (`monitor/src/crypto.rs` - 438 lines):
 - **Crypto struct**: Manages Ed25519 signing key and operations
 - **Key generation**: `Crypto::generate()` using OS cryptographically secure RNG
@@ -465,6 +525,7 @@
 - Graceful shutdown with event flushing
 - Structured error handling throughout
 - Constant-time signature operations via ed25519-dalek
+- Reusable GitHub Actions composite action for simplified CI integration
 
 ## Phase 7 Additions
 

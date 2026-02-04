@@ -23,6 +23,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **Privacy-First** | Events contain only structural metadata (timestamps, tool names, file basenames), never code or sensitive content |
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
 | **CI/CD Integration** | Environment variable key loading enables monitor deployment in containerized and GitHub Actions environments |
+| **Composite Action** | GitHub Actions workflow integration via reusable composite action for simplified monitor setup |
 
 ## Core Components
 
@@ -74,6 +75,36 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - No persistence layer (in-memory Zustand store)
 - **Dependents**: None (consumer component)
 
+### GitHub Actions Composite Action (CI/CD Integration - Phase 6)
+
+- **Purpose**: Simplifies VibeTea monitor deployment in GitHub Actions workflows
+- **Location**: `.github/actions/vibetea-monitor/action.yml`
+- **Key Responsibilities**:
+  - Download VibeTea monitor binary from GitHub releases
+  - Configure environment variables (private key, server URL, source ID)
+  - Start monitor in background before CI steps
+  - Provide process ID and status outputs to workflow
+  - Documentation for graceful shutdown pattern
+- **Dependencies**:
+  - Depends on VibeTea GitHub releases (binary artifacts)
+  - Requires `curl` on runner for binary download
+  - Uses `bash` shell for cross-platform compatibility
+- **Inputs**:
+  - `server-url` (required): VibeTea server URL
+  - `private-key` (required): Base64-encoded Ed25519 private key
+  - `source-id` (optional): Custom event source identifier
+  - `version` (optional): Monitor version (default: latest)
+  - `shutdown-timeout` (optional): Graceful shutdown wait time (default: 5 seconds)
+- **Outputs**:
+  - `monitor-pid`: Process ID of running monitor
+  - `monitor-started`: Whether monitor started successfully
+- **Environment Variables Set**:
+  - `VIBETEA_PRIVATE_KEY`: From action input
+  - `VIBETEA_SERVER_URL`: From action input
+  - `VIBETEA_SOURCE_ID`: From action input or auto-generated as `github-{repo}-{run_id}`
+  - `VIBETEA_MONITOR_PID`: Process ID saved for cleanup
+  - `VIBETEA_SHUTDOWN_TIMEOUT`: For manual cleanup reference
+
 ## Data Flow
 
 ### Primary Monitor-to-Client Flow
@@ -91,19 +122,29 @@ Claude Code → Monitor → Server → Client:
 10. Zustand store adds event (FIFO eviction at 1000 limit)
 11. React renders updated event list, session overview, heatmap
 
-### GitHub Actions Integration Flow (Phase 5)
+### GitHub Actions Integration Flow (Phase 5 & 6)
 
-GitHub Actions workflow → Monitor (via env var key) → Server → Client:
-1. Workflow downloads VibeTea monitor binary from releases
-2. Monitor binary started in background before CI steps
-3. Environment variables set: `VIBETEA_PRIVATE_KEY`, `VIBETEA_SERVER_URL`, `VIBETEA_SOURCE_ID`
-4. Monitor loads private key from `VIBETEA_PRIVATE_KEY` environment variable
-5. During CI/CD steps (tests, builds, Claude Code operations), monitor captures events
-6. Events signed and buffered using env var key
-7. Events transmitted to server via HTTP with retry logic
-8. Server authenticates using pre-registered public key
-9. Clients receive events in real-time dashboard
-10. Workflow terminates, monitor receives SIGTERM and flushes remaining events
+GitHub Actions workflow → Monitor (via composite action or manual setup) → Server → Client:
+1. **Composite Action Setup (Phase 6)**: `.github/actions/vibetea-monitor` downloads binary and configures environment
+   - Action downloads monitor binary from releases (or skips gracefully on network failure)
+   - Environment variables configured: `VIBETEA_PRIVATE_KEY`, `VIBETEA_SERVER_URL`, `VIBETEA_SOURCE_ID`
+   - Monitor started in background, PID captured and saved to `$GITHUB_ENV`
+   - Action returns `monitor-started` and `monitor-pid` outputs for workflow use
+
+2. **Manual Setup (Phase 5)**: Workflow manually downloads and starts monitor
+   - `curl` downloads binary from releases
+   - Permissions set with `chmod +x`
+   - Monitor started in background with `./vibetea-monitor run &`
+   - Process ID saved for cleanup
+
+3. **Common Flow**: Both setup methods use same environment variable key loading
+   - Monitor loads private key from `VIBETEA_PRIVATE_KEY` environment variable
+   - During CI/CD steps (tests, builds, Claude Code operations), monitor captures events
+   - Events signed and buffered using env var key
+   - Events transmitted to server via HTTP with retry logic
+   - Server authenticates using pre-registered public key
+   - Clients receive events in real-time dashboard
+   - Workflow terminates, monitor receives SIGTERM and flushes remaining events
 
 ### Detailed Request/Response Cycle
 
@@ -151,6 +192,7 @@ GitHub Actions workflow → Monitor (via env var key) → Server → Client:
 | **Monitor** | Observe local activity, preserve privacy, authenticate | FileSystem, HTTP client, Crypto | Server internals, other Monitors, network stack details |
 | **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state | File system, external APIs, Client implementation details |
 | **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
+| **GitHub Actions Composite Action** | Download, configure, launch monitor | GitHub releases, environment variables, bash shell | Monitor source code, Server config, Client code |
 
 ## Dependency Rules
 
@@ -158,6 +200,7 @@ GitHub Actions workflow → Monitor (via env var key) → Server → Client:
 - **Server → Monitor**: None (server doesn't initiate contact)
 - **Server ↔ Client**: Bidirectional (Client initiates WebSocket, Server sends events, Client sends nothing back)
 - **Cross-Monitor**: No inter-Monitor communication (all go through Server)
+- **Composite Action → Monitor**: Downloads binary and configures environment (read-only)
 - **Persistence**: None at any layer (no database, no cache persistence)
 
 ## Key Interfaces & Contracts
@@ -273,6 +316,16 @@ The Monitor now supports exporting private keys for GitHub Actions and other CI 
   - No ANSI codes or extra formatting in stdout
   - Clean output enables direct integration with CI/CD systems
 
+### Composite Action Key Loading (Phase 6)
+
+The GitHub Actions composite action simplifies key management:
+
+- **Input Handling**: Action accepts `private-key` input (base64-encoded Ed25519 seed)
+- **Environment Variable Setting**: Action sets `VIBETEA_PRIVATE_KEY` env var before starting monitor
+- **Precedence**: Monitor uses environment variable key loading (no file fallback needed in CI)
+- **Error Handling**: Action gracefully skips if download fails (non-blocking to workflow)
+- **Whitespace Handling**: Environment variable setting handles edge cases automatically
+
 ### Memory Safety & Zeroization
 
 The crypto module implements memory-safe key handling:
@@ -321,6 +374,7 @@ info!(
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
 | **Key Management** | Ed25519 key generation, storage, signing, export | `monitor/src/crypto.rs` (with KeySource tracking, memory zeroing, and export support) |
+| **GitHub Actions Integration** | Binary download, env var config, background launch | `.github/actions/vibetea-monitor/action.yml` |
 
 ## Design Decisions
 
@@ -367,13 +421,16 @@ info!(
 - **Clean Output**: stdout contains only the key for direct piping to secret tools
 - **Auditability**: Separate invocation leaves clear audit trail in CI logs
 
-### Why GitHub Actions Integration (Phase 5)?
+### Why Composite GitHub Actions (Phase 6)?
 
-- **Non-blocking**: Monitor failures don't fail the workflow
-- **Standard patterns**: Follows existing GitHub Actions secrets management
-- **Graceful shutdown**: Monitor flushes events on SIGTERM before workflow ends
-- **Source tracking**: Custom `VIBETEA_SOURCE_ID` enables tracing events to specific CI runs
-- **Release distribution**: Binary releases for multiple platforms enable easy setup
+- **Abstraction**: Hides binary download details and shell script complexity
+- **Reusability**: Single action can be used in multiple workflows
+- **Simplicity**: Users don't need to understand curl, chmod, background processes
+- **Consistency**: Standardized approach across all workflows using VibeTea
+- **Error Handling**: Action gracefully skips if network fails (non-blocking to CI)
+- **Outputs**: Provides monitor status and PID for advanced workflows
+- **Documentation**: Action metadata serves as inline usage documentation
+- **Maintenance**: Changes to binary location or download strategy only need updating action.yml
 
 ---
 

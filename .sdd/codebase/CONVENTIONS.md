@@ -38,6 +38,15 @@
 | Comments | `//` for lines, `///` for docs | Doc comments on public items |
 | Naming | snake_case for functions, PascalCase for types | `fn get_config()`, `struct Config` |
 
+#### YAML (GitHub Actions)
+
+| Rule | Convention | Example |
+|------|------------|---------|
+| Indentation | 2 spaces | Enforced by GitHub Actions spec |
+| Quotes | Single quotes for strings | `'value'` |
+| Comments | `#` for explanations | Describe complex logic |
+| Line length | 100 chars (soft) | Wrap long values with folded scalars |
+
 ## Naming Conventions
 
 ### TypeScript/Client
@@ -92,6 +101,30 @@
 | Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()`, `.seed_base64()`, `.public_key_fingerprint()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
+### GitHub Actions/YAML
+
+#### Files & Directories
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Action directories | kebab-case | `.github/actions/vibetea-monitor/` |
+| Action files | `action.yml` | `.github/actions/vibetea-monitor/action.yml` |
+| Workflow files | kebab-case with `.yml` | `.github/workflows/ci.yml`, `.github/workflows/ci-with-monitor.yml` |
+| Input parameters | kebab-case | `server-url`, `private-key`, `source-id` |
+| Output parameters | kebab-case | `monitor-pid`, `monitor-started` |
+| Environment variables | SCREAMING_SNAKE_CASE | `VIBETEA_PRIVATE_KEY`, `VIBETEA_SERVER_URL` |
+| Step IDs | kebab-case | `download`, `start-monitor`, `save-cleanup-config` |
+
+#### Code Elements
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Input names | kebab-case with descriptions | `server-url`, `private-key`, `shutdown-timeout` |
+| Output names | kebab-case with descriptions | `monitor-pid`, `monitor-started` |
+| Step names | Title case with action purpose | `Download VibeTea Monitor`, `Start VibeTea Monitor` |
+| Conditionals | GitHub context expressions | `if: always()`, `if: failure()` |
+| Default values | Match input type | `default: 'latest'`, `default: '5'` |
+
 ## Error Handling
 
 ### Error Patterns
@@ -128,6 +161,16 @@ Client error handling uses:
 | Sender errors | Enum with specific variants | `SenderError::AuthFailed`, `SenderError::RateLimited`, `SenderError::MaxRetriesExceeded` |
 | File watching errors | String-based variants | `MonitorError::Watch(String)` |
 | JSONL parsing errors | String-based variants | `MonitorError::Parse(String)` |
+
+#### GitHub Actions (YAML)
+
+Error handling patterns in actions:
+
+| Scenario | Pattern | Example Location |
+|----------|---------|------------------|
+| Download failures | Conditional exit with warnings | `.github/actions/vibetea-monitor/action.yml` - Download step |
+| Missing configuration | Warnings instead of failures | Start step checks for required inputs |
+| Process startup failure | Non-blocking check with warning | Post-startup validation of PID |
 
 ### Error Response Format
 
@@ -248,6 +291,14 @@ console.error('[useWebSocket] Connection error:', event);
 console.error('[useWebSocket] Failed to create WebSocket:', error);
 ```
 
+In GitHub Actions (YAML), use workflow commands for different levels:
+
+```yaml
+echo "::warning::VibeTea monitor binary download failed"
+echo "::error::Failed to set environment variable"
+echo "::notice::VibeTea monitor started successfully"
+```
+
 ## Common Patterns
 
 ### CLI Subcommand Pattern (Phase 12)
@@ -295,6 +346,106 @@ Key conventions:
 - **Arguments**: Structured using clap attributes (`#[arg]`)
 - **Error handling**: Returns `Result<()>` with context-rich errors
 - **Stdout vs stderr**: Diagnostics go to stderr, output data to stdout (e.g., keys)
+
+### GitHub Actions Composite Action Pattern (Phase 6)
+
+GitHub Actions composite actions provide reusable workflow steps. The vibetea-monitor action (`.github/actions/vibetea-monitor/action.yml`) demonstrates this pattern:
+
+```yaml
+# Composite action metadata
+name: 'VibeTea Monitor'
+description: 'Start VibeTea monitor to track Claude Code events'
+author: 'aaronbassett'
+
+branding:
+  icon: 'activity'
+  color: 'green'
+
+# Inputs with descriptions and defaults
+inputs:
+  server-url:
+    description: 'URL of the VibeTea server'
+    required: true
+  private-key:
+    description: 'Base64-encoded Ed25519 private key'
+    required: true
+  source-id:
+    description: 'Custom source identifier'
+    required: false
+    default: ''
+  version:
+    description: 'Monitor version to download'
+    required: false
+    default: 'latest'
+  shutdown-timeout:
+    description: 'Timeout for graceful shutdown'
+    required: false
+    default: '5'
+
+# Outputs for downstream steps
+outputs:
+  monitor-pid:
+    description: 'Process ID of running monitor'
+    value: ${{ steps.start-monitor.outputs.pid }}
+  monitor-started:
+    description: 'Whether monitor started successfully'
+    value: ${{ steps.start-monitor.outputs.started }}
+
+# Implementation as sequence of shell steps
+runs:
+  using: 'composite'
+  steps:
+    - name: Download VibeTea Monitor
+      id: download
+      shell: bash
+      run: |
+        # Download logic
+
+    - name: Start VibeTea Monitor
+      id: start-monitor
+      shell: bash
+      env:
+        VIBETEA_PRIVATE_KEY: ${{ inputs.private-key }}
+        VIBETEA_SERVER_URL: ${{ inputs.server-url }}
+      run: |
+        # Startup logic
+```
+
+Key conventions for GitHub Actions:
+- **Descriptive names**: Action and step names clearly state their purpose
+- **Required inputs**: Mark critical inputs as `required: true`
+- **Sensible defaults**: Provide defaults for optional inputs (version, timeout)
+- **Outputs**: Expose process ID and status for downstream steps
+- **Error handling**: Use `::warning::` for non-critical failures, exit 0 to avoid blocking workflow
+- **Environment variable safety**: Pass secrets via inputs, use step env vars
+- **Step IDs**: Use kebab-case for reliable downstream reference
+- **Shell specification**: Always specify `shell: bash` for portability
+- **Non-blocking design**: Monitor startup failures should not fail the workflow
+- **Cleanup guidance**: Document post-job cleanup via step comments
+
+Usage pattern:
+
+```yaml
+# In any workflow job
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "pr-${{ github.event.pull_request.number }}"
+
+# Run CI steps while monitor captures events
+- name: Run Tests
+  run: cargo test
+
+# Graceful shutdown (optional)
+- name: Stop VibeTea Monitor
+  if: always()
+  run: |
+    if [ -n "$VIBETEA_MONITOR_PID" ]; then
+      kill -TERM $VIBETEA_MONITOR_PID 2>/dev/null || true
+      sleep ${{ inputs.shutdown-timeout }}
+    fi
+```
 
 ### GitHub Actions Environment Pattern (Phase 5)
 
@@ -1018,6 +1169,41 @@ fn load_valid_base64_key_from_env() {
 fn whitespace_is_trimmed_from_env_value() {
     // ...
 }
+```
+
+### GitHub Actions (YAML)
+
+| Type | When to Use | Format |
+|------|-------------|--------|
+| Action description | Every action metadata | `description:` field |
+| Step names | Every workflow step | Clear, descriptive title |
+| Step comments | Complex logic | YAML comments with `#` |
+| Inline docs | In action implementation | Shell comments explaining logic |
+
+Example from `.github/actions/vibetea-monitor/action.yml`:
+
+```yaml
+# Composite action metadata
+name: 'VibeTea Monitor'
+description: 'Start VibeTea monitor to track Claude Code events during GitHub Actions workflows'
+author: 'aaronbassett'
+
+# Detailed input descriptions
+inputs:
+  server-url:
+    description: 'URL of the VibeTea server'
+    required: true
+  private-key:
+    description: 'Base64-encoded Ed25519 private key (from vibetea-monitor export-key)'
+    required: true
+
+# Steps with clear names
+steps:
+  - name: Download VibeTea Monitor
+    id: download
+    shell: bash
+    run: |
+      # Download logic with inline comments explaining steps
 ```
 
 ## Git Conventions

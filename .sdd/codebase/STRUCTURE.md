@@ -71,9 +71,15 @@ VibeTea/
 │   └── tsconfig.json
 │
 ├── .github/
-│   └── workflows/
-│       ├── ci.yml                    # Primary CI workflow (tests, linting, build)
-│       └── ci-with-monitor.yml       # Example workflow with VibeTea monitoring (Phase 5)
+│   ├── actions/
+│   │   └── vibetea-monitor/           # Composite GitHub Action (Phase 6)
+│   │       └── action.yml             # Action definition for simplified monitor setup
+│   ├── workflows/
+│   │   ├── ci.yml                    # Primary CI workflow (tests, linting, build)
+│   │   └── ci-with-monitor.yml       # Example workflow with VibeTea monitoring (Phase 5)
+│   ├── ISSUE_TEMPLATE/
+│   ├── CODEOWNERS
+│   └── PULL_REQUEST_TEMPLATE.md
 │
 ├── discovery/                  # AI assistant discovery module (future expansion)
 │   └── src/
@@ -189,20 +195,66 @@ The Monitor now supports three subcommands:
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
 
-### `.github/workflows/` - GitHub Actions Integration (Phase 5)
+### `.github/actions/vibetea-monitor/` - GitHub Actions Composite Action (Phase 6)
 
-| File | Purpose | Usage |
-|------|---------|-------|
-| `ci.yml` | Primary CI workflow | Runs on push/PR, tests + lint + build |
-| `ci-with-monitor.yml` | Example workflow with VibeTea monitoring | Template for tracking Claude Code events in CI |
+| File | Purpose | Configuration |
+|------|---------|----------------|
+| `action.yml` | Action metadata, inputs, outputs, steps | Defines monitor download, env setup, startup logic |
 
-**ci-with-monitor.yml Details:**
+**action.yml Details:**
+- **Name**: "VibeTea Monitor"
+- **Description**: Start VibeTea monitor to track Claude Code events during GitHub Actions workflows
+- **Branding**: Icon "activity", color "green"
+- **Inputs** (see lines 24-46):
+  - `server-url` (required): VibeTea server URL
+  - `private-key` (required): Base64-encoded Ed25519 private key
+  - `source-id` (optional): Custom event source identifier
+  - `version` (optional): Monitor version (default: "latest")
+  - `shutdown-timeout` (optional): Graceful shutdown timeout (default: "5" seconds)
+- **Outputs** (see lines 48-55):
+  - `monitor-pid`: Process ID from `steps.start-monitor.outputs.pid`
+  - `monitor-started`: Success flag from `steps.start-monitor.outputs.started`
+- **Steps** (see lines 59-167):
+  - Step 1 (lines 61-87): Download VibeTea Monitor binary via curl
+  - Step 2 (lines 90-144): Start monitor in background with environment variables
+  - Step 3 (lines 150-166): Save cleanup configuration and document graceful shutdown pattern
+
+**Key Design Features:**
+- Non-blocking: Gracefully skips if binary download fails (workflow continues)
+- Composable: Single action can be used in multiple workflows
+- Idempotent: Outputs indicate success/failure for conditional steps
+- Self-documenting: Prints cleanup instructions for manual SIGTERM handling
+
+### `.github/workflows/` - GitHub Actions Integration (Phase 5 & 6)
+
+| File | Purpose | Usage | Added In |
+|------|---------|-------|----------|
+| `ci.yml` | Primary CI workflow | Runs on push/PR, tests + lint + build | Phase 1 |
+| `ci-with-monitor.yml` | Example workflow with manual monitor setup | Template for tracking Claude Code events in CI | Phase 5 |
+
+**ci.yml Details:**
+- Lines 1-11: Workflow metadata and triggers
+- Lines 14-51: Rust job (tests with `--test-threads=1` for env var safety)
+- Lines 53-100: Client job (TypeScript tests, lint, format, build)
+
+**ci-with-monitor.yml Details (Phase 5):**
 - Lines 16-24: Workflow trigger (manual via `workflow_dispatch`)
 - Lines 34-39: Environment variables (private key, server URL, source ID)
 - Lines 46-57: Download VibeTea monitor binary from GitHub releases
 - Lines 60-70: Start monitor in background before CI steps
 - Lines 91-101: CI steps (formatting, linting, tests, build)
 - Lines 105-113: Graceful shutdown with SIGTERM
+
+**Using the Composite Action (Phase 6):**
+Instead of manual binary download, workflows can use:
+```yaml
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "github-${{ github.repository }}-${{ github.run_id }}"
+    version: "latest"
+```
 
 ## Module Boundaries
 
@@ -281,6 +333,25 @@ client/src/App.tsx (root)
 └── types/events.ts (TypeScript interfaces)
 ```
 
+### GitHub Actions Composite Action Module (Phase 6)
+
+Thin wrapper around monitor binary with these responsibilities:
+1. **Download** monitor binary from GitHub releases
+2. **Configure** environment variables
+3. **Start** monitor in background
+4. **Report** status and process ID
+
+No dependencies on source code (binary-only).
+
+```
+.github/actions/vibetea-monitor/action.yml
+├── Inputs: server-url, private-key, source-id, version, shutdown-timeout
+├── Step 1: Download binary (curl)
+├── Step 2: Start monitor with env vars
+├── Step 3: Document cleanup pattern
+└── Outputs: monitor-pid, monitor-started
+```
+
 ## Where to Add New Code
 
 | If you're adding... | Put it in... | Example |
@@ -294,7 +365,8 @@ client/src/App.tsx (root)
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
 | **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
-| **GitHub Actions workflow** | `.github/workflows/` (copy ci-with-monitor.yml as template) | `.github/workflows/ci-with-custom-setup.yml` |
+| **GitHub Actions workflow** | `.github/workflows/` (copy ci.yml as template) | `.github/workflows/release.yml` |
+| **GitHub Actions composite action** | `.github/actions/<action-name>/` (new directory) | `.github/actions/notify-slack/action.yml` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
 | **Tests** | Colocate with source: `file.rs` → `file_test.rs` (Rust), `file.ts` → `__tests__/file.test.ts` (TS) | — |
 
@@ -345,6 +417,29 @@ import type { Session } from '../types/events';
 - Utils: camelCase (e.g., `formatting.ts`)
 - Types: camelCase (e.g., `events.ts`)
 
+### GitHub Actions (YAML)
+
+**Convention**: Single file per action (action.yml in directory)
+
+```yaml
+# .github/actions/<action-name>/action.yml
+name: 'Action Name'
+description: 'Action description'
+inputs:
+  input-name:
+    description: 'Input description'
+    required: true
+outputs:
+  output-name:
+    description: 'Output description'
+    value: ${{ steps.<step-id>.outputs.<output-field> }}
+runs:
+  using: 'composite'
+  steps:
+    - run: echo "Hello"
+      shell: bash
+```
+
 ## Entry Points
 
 | Component | File | Launch Command |
@@ -354,6 +449,7 @@ import type { Session } from '../types/events';
 | **Monitor (export-key)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- export-key` |
 | **Server** | `server/src/main.rs` | `cargo run -p vibetea-server` |
 | **Client** | `client/src/main.tsx` | `npm run dev` (from `client/`) |
+| **GitHub Actions** | `.github/actions/vibetea-monitor/action.yml` | `uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main` |
 
 ## Generated/Auto-Configured Files
 
@@ -390,6 +486,17 @@ Files that are auto-generated or should not be manually edited:
 | Constants | `UPPER_SNAKE_CASE` | `TOKEN_STORAGE_KEY`, `MAX_BACKOFF_MS` |
 | Test files | `__tests__/{name}.test.ts` | `__tests__/formatting.test.ts` |
 
+### YAML (GitHub Actions)
+
+| Category | Pattern | Example |
+|----------|---------|---------|
+| Workflow names | `kebab-case` | `ci.yml`, `ci-with-monitor.yml` |
+| Job names | `kebab-case` | `rust-tests`, `client-tests` |
+| Action names | `PascalCase` | `Install Rust toolchain` |
+| Step IDs | `kebab-case` | `download-binary`, `start-monitor` |
+| Input names | `kebab-case` | `server-url`, `private-key` |
+| Output names | `kebab-case` | `monitor-pid`, `monitor-started` |
+
 ## Dependency Boundaries (Import Rules)
 
 ### Monitor
@@ -413,6 +520,13 @@ Files that are auto-generated or should not be manually edited:
 ```
 ✓ CAN import:     components, hooks, types, utils, React, Zustand, third-party UI libs
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
+```
+
+### GitHub Actions Composite Action
+
+```
+✓ CAN use:       bash, curl, standard CLI tools, GitHub context variables
+✗ CANNOT depend: source code, runtime binaries (except downloaded releases)
 ```
 
 ## Test Organization

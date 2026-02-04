@@ -32,6 +32,13 @@
 | CLI | Subprocess-based binary execution | `tests/` with `std::process::Command` | In use (Phase 12) |
 | E2E | Not selected | TBD | Not started |
 
+### GitHub Actions
+
+| Type | Framework | Configuration | Status |
+|------|-----------|---------------|--------|
+| Composite Action | YAML-based action composition | `.github/actions/vibetea-monitor/action.yml` | In use (Phase 6) |
+| Workflow Integration | Example workflows with monitoring | `.github/workflows/ci-with-monitor.yml` | Available |
+
 ### Running Tests
 
 #### TypeScript/Client
@@ -132,6 +139,21 @@ monitor/
     └── key_export_test.rs      # 12 integration tests for export-key subcommand (Phase 12, 698 lines)
 ```
 
+### GitHub Actions Composite Action Structure (Phase 6)
+
+```
+.github/
+└── actions/
+    └── vibetea-monitor/
+        └── action.yml          # Composite action for monitor deployment
+```
+
+The action (`action.yml`) is a reusable GitHub Actions artifact that encapsulates:
+- Binary download from releases
+- Environment variable configuration
+- Monitor startup and graceful shutdown
+- Output parameters for downstream steps
+
 ### Test File Location Strategy
 
 **TypeScript**: Co-located tests in `__tests__/` directory
@@ -153,6 +175,10 @@ monitor/
 **Rust**:
 - Unit tests inline in same module (`#[cfg(test)] mod tests`)
 - Integration tests in separate files in `tests/` directory with `_test.rs` suffix
+
+**GitHub Actions**:
+- Composite action stored in `.github/actions/{action-name}/action.yml`
+- Example workflows stored in `.github/workflows/{workflow-name}.yml`
 
 ## Test Patterns
 
@@ -547,7 +573,9 @@ async fn test_oversized_event_does_not_block_normal_events() {
 }
 ```
 
-### GitHub Actions Integration Testing (Phase 5)
+### GitHub Actions Integration Testing (Phase 5+6)
+
+#### Example Workflow Integration (Phase 5)
 
 File: `.github/workflows/ci-with-monitor.yml` (Example workflow)
 
@@ -608,6 +636,93 @@ Key testing patterns for GitHub Actions:
 - **Non-blocking operation**: Monitor never blocks workflow (wrapped in conditionals)
 - **Graceful shutdown**: SIGTERM handling with event flush before exit
 - **Source tracking**: Includes repository and run ID for traceability
+
+#### Composite Action Testing (Phase 6)
+
+File: `.github/actions/vibetea-monitor/action.yml` (Reusable composite action)
+
+The composite action encapsulates monitor deployment as a reusable artifact:
+
+```yaml
+name: 'VibeTea Monitor'
+description: 'Start VibeTea monitor to track Claude Code events'
+author: 'aaronbassett'
+
+# Input validation testing
+inputs:
+  server-url:
+    description: 'URL of the VibeTea server'
+    required: true
+  private-key:
+    description: 'Base64-encoded Ed25519 private key'
+    required: true
+  source-id:
+    description: 'Custom source identifier'
+    required: false
+    default: ''
+  version:
+    description: 'Monitor version to download'
+    required: false
+    default: 'latest'
+  shutdown-timeout:
+    description: 'Timeout in seconds for graceful shutdown'
+    required: false
+    default: '5'
+
+# Output availability for downstream steps
+outputs:
+  monitor-pid:
+    description: 'Process ID of the running monitor'
+    value: ${{ steps.start-monitor.outputs.pid }}
+  monitor-started:
+    description: 'Whether the monitor started successfully'
+    value: ${{ steps.start-monitor.outputs.started }}
+
+# Implementation using composite steps
+runs:
+  using: 'composite'
+  steps:
+    - name: Download VibeTea Monitor
+      id: download
+      shell: bash
+      run: |
+        # Download and validate binary
+
+    - name: Start VibeTea Monitor
+      id: start-monitor
+      shell: bash
+      env:
+        VIBETEA_PRIVATE_KEY: ${{ inputs.private-key }}
+        VIBETEA_SERVER_URL: ${{ inputs.server-url }}
+      run: |
+        # Start monitor with validation
+```
+
+**Testing the composite action:**
+
+In any workflow that uses it:
+
+```yaml
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "pr-${{ github.event.pull_request.number }}"
+
+# Verify action outputs
+- name: Check monitor status
+  run: |
+    echo "Monitor started: ${{ steps.vibetea-monitor.outputs.monitor-started }}"
+    echo "Monitor PID: ${{ steps.vibetea-monitor.outputs.monitor-pid }}"
+```
+
+Action testing validation:
+- **Input handling**: Tests verify required inputs block and optional inputs have sensible defaults
+- **Download resilience**: Tests verify graceful handling of download failures
+- **Output availability**: Tests verify PID and status outputs are accessible in downstream steps
+- **Non-blocking design**: Action should complete successfully even if monitor startup fails
+- **Process validation**: Tests verify monitor process actually starts (not just binary downloaded)
+- **Cleanup requirements**: Tests document recommended cleanup step for graceful shutdown
 
 ### Mocking Strategy
 
@@ -760,6 +875,41 @@ The example workflow (`.github/workflows/ci-with-monitor.yml`) demonstrates:
 
 This serves as a reference implementation for teams wanting to integrate VibeTea monitoring into their CI pipelines.
 
+### GitHub Actions Composite Action Integration (Phase 6)
+
+The reusable composite action (`.github/actions/vibetea-monitor/action.yml`) simplifies monitor deployment:
+
+```yaml
+# Usage in any workflow
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+
+# Optional: Custom source ID for tracking
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "github-${{ github.repository }}-${{ github.run_id }}"
+
+# Graceful shutdown
+- name: Stop VibeTea Monitor
+  if: always()
+  run: |
+    if [ -n "$VIBETEA_MONITOR_PID" ]; then
+      kill -TERM $VIBETEA_MONITOR_PID 2>/dev/null || true
+      sleep 5
+    fi
+```
+
+Key advantages of the composite action:
+- **Reusability**: Action can be used across multiple repositories
+- **Encapsulation**: Binary download and startup logic hidden from consumers
+- **Output parameters**: PID and status available to downstream steps
+- **Non-blocking**: Failures don't interrupt workflow (warnings only)
+- **Versioning**: Pin to specific version or use `@main` for latest
+
 ### Required Checks
 
 | Check | Blocking | Notes |
@@ -821,6 +971,16 @@ Tests are organized by execution priority in CI:
 5. **Test error paths**: Not just happy paths
 6. **Use fixtures**: Centralize test data
 7. **Keep tests focused**: One assertion or related assertions per test
+
+### GitHub Actions (YAML)
+
+1. **Test action inputs**: Verify required inputs are enforced, optional inputs have defaults
+2. **Test output parameters**: Verify outputs are available to downstream steps
+3. **Test error handling**: Verify non-critical failures use warnings, not failures
+4. **Test environment isolation**: Use matrix strategy for multiple environment testing
+5. **Document cleanup**: Clearly document any manual cleanup steps (e.g., monitor shutdown)
+6. **Test workflow integration**: Verify action works with different workflow patterns
+7. **Test version pinning**: Verify action works with version references and `@main`
 
 ---
 

@@ -1,12 +1,12 @@
 # External Integrations
 
-**Status**: Phase 5 - GitHub Actions monitoring integration (`.github/workflows/ci-with-monitor.yml`)
+**Status**: Phase 6 - GitHub Actions composite action for simplified monitor integration
 **Last Updated**: 2026-02-04
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4). Can be deployed in GitHub Actions workflows (Phase 5).
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4). Can be deployed in GitHub Actions workflows (Phase 5). Integrated via reusable GitHub Actions composite action (Phase 6).
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization with token-based authentication
 
@@ -559,11 +559,15 @@ pub struct SenderConfig {
 - HTTPS recommended for production
 - HTTP allowed for local development
 
-## GitHub Actions Integration (Phase 5)
+## GitHub Actions Integration
 
-### Workflow File
+### Phase 5: Workflow File
 
 **Location**: `.github/workflows/ci-with-monitor.yml` (114 lines)
+
+### Phase 6: Composite Action File
+
+**Location**: `.github/actions/vibetea-monitor/action.yml` (167 lines)
 
 ### Features
 
@@ -573,6 +577,7 @@ pub struct SenderConfig {
 - URL pattern: `https://github.com/aaronbassett/VibeTea/releases/latest/download/vibetea-monitor-x86_64-unknown-linux-gnu`
 - Graceful fallback: Continues if download fails (with warning)
 - Exit code validation: Checks for successful execution
+- Version control: Supports pinning specific versions
 
 **Background Execution**:
 - Starts monitor daemon: `./vibetea-monitor run &`
@@ -617,6 +622,19 @@ pub struct SenderConfig {
 - Cache keys: `${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}`
 - Fallback keys: `${{ runner.os }}-cargo-`
 - Reduces build times on subsequent runs
+
+### Composite Action Inputs
+
+- `server-url` (required): VibeTea server URL
+- `private-key` (required): Base64-encoded Ed25519 private key
+- `source-id` (optional): Custom source identifier (defaults to `github-<repo>-<run_id>`)
+- `version` (optional): Monitor version to download (default: `latest`)
+- `shutdown-timeout` (optional): Seconds to wait for graceful shutdown (default: `5`)
+
+### Composite Action Outputs
+
+- `monitor-pid`: Process ID of running monitor
+- `monitor-started`: Boolean indicating successful startup
 
 ### Configuration
 
