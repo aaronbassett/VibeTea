@@ -457,6 +457,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::clone_on_copy)]
     fn logo_variant_is_clone_and_copy() {
         let variant = LogoVariant::Full;
         let cloned = variant.clone();
