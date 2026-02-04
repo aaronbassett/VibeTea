@@ -1346,6 +1346,142 @@ impl AppState {
     pub fn set_connection_status(&mut self, status: ConnectionStatus) {
         self.dashboard.connection_status = status;
     }
+
+    // =========================================================================
+    // Session Name Input Methods (User Story 6 - FR-026)
+    // =========================================================================
+
+    /// Inserts a character at the end of the session name and triggers inline validation.
+    ///
+    /// This method appends the given character to the current session name and then
+    /// runs inline validation to provide real-time feedback on the validity of the
+    /// input. Per FR-026, session names must be at most 64 characters and contain
+    /// only alphanumeric characters, hyphens (`-`), and underscores (`_`).
+    ///
+    /// # Arguments
+    ///
+    /// * `c` - The character to insert at the end of the session name
+    ///
+    /// # Validation Behavior
+    ///
+    /// After inserting the character, this method calls [`validate_session_name_inline`]
+    /// to update the `session_name_error` field. If the character makes the name invalid
+    /// (e.g., exceeds 64 characters or contains a disallowed character), the error
+    /// message is set immediately for user feedback.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let mut state = AppState::new();
+    /// state.setup.session_name = "test".to_string();
+    /// state.setup.session_name_error = None;
+    ///
+    /// // Insert a valid character
+    /// state.insert_char('x');
+    /// assert_eq!(state.setup.session_name, "testx");
+    /// assert!(state.setup.session_name_error.is_none());
+    ///
+    /// // Insert an invalid character (@)
+    /// state.insert_char('@');
+    /// assert_eq!(state.setup.session_name, "testx@");
+    /// assert!(state.setup.session_name_error.is_some());
+    /// ```
+    pub fn insert_char(&mut self, c: char) {
+        self.setup.session_name.push(c);
+        self.validate_session_name_inline();
+    }
+
+    /// Removes the last character from the session name and clears any validation error.
+    ///
+    /// This method pops the last character from the session name if one exists, then
+    /// runs inline validation. If the remaining name is valid, any existing error
+    /// message is cleared.
+    ///
+    /// # Behavior
+    ///
+    /// - If the session name is empty, this method is a no-op
+    /// - After removing a character, inline validation is triggered
+    /// - If the remaining name is valid, `session_name_error` is set to `None`
+    /// - If the remaining name is still invalid (e.g., empty), the error is updated
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let mut state = AppState::new();
+    /// state.setup.session_name = "test@".to_string();
+    /// state.setup.session_name_error = Some("Invalid character".to_string());
+    ///
+    /// // Delete the invalid character
+    /// state.delete_char();
+    /// assert_eq!(state.setup.session_name, "test");
+    /// assert!(state.setup.session_name_error.is_none());
+    ///
+    /// // Delete from empty string is a no-op
+    /// state.setup.session_name = String::new();
+    /// state.delete_char();
+    /// assert!(state.setup.session_name.is_empty());
+    /// ```
+    pub fn delete_char(&mut self) {
+        self.setup.session_name.pop();
+        self.validate_session_name_inline();
+    }
+
+    /// Validates the current session name and updates the error state.
+    ///
+    /// This method uses the [`validate_session_name`] function from the setup form
+    /// widget to check if the current session name complies with FR-026 requirements:
+    ///
+    /// - Must not be empty after trimming whitespace
+    /// - Must be at most 64 characters
+    /// - Must contain only alphanumeric characters, hyphens (`-`), and underscores (`_`)
+    ///
+    /// # Error State
+    ///
+    /// - If the name is valid, `session_name_error` is set to `None`
+    /// - If the name is invalid, `session_name_error` is set to the error message
+    ///
+    /// This method is called automatically by [`insert_char`] and [`delete_char`] to
+    /// provide real-time validation feedback as the user types.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let mut state = AppState::new();
+    ///
+    /// // Valid name
+    /// state.setup.session_name = "my-session_123".to_string();
+    /// state.validate_session_name_inline();
+    /// assert!(state.setup.session_name_error.is_none());
+    ///
+    /// // Invalid name (contains space)
+    /// state.setup.session_name = "my session".to_string();
+    /// state.validate_session_name_inline();
+    /// assert!(state.setup.session_name_error.is_some());
+    ///
+    /// // Empty name
+    /// state.setup.session_name = "".to_string();
+    /// state.validate_session_name_inline();
+    /// assert_eq!(
+    ///     state.setup.session_name_error,
+    ///     Some("Session name cannot be empty".to_string())
+    /// );
+    /// ```
+    pub fn validate_session_name_inline(&mut self) {
+        match crate::tui::widgets::validate_session_name(&self.setup.session_name) {
+            Ok(()) => {
+                self.setup.session_name_error = None;
+            }
+            Err(error_message) => {
+                self.setup.session_name_error = Some(error_message);
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -3961,6 +4097,354 @@ mod tests {
 
         state.screen = Screen::Setup;
         assert!(state.is_setup());
+    }
+
+    // =============================================================================
+    // AppState Session Name Input Methods Tests (User Story 6 - FR-026)
+    // =============================================================================
+
+    #[test]
+    fn insert_char_appends_to_session_name() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test".to_string();
+
+        state.insert_char('x');
+
+        assert_eq!(state.setup.session_name, "testx");
+    }
+
+    #[test]
+    fn insert_char_appends_multiple_characters() {
+        let mut state = AppState::new();
+        state.setup.session_name = String::new();
+
+        state.insert_char('a');
+        state.insert_char('b');
+        state.insert_char('c');
+
+        assert_eq!(state.setup.session_name, "abc");
+    }
+
+    #[test]
+    fn insert_char_valid_char_clears_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test".to_string();
+        state.setup.session_name_error = Some("Previous error".to_string());
+
+        state.insert_char('x');
+
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn insert_char_invalid_char_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test".to_string();
+        state.setup.session_name_error = None;
+
+        // Insert an invalid character (@)
+        state.insert_char('@');
+
+        assert_eq!(state.setup.session_name, "test@");
+        assert!(state.setup.session_name_error.is_some());
+        assert!(state
+            .setup
+            .session_name_error
+            .as_ref()
+            .unwrap()
+            .contains("letters, numbers, hyphens"));
+    }
+
+    #[test]
+    fn insert_char_exceeding_64_chars_sets_error() {
+        let mut state = AppState::new();
+        // Create a 64-character name (the maximum allowed)
+        state.setup.session_name = "a".repeat(64);
+        state.setup.session_name_error = None;
+
+        // Try to add one more character
+        state.insert_char('x');
+
+        // Now it's 65 characters, which exceeds the limit
+        assert_eq!(state.setup.session_name.len(), 65);
+        assert!(state.setup.session_name_error.is_some());
+        assert!(state
+            .setup
+            .session_name_error
+            .as_ref()
+            .unwrap()
+            .contains("64 characters"));
+    }
+
+    #[test]
+    fn insert_char_hyphen_is_valid() {
+        let mut state = AppState::new();
+        state.setup.session_name = "my".to_string();
+
+        state.insert_char('-');
+        state.insert_char('s');
+        state.insert_char('e');
+        state.insert_char('s');
+        state.insert_char('s');
+        state.insert_char('i');
+        state.insert_char('o');
+        state.insert_char('n');
+
+        assert_eq!(state.setup.session_name, "my-session");
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn insert_char_underscore_is_valid() {
+        let mut state = AppState::new();
+        state.setup.session_name = "my".to_string();
+
+        state.insert_char('_');
+        state.insert_char('s');
+        state.insert_char('e');
+        state.insert_char('s');
+        state.insert_char('s');
+        state.insert_char('i');
+        state.insert_char('o');
+        state.insert_char('n');
+
+        assert_eq!(state.setup.session_name, "my_session");
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn insert_char_digits_are_valid() {
+        let mut state = AppState::new();
+        state.setup.session_name = "session".to_string();
+
+        state.insert_char('1');
+        state.insert_char('2');
+        state.insert_char('3');
+
+        assert_eq!(state.setup.session_name, "session123");
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn delete_char_removes_last_character() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test".to_string();
+
+        state.delete_char();
+
+        assert_eq!(state.setup.session_name, "tes");
+    }
+
+    #[test]
+    fn delete_char_on_empty_string_is_noop() {
+        let mut state = AppState::new();
+        state.setup.session_name = String::new();
+
+        state.delete_char();
+
+        assert!(state.setup.session_name.is_empty());
+    }
+
+    #[test]
+    fn delete_char_removes_invalid_char_clears_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test@".to_string();
+        // Manually set error as if the @ was just added
+        state.setup.session_name_error = Some("Invalid character".to_string());
+
+        state.delete_char();
+
+        assert_eq!(state.setup.session_name, "test");
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn delete_char_to_empty_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "x".to_string();
+
+        state.delete_char();
+
+        assert!(state.setup.session_name.is_empty());
+        assert!(state.setup.session_name_error.is_some());
+        assert_eq!(
+            state.setup.session_name_error,
+            Some("Session name cannot be empty".to_string())
+        );
+    }
+
+    #[test]
+    fn delete_char_brings_under_64_chars_clears_error() {
+        let mut state = AppState::new();
+        // Create a 65-character name (exceeds limit)
+        state.setup.session_name = "a".repeat(65);
+        state.setup.session_name_error =
+            Some("Session name must be 64 characters or less".to_string());
+
+        state.delete_char();
+
+        assert_eq!(state.setup.session_name.len(), 64);
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn validate_session_name_inline_valid_name_clears_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "valid-name_123".to_string();
+        state.setup.session_name_error = Some("Previous error".to_string());
+
+        state.validate_session_name_inline();
+
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn validate_session_name_inline_empty_name_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = String::new();
+
+        state.validate_session_name_inline();
+
+        assert_eq!(
+            state.setup.session_name_error,
+            Some("Session name cannot be empty".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_session_name_inline_whitespace_only_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "   ".to_string();
+
+        state.validate_session_name_inline();
+
+        assert_eq!(
+            state.setup.session_name_error,
+            Some("Session name cannot be empty".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_session_name_inline_too_long_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "a".repeat(65);
+
+        state.validate_session_name_inline();
+
+        assert_eq!(
+            state.setup.session_name_error,
+            Some("Session name must be 64 characters or less".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_session_name_inline_invalid_char_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "invalid name".to_string();
+
+        state.validate_session_name_inline();
+
+        assert_eq!(
+            state.setup.session_name_error,
+            Some(
+                "Session name can only contain letters, numbers, hyphens, and underscores"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn validate_session_name_inline_special_chars_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test@name".to_string();
+
+        state.validate_session_name_inline();
+
+        assert_eq!(
+            state.setup.session_name_error,
+            Some(
+                "Session name can only contain letters, numbers, hyphens, and underscores"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn validate_session_name_inline_exactly_64_chars_is_valid() {
+        let mut state = AppState::new();
+        state.setup.session_name = "a".repeat(64);
+
+        state.validate_session_name_inline();
+
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn validate_session_name_inline_mixed_valid_chars() {
+        let mut state = AppState::new();
+        state.setup.session_name = "My-Session_Name123".to_string();
+
+        state.validate_session_name_inline();
+
+        assert!(state.setup.session_name_error.is_none());
+    }
+
+    #[test]
+    fn validate_session_name_inline_unicode_sets_error() {
+        let mut state = AppState::new();
+        state.setup.session_name = "test\u{00e9}".to_string(); // 'e' with acute accent
+
+        state.validate_session_name_inline();
+
+        assert!(state.setup.session_name_error.is_some());
+        assert!(state
+            .setup
+            .session_name_error
+            .as_ref()
+            .unwrap()
+            .contains("letters, numbers, hyphens"));
+    }
+
+    #[test]
+    fn insert_and_delete_workflow() {
+        let mut state = AppState::new();
+        state.setup.session_name = String::new();
+
+        // Type "test"
+        state.insert_char('t');
+        state.insert_char('e');
+        state.insert_char('s');
+        state.insert_char('t');
+
+        assert_eq!(state.setup.session_name, "test");
+        assert!(state.setup.session_name_error.is_none());
+
+        // Add invalid char
+        state.insert_char('@');
+        assert!(state.setup.session_name_error.is_some());
+
+        // Delete invalid char
+        state.delete_char();
+        assert_eq!(state.setup.session_name, "test");
+        assert!(state.setup.session_name_error.is_none());
+
+        // Delete all
+        state.delete_char();
+        state.delete_char();
+        state.delete_char();
+        state.delete_char();
+        assert!(state.setup.session_name.is_empty());
+        assert_eq!(
+            state.setup.session_name_error,
+            Some("Session name cannot be empty".to_string())
+        );
+
+        // Type again
+        state.insert_char('n');
+        state.insert_char('e');
+        state.insert_char('w');
+        assert_eq!(state.setup.session_name, "new");
+        assert!(state.setup.session_name_error.is_none());
     }
 
     // =============================================================================
