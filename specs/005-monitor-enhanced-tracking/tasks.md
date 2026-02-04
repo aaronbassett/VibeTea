@@ -269,10 +269,10 @@
 - [x] T139 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
-- [ ] T140 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T141 [GIT] Create/update PR to main with phase summary
-- [ ] T142 [GIT] Verify all CI checks pass
-- [ ] T143 [GIT] Report PR ready status
+- [x] T140 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T141 [GIT] Create/update PR to main with phase summary
+- [x] T142 [GIT] Verify all CI checks pass
+- [x] T143 [GIT] Report PR ready status
 
 **Checkpoint**: Todo progress tracking with abandonment fully functional
 
