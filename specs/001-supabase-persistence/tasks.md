@@ -210,8 +210,8 @@
 - [x] T109 [US3] Create useHistoricData hook in client/src/hooks/useHistoricData.ts with 5-minute stale-while-revalidate caching per research.md (use devs:typescript-dev agent)
 - [x] T110 [GIT] Commit: create useHistoricData hook
 - [x] T111 [P] [US3] Create MSW handlers for query edge function in client mocks (use devs:typescript-dev agent)
-- [ ] T112 [P] [US3] Create unit tests for useHistoricData hook (use devs:typescript-dev agent)
-- [ ] T113 [GIT] Commit: add client historic data tests
+- [x] T112 [P] [US3] Create unit tests for useHistoricData hook (use devs:typescript-dev agent)
+- [x] T113 [GIT] Commit: add client historic data tests
 - [ ] T114 [US3] Run codebase mapping for Phase 5 changes (/sdd:map incremental)
 - [ ] T115 [GIT] Commit: update codebase documents for phase 5
 - [ ] T116 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
