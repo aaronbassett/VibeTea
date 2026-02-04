@@ -351,10 +351,10 @@
 - [x] T183 [GIT] Commit: implement SessionMetricsEvent emission
 - [x] T184 [US6] Add client store handler for session_metrics events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
 - [x] T185 [GIT] Commit: add client session_metrics handler
-- [ ] T186 [US6] Run /sdd:map incremental for Phase 8 changes
-- [ ] T187 [GIT] Commit: update codebase documents for phase 8
-- [ ] T188 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T189 [GIT] Commit: finalize phase 8 retro
+- [x] T186 [US6] Run /sdd:map incremental for Phase 8 changes
+- [x] T187 [GIT] Commit: update codebase documents for phase 8
+- [x] T188 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T189 [GIT] Commit: finalize phase 8 retro
 
 ### Phase Completion
 - [ ] T190 [GIT] Push branch to origin (ensure pre-push hooks pass)
