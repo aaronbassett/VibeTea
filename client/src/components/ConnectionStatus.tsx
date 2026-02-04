@@ -25,6 +25,82 @@ interface ConnectionStatusProps {
   readonly className?: string;
 }
 
+/**
+ * Animation visual style for each connection state.
+ *
+ * - `pulse`: Glowing pulse effect for connected state
+ * - `ring`: Expanding ring animation for connecting/reconnecting states
+ * - `warning`: Static warning visual for disconnected state
+ * - `none`: No animation (used when animations are disabled)
+ */
+export type ConnectionAnimationStyle = 'pulse' | 'ring' | 'warning' | 'none';
+
+/**
+ * Animation phase within a cycle.
+ *
+ * - `idle`: Animation is at rest or not active
+ * - `animating`: Animation is actively playing
+ * - `completing`: Animation is finishing its current cycle
+ */
+export type ConnectionAnimationPhase = 'idle' | 'animating' | 'completing';
+
+/**
+ * Tracks the animation state for the connection status indicator.
+ *
+ * Used to coordinate visual feedback based on WebSocket connection state:
+ * - Connected: Glowing pulse animation indicating healthy connection
+ * - Connecting/Reconnecting: Ring animation showing active connection attempt
+ * - Disconnected: Warning visual indicating connection loss
+ *
+ * Supports reduced motion preferences by allowing animations to be paused
+ * while maintaining the current visual style for accessibility.
+ *
+ * @example
+ * ```ts
+ * const animationState: ConnectionStatusAnimationState = {
+ *   style: 'pulse',
+ *   phase: 'animating',
+ *   isActive: true,
+ *   intensity: 1.0,
+ *   prefersReducedMotion: false,
+ * };
+ * ```
+ */
+export interface ConnectionStatusAnimationState {
+  /**
+   * The visual animation style based on connection status.
+   * Maps to connection state: connected -> pulse, connecting/reconnecting -> ring,
+   * disconnected -> warning.
+   */
+  readonly style: ConnectionAnimationStyle;
+
+  /**
+   * Current phase within the animation cycle.
+   * Useful for coordinating multi-stage animations or cleanup.
+   */
+  readonly phase: ConnectionAnimationPhase;
+
+  /**
+   * Whether animations are currently active (playing) or paused.
+   * When false, the visual style is maintained but animation playback stops.
+   */
+  readonly isActive: boolean;
+
+  /**
+   * Animation intensity from 0.0 to 1.0.
+   * Used to scale animation effects (e.g., glow strength, ring expansion rate).
+   * A value of 0 effectively disables visual animation effects.
+   */
+  readonly intensity: number;
+
+  /**
+   * Whether the user prefers reduced motion.
+   * When true, animations should be subtle or disabled entirely,
+   * falling back to static visual indicators.
+   */
+  readonly prefersReducedMotion: boolean;
+}
+
 // -----------------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------------

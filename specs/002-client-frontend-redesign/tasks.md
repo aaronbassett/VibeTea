@@ -302,8 +302,8 @@
 - [x] T162 [US6] Create retro/P8.md for this phase
 
 ### Implementation
-- [ ] T163 [GIT] Commit: initialize phase 8 retro
-- [ ] T164 [US6] Add ConnectionStatusAnimationState interface to ConnectionStatus.tsx (use devs:typescript-dev agent)
+- [x] T163 [GIT] Commit: initialize phase 8 retro
+- [x] T164 [US6] Add ConnectionStatusAnimationState interface to ConnectionStatus.tsx (use devs:typescript-dev agent)
 - [ ] T165 [GIT] Commit: add connection animation state interface
 - [ ] T166 [US6] Implement glowing green pulse animation for connected state (use devs:react-dev agent)
 - [ ] T167 [GIT] Commit: add connected pulse animation
