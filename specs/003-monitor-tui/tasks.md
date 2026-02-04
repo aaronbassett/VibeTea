@@ -215,14 +215,14 @@
 ### Codebase Mapping and Retro
 - [x] T105 [US2] Run /sdd:map incremental for Phase 4 changes
 - [x] T106 [GIT] Commit: update codebase documents for phase 4
-- [ ] T107 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T108 [GIT] Commit: finalize phase 4 retro
+- [x] T107 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T108 [GIT] Commit: finalize phase 4 retro
 
 ### Phase Completion
-- [ ] T109 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T110 [GIT] Create/update PR to main with phase summary
-- [ ] T111 [GIT] Verify all CI checks pass
-- [ ] T112 [GIT] Report PR ready status
+- [x] T109 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T110 [GIT] Create/update PR to main with phase summary
+- [x] T111 [GIT] Verify all CI checks pass
+- [x] T112 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 2 complete - real-time event streaming functional
 
