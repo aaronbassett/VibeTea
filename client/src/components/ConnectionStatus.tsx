@@ -407,7 +407,9 @@ export function ConnectionStatus({
           >
             {config.label}
             {isInteractive && (
-              <span className="ml-1 text-xs opacity-70">(click to reconnect)</span>
+              <span className="ml-1 text-xs opacity-70">
+                (click to reconnect)
+              </span>
             )}
           </span>
         )}
