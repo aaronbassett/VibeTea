@@ -6,6 +6,7 @@
 //! # Commands
 //!
 //! - `vibetea-monitor init`: Generate Ed25519 keypair for server authentication
+//! - `vibetea-monitor export-key`: Export private key for GitHub Actions
 //! - `vibetea-monitor run`: Start the monitor daemon
 //!
 //! # Environment Variables
@@ -72,6 +73,9 @@ EXAMPLES:
     # Force overwrite existing keys
     vibetea-monitor init --force
 
+    # Export private key for GitHub Actions
+    vibetea-monitor export-key
+
     # Start the monitor
     export VIBETEA_SERVER_URL=https://vibetea.fly.dev
     vibetea-monitor run
@@ -94,6 +98,16 @@ enum Command {
         force: bool,
     },
 
+    /// Export private key for GitHub Actions.
+    ///
+    /// Outputs the base64-encoded private key seed to stdout.
+    /// Use this to set the VIBETEA_PRIVATE_KEY secret in GitHub Actions.
+    ExportKey {
+        /// Directory containing keypair.
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
+
     /// Start the monitor daemon.
     ///
     /// Watches Claude Code session files and forwards events to the server.
@@ -107,6 +121,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Init { force } => run_init(force),
+        Command::ExportKey { path } => run_export_key(path),
         Command::Run => {
             // Initialize async runtime for the run command
             let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -160,6 +175,30 @@ fn run_init(force: bool) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Runs the export-key command to output the private key seed.
+fn run_export_key(path: Option<PathBuf>) -> Result<()> {
+    // Determine key directory from argument or default
+    let key_dir = match path {
+        Some(p) => p,
+        None => get_key_directory()?,
+    };
+
+    // Load the keypair from file (not load_with_fallback - we're exporting from file)
+    match Crypto::load(&key_dir) {
+        Ok(crypto) => {
+            // Print ONLY the base64-encoded seed to stdout, followed by exactly one newline
+            println!("{}", crypto.seed_base64());
+            Ok(())
+        }
+        Err(_) => {
+            // Print error to stderr and exit with code 1
+            eprintln!("Error: No key found at {}/key.priv", key_dir.display());
+            eprintln!("Run 'vibetea-monitor init' first.");
+            std::process::exit(1);
+        }
+    }
 }
 
 /// Runs the monitor daemon.
