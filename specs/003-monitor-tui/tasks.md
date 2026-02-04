@@ -329,32 +329,32 @@
 **Independent Test**: Start monitor, trigger events, verify footer counters increment appropriately
 
 ### Phase Start
-- [ ] T161 [GIT] Verify working tree is clean before starting Phase 7
-- [ ] T162 [GIT] Pull and rebase on origin/main if needed
-- [ ] T163 [US5] Create retro/P7.md for this phase
-- [ ] T164 [GIT] Commit: initialize phase 7 retro
+- [x] T161 [GIT] Verify working tree is clean before starting Phase 7
+- [x] T162 [GIT] Pull and rebase on origin/main if needed
+- [x] T163 [US5] Create retro/P7.md for this phase
+- [x] T164 [GIT] Commit: initialize phase 7 retro
 
 ### Event Stats Types
-- [ ] T165 [US5] Implement EventStats struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T166 [GIT] Commit: add EventStats struct
+- [x] T165 [US5] Implement EventStats struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T166 [GIT] Commit: add EventStats struct
 
 ### Stats Footer Widget
-- [ ] T167 [US5] Implement stats_footer widget in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
-- [ ] T168 [GIT] Commit: add stats footer widget
-- [ ] T169 [US5] Add visual distinction for failed count (color + style) in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
-- [ ] T170 [GIT] Commit: highlight failed events
+- [x] T167 [US5] Implement stats_footer widget in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
+- [x] T168 [GIT] Commit: add stats footer widget
+- [x] T169 [US5] Add visual distinction for failed count (color + style) in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
+- [x] T170 [GIT] Commit: highlight failed events (combined with T168)
 
 ### Stats Integration
-- [ ] T171 [US5] Integrate SenderMetrics into EventStats updates in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T172 [GIT] Commit: integrate sender metrics into stats display
-- [ ] T173 [US5] Add stats footer to dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
-- [ ] T174 [GIT] Commit: add stats footer to dashboard layout
+- [x] T171 [US5] Integrate SenderMetrics into EventStats updates in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T172 [GIT] Commit: integrate sender metrics into stats display
+- [x] T173 [US5] Add stats footer to dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
+- [x] T174 [GIT] Commit: add stats footer to dashboard layout
 
 ### Codebase Mapping and Retro
-- [ ] T175 [US5] Run /sdd:map incremental for Phase 7 changes
-- [ ] T176 [GIT] Commit: update codebase documents for phase 7
-- [ ] T177 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T178 [GIT] Commit: finalize phase 7 retro
+- [x] T175 [US5] Run /sdd:map incremental for Phase 7 changes
+- [x] T176 [GIT] Commit: update codebase documents for phase 7
+- [x] T177 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T178 [GIT] Commit: finalize phase 7 retro
 
 ### Phase Completion
 - [ ] T179 [GIT] Push branch to origin (ensure pre-push hooks pass)
