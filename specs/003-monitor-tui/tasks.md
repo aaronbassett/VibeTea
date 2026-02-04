@@ -452,17 +452,17 @@
 - [x] T219 [GIT] Verify working tree is clean before starting Phase 10
 - [x] T220 [GIT] Pull and rebase on origin/main if needed
 - [x] T221 [US8] Create retro/P10.md for this phase
-- [ ] T222 [GIT] Commit: initialize phase 10 retro
+- [x] T222 [GIT] Commit: initialize phase 10 retro
 
 ### Logo Widget
-- [ ] T223 [US8] Implement logo widget with ASCII art in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
-- [ ] T224 [GIT] Commit: add VibeTea ASCII logo widget
-- [ ] T225 [US8] Implement graceful degradation for narrow terminals in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
-- [ ] T226 [GIT] Commit: add logo degradation for narrow terminals
+- [x] T223 [US8] Implement logo widget with ASCII art in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
+- [x] T224 [GIT] Commit: add VibeTea ASCII logo widget
+- [x] T225 [US8] Implement graceful degradation for narrow terminals in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
+- [x] T226 [GIT] Commit: add logo degradation for narrow terminals (combined with T224)
 
 ### Logo Integration
-- [ ] T227 [US8] Integrate logo into header layout in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T228 [GIT] Commit: integrate logo into header
+- [x] T227 [US8] Integrate logo into header layout in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T228 [GIT] Commit: integrate logo into header
 
 ### Codebase Mapping and Retro
 - [ ] T229 [US8] Run /sdd:map incremental for Phase 10 changes
