@@ -247,11 +247,11 @@
 - [x] T091 [US4] Run /sdd:map incremental for Phase 6 changes
 - [x] T092 [GIT] Commit: update codebase documents for phase 6
 - [x] T093 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T094 [GIT] Commit: finalize phase 6 retro
-- [ ] T095 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T096 [GIT] Create/update PR to main with phase summary
-- [ ] T097 [GIT] Verify all CI checks pass
-- [ ] T098 [GIT] Report PR ready status
+- [x] T094 [GIT] Commit: finalize phase 6 retro
+- [x] T095 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T096 [GIT] Create/update PR to main with phase summary
+- [x] T097 [GIT] Verify all CI checks pass
+- [x] T098 [GIT] Report PR ready status
 
 ---
 
