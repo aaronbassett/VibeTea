@@ -202,6 +202,249 @@ export function AgentIcon(props: IconProps) {
 }
 
 // -----------------------------------------------------------------------------
+// Enhanced Tracking Icon Components
+// -----------------------------------------------------------------------------
+
+/**
+ * Agent Spawn icon - Seedling/sprout representing new agent spawned.
+ */
+export function AgentSpawnIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Stem */}
+      <path d="M8 14V7" />
+      {/* Left leaf */}
+      <path d="M8 7C6 7 4 5 4 3c2 0 4 2 4 4" />
+      {/* Right leaf */}
+      <path d="M8 9C10 9 12 7 12 5c-2 0-4 2-4 4" />
+    </svg>
+  );
+}
+
+/**
+ * Skill Invocation icon - Sparkle/magic wand representing skill usage.
+ */
+export function SkillInvocationIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Main sparkle */}
+      <path d="M8 1v3M8 12v3M1 8h3M12 8h3" />
+      {/* Diagonal sparkles */}
+      <path d="M3.5 3.5l2 2M10.5 10.5l2 2M3.5 12.5l2-2M10.5 5.5l2-2" />
+    </svg>
+  );
+}
+
+/**
+ * Token Usage icon - Coin representing token consumption.
+ */
+export function TokenUsageIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Coin circle */}
+      <circle cx="8" cy="8" r="6" />
+      {/* Dollar sign */}
+      <path d="M8 4v8M6 5.5c0-.8.9-1.5 2-1.5s2 .7 2 1.5-.9 1.5-2 1.5-2 .7-2 1.5.9 1.5 2 1.5 2-.7 2-1.5" />
+    </svg>
+  );
+}
+
+/**
+ * Session Metrics icon - Bar chart representing metrics.
+ */
+export function SessionMetricsIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Chart bars */}
+      <rect x="2" y="9" width="3" height="5" rx="0.5" />
+      <rect x="6.5" y="5" width="3" height="9" rx="0.5" />
+      <rect x="11" y="2" width="3" height="12" rx="0.5" />
+    </svg>
+  );
+}
+
+/**
+ * Activity Pattern icon - Line chart representing patterns.
+ */
+export function ActivityPatternIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Trend line */}
+      <path d="M2 12l3-4 3 2 4-6 2 2" />
+      {/* Baseline */}
+      <line x1="2" y1="14" x2="14" y2="14" />
+    </svg>
+  );
+}
+
+/**
+ * Model Distribution icon - Pie chart representing model usage distribution.
+ */
+export function ModelDistributionIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Pie circle */}
+      <circle cx="8" cy="8" r="6" />
+      {/* Pie slices */}
+      <path d="M8 8V2" />
+      <path d="M8 8l4.24 4.24" />
+      <path d="M8 8l-5.2 3" />
+    </svg>
+  );
+}
+
+/**
+ * Todo Progress icon - Checkmark in box representing task progress.
+ */
+export function TodoProgressIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Box */}
+      <rect x="2" y="2" width="12" height="12" rx="2" />
+      {/* Checkmark */}
+      <path d="M5 8l2 2 4-4" />
+    </svg>
+  );
+}
+
+/**
+ * File Change icon - Document with pencil representing file modifications.
+ */
+export function FileChangeIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Document */}
+      <path d="M3 2.5h6.5l3.5 3.5v8.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" />
+      {/* Fold corner */}
+      <path d="M9.5 2.5v3.5h3.5" />
+      {/* Edit lines */}
+      <line x1="5" y1="9" x2="10" y2="9" />
+      <line x1="5" y1="11.5" x2="8" y2="11.5" />
+    </svg>
+  );
+}
+
+/**
+ * Project Activity icon - Folder representing project-level events.
+ */
+export function ProjectActivityIcon(props: IconProps) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      {...props}
+    >
+      {/* Folder */}
+      <path d="M2 4.5a1 1 0 0 1 1-1h3.5l1.5 1.5h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-8.5z" />
+    </svg>
+  );
+}
+
+// -----------------------------------------------------------------------------
 // Icon Mapping
 // -----------------------------------------------------------------------------
 
@@ -227,4 +470,14 @@ export const EVENT_TYPE_ICONS: Record<EventType, IconComponent> = {
   summary: SummaryIcon,
   error: ErrorIcon,
   agent: AgentIcon,
+  // Enhanced tracking event icons
+  agent_spawn: AgentSpawnIcon,
+  skill_invocation: SkillInvocationIcon,
+  token_usage: TokenUsageIcon,
+  session_metrics: SessionMetricsIcon,
+  activity_pattern: ActivityPatternIcon,
+  model_distribution: ModelDistributionIcon,
+  todo_progress: TodoProgressIcon,
+  file_change: FileChangeIcon,
+  project_activity: ProjectActivityIcon,
 };

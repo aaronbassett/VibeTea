@@ -130,6 +130,15 @@ export const useEventStore = create<EventStore>()((set) => ({
       // Add event to beginning (newest first), enforce max limit with FIFO eviction
       const newEvents = [event, ...state.events].slice(0, MAX_EVENTS);
 
+      // Only update session state for events that have a sessionId
+      // Some enhanced tracking events (token_usage, session_metrics, etc.) are global
+      if (
+        !('sessionId' in event.payload) ||
+        typeof event.payload.sessionId !== 'string'
+      ) {
+        return { events: newEvents };
+      }
+
       // Update session state
       const newSessions = new Map(state.sessions);
       const sessionId = event.payload.sessionId;
@@ -268,7 +277,16 @@ export function selectEventsBySession(
   state: EventStore,
   sessionId: string
 ): readonly VibeteaEvent[] {
-  return state.events.filter((event) => event.payload.sessionId === sessionId);
+  return state.events.filter((event) => {
+    // Only include events that have a sessionId matching the filter
+    if (
+      'sessionId' in event.payload &&
+      typeof event.payload.sessionId === 'string'
+    ) {
+      return event.payload.sessionId === sessionId;
+    }
+    return false;
+  });
 }
 
 /**
@@ -312,12 +330,19 @@ export function selectFilteredEvents(
   }
 
   return events.filter((event) => {
-    // Session filter
-    if (
-      filters.sessionId !== null &&
-      event.payload.sessionId !== filters.sessionId
-    ) {
-      return false;
+    // Session filter - only filter events that have a sessionId
+    if (filters.sessionId !== null) {
+      if (
+        'sessionId' in event.payload &&
+        typeof event.payload.sessionId === 'string'
+      ) {
+        if (event.payload.sessionId !== filters.sessionId) {
+          return false;
+        }
+      } else {
+        // Exclude events without sessionId when filtering by session
+        return false;
+      }
     }
 
     // Time range filter

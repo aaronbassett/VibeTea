@@ -51,6 +51,16 @@ const EVENT_TYPE_COLORS: Record<EventType, string> = {
   agent: '#81c784', // Green for agents
   summary: '#ba68c8', // Purple for summaries
   error: COLORS.status.error,
+  // Enhanced tracking event colors
+  agent_spawn: '#34d399', // Emerald for agent spawn
+  skill_invocation: '#a78bfa', // Violet for skills
+  token_usage: '#fcd34d', // Amber for tokens
+  session_metrics: '#818cf8', // Indigo for metrics
+  activity_pattern: '#2dd4bf', // Teal for patterns
+  model_distribution: '#fb923c', // Orange for distribution
+  todo_progress: '#84cc16', // Lime for progress
+  file_change: '#f472b6', // Pink for file changes
+  project_activity: '#38bdf8', // Sky for project activity
 };
 
 /**
@@ -63,6 +73,16 @@ const EVENT_TYPE_LABELS: Record<EventType, string> = {
   agent: 'Agent',
   summary: 'Summary',
   error: 'Error',
+  // Enhanced tracking event labels
+  agent_spawn: 'Agent Spawn',
+  skill_invocation: 'Skill',
+  token_usage: 'Token Usage',
+  session_metrics: 'Metrics',
+  activity_pattern: 'Pattern',
+  model_distribution: 'Model Dist.',
+  todo_progress: 'Todo',
+  file_change: 'File Change',
+  project_activity: 'Project',
 };
 
 /**
@@ -75,6 +95,16 @@ const EVENT_TYPES: readonly EventType[] = [
   'agent',
   'summary',
   'error',
+  // Enhanced tracking event types
+  'agent_spawn',
+  'skill_invocation',
+  'token_usage',
+  'session_metrics',
+  'activity_pattern',
+  'model_distribution',
+  'todo_progress',
+  'file_change',
+  'project_activity',
 ];
 
 /**

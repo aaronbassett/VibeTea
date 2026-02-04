@@ -8,9 +8,9 @@
 
 VibeTea is a distributed event aggregation and broadcast system for AI coding assistants with three independent components:
 
-- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server
+- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server, with enhanced tracking modules for agent spawns, skill invocations, token usage, activity patterns, model distribution, todo progress, file changes, project activity, and other metrics
 - **Server** (Rust HTTP API) - Central hub that receives events from monitors and broadcasts them to subscribers via WebSocket
-- **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, and usage heatmaps
+- **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, usage heatmaps, and analytics
 
 The system follows a **hub-and-spoke architecture** where the Server acts as a central event bus, decoupling multiple Monitor sources from multiple Client consumers. Events flow unidirectionally: Monitors → Server → Clients, with no persistent storage.
 
@@ -20,7 +20,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 |---------|-------------|
 | **Hub-and-Spoke** | Central Server acts as event aggregation point, Monitors feed events, Clients consume |
 | **Producer-Consumer** | Monitors are event producers, Clients are event consumers, Server mediates asynchronous delivery |
-| **Privacy-First** | Events contain only structural metadata (timestamps, tool names, file basenames), never code or sensitive content |
+| **Privacy-First** | Events contain only structural metadata (timestamps, tool names, skill names, file basenames, project paths), never code or sensitive content |
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
 | **CI/CD Integration** | Environment variable key loading enables monitor deployment in containerized and GitHub Actions environments |
 | **Composite Action** | GitHub Actions workflow integration via reusable composite action for simplified monitor setup |
@@ -29,16 +29,17 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 
 ### Monitor (Source)
 
-- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl` and emits structured events
+- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl`, `~/.claude/history.jsonl`, `~/.claude/stats-cache.json`, `~/.claude/todos/`, and file history, emitting structured events
 - **Location**: `monitor/src/`
 - **Key Responsibilities**:
   - File watching via `inotify` (Linux), `FSEvents` (macOS), `ReadDirectoryChangesW` (Windows)
-  - Privacy-preserving JSONL parsing (extracts metadata only)
+  - Privacy-preserving JSONL and JSON parsing (extracts metadata only)
   - Cryptographic signing of events (Ed25519)
   - Event buffering and exponential backoff retry
   - Graceful shutdown with event flushing
   - Key export functionality for GitHub Actions integration
   - Dual-source key loading (environment variable with file fallback)
+  - Project session activity tracking (Phase 11)
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events`)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
@@ -62,14 +63,14 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 
 ### Client (Consumer)
 
-- **Purpose**: Real-time dashboard displaying aggregated event stream from the Server
+- **Purpose**: Real-time dashboard displaying aggregated event stream from the Server with analytics visualizations
 - **Location**: `client/src/`
 - **Key Responsibilities**:
   - WebSocket connection management with exponential backoff reconnection
   - Event buffering (1000 events max) with FIFO eviction
   - Session state management (Active, Inactive, Ended, Removed)
   - Event filtering (by session ID, time range)
-  - Real-time visualization (event list, session overview, heatmap)
+  - Real-time visualization (event list, session overview, heatmap, analytics)
 - **Dependencies**:
   - Depends on **Server** (via WebSocket connection to `/ws`)
   - No persistence layer (in-memory Zustand store)
@@ -110,17 +111,111 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 ### Primary Monitor-to-Client Flow
 
 Claude Code → Monitor → Server → Client:
-1. JSONL line written to `~/.claude/projects/<uuid>.jsonl`
+1. JSONL line written to `~/.claude/projects/<uuid>.jsonl` or skill invocation to `~/.claude/history.jsonl` or todo change to `~/.claude/todos/<uuid>-agent-<uuid>.json` or stats update to `~/.claude/stats-cache.json` or session file change in projects directory
 2. File watcher detects change via inotify/FSEvents
 3. Parser extracts event metadata (no code/prompts)
-4. Privacy pipeline sanitizes payload
-5. Sender signs with Ed25519, buffers, and retries on failure
-6. POST /events sent to Server with X-Source-ID and X-Signature headers
-7. Server verifies signature and rate limit
-8. Broadcaster sends event to all WebSocket subscribers
-9. Client receives via useWebSocket hook
-10. Zustand store adds event (FIFO eviction at 1000 limit)
-11. React renders updated event list, session overview, heatmap
+4. Enhanced trackers extract specialized event types (agent spawns, skill invocations, token usage, activity patterns, model distribution, session metrics, todo progress, file changes, project activity)
+5. Privacy pipeline sanitizes payload
+6. Sender signs with Ed25519, buffers, and retries on failure
+7. POST /events sent to Server with X-Source-ID and X-Signature headers
+8. Server verifies signature and rate limit
+9. Broadcaster sends event to all WebSocket subscribers
+10. Client receives via useWebSocket hook
+11. Zustand store adds event (FIFO eviction at 1000 limit)
+12. React renders updated event list, session overview, heatmap
+
+### Enhanced Tracking Flow (Phase 4-11)
+
+Six parallel tracking pipelines within Monitor:
+
+**Pipeline 1: Session JSONL Parser (WatchEvent → ParsedEvent)**
+```
+Session JSONL → FileWatcher
+  ↓
+WatchEvent (LinesAdded)
+  ↓
+SessionParser.parse_line()
+  ├→ SessionParser (traditional parsing)
+  ├→ agent_tracker (detect Task tool_use)
+  └→ ParsedEventKind enum variant (including AgentSpawned)
+```
+
+**Pipeline 2: Skill Tracker (history.jsonl → SkillInvocationEvent)**
+```
+history.jsonl → FileWatcher (notify crate)
+  ↓
+WatchEvent (Create/Modify)
+  ↓
+SkillTracker.process_file_changes()
+  ├→ parse_history_entry() (JSON deserialization)
+  ├→ extract_skill_name() (tokenization from display field)
+  └→ SkillInvocationEvent
+  ↓
+Main event loop: sender.queue() + sender.flush()
+```
+
+**Pipeline 3: Stats Tracker (stats-cache.json → SessionMetricsEvent + ActivityPatternEvent + ModelDistributionEvent + TokenUsageEvent) (Phase 8-10)**
+```
+stats-cache.json → StatsTracker
+  ↓
+WatchEvent (Create/Modify via notify crate)
+  ↓
+StatsTracker.process_file_changes() [debounced 200ms]
+  ├→ read_stats_with_retry() (JSON deserialization with 3 retries)
+  ├→ emit_stats_events() [emits ALL event types]
+  │  ├→ SessionMetricsEvent (once per file read: total_sessions, total_messages, total_tool_usage, longest_session)
+  │  ├→ ActivityPatternEvent (once per file read: hour_counts distribution, Phase 9)
+  │  ├→ ModelDistributionEvent (once per file read: model_usage summary, Phase 10)
+  │  └→ TokenUsageEvent (once per model: model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+  ↓
+Main event loop: sender.queue()
+```
+
+**Pipeline 4: Todo Tracker (todos/ directory → TodoProgressEvent)**
+```
+~/.claude/todos/<uuid>-agent-<uuid>.json → FileWatcher (notify crate)
+  ↓
+WatchEvent (Create/Modify)
+  ↓
+TodoTracker.process_file_changes()
+  ├→ parse_todo_file() (JSON array deserialization)
+  ├→ count_todo_statuses() (aggregate task states)
+  ├→ is_abandoned() (detect incomplete tasks on session end)
+  └→ TodoProgressEvent
+  ↓
+Main event loop: sender.queue() + sender.flush()
+```
+
+**Pipeline 5: File History Tracker (project files → FileChangeEvent)**
+```
+Project files → FileWatcher (notify crate)
+  ↓
+WatchEvent (Create/Modify/Delete)
+  ↓
+FileHistoryTracker.process_file_changes()
+  ├→ compute_line_deltas()
+  ├→ hash_file_path() (privacy)
+  └→ FileChangeEvent
+  ↓
+Main event loop: sender.queue()
+```
+
+**Pipeline 6: Project Tracker (~/.claude/projects/ → ProjectActivityEvent) (Phase 11)**
+```
+~/.claude/projects/<slug>/<uuid>.jsonl → ProjectTracker (notify crate)
+  ↓
+WatchEvent (Create/Modify via notify crate, recursive)
+  ↓
+ProjectTracker.process_file_changes()
+  ├→ extract_session_id() (UUID validation from filename)
+  ├→ parse_project_slug() (path reconstruction from directory name)
+  ├→ check_session_active() (detect summary event in JSONL)
+  └→ ProjectActivityEvent (project_path, session_id, is_active)
+  ↓
+Main event loop: sender.queue() via channel
+```
+
+All pipelines feed into the same `sender.queue()` for batching and transmission.
 
 ### GitHub Actions Integration Flow (Phase 5 & 6)
 
@@ -151,7 +246,13 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 1. **Event Creation** (Monitor/Parser):
    - JSONL line parsed from `~/.claude/projects/<uuid>.jsonl`
    - `SessionParser` extracts timestamp, tool name, action
-   - `PrivacyPipeline` removes sensitive fields (code, prompts)
+   - `agent_tracker` detects Task tool_use and extracts agent metadata
+   - `SkillTracker` detects history.jsonl changes and parses skill invocations
+   - `StatsTracker` detects stats-cache.json changes and parses session metrics, activity patterns, model distribution, and token usage
+   - `TodoTracker` detects todos/ changes and parses todo progress
+   - `FileHistoryTracker` detects file changes and tracks line deltas
+   - `ProjectTracker` detects projects/ changes and tracks session activity status
+   - `PrivacyPipeline` removes sensitive fields (code, prompts, task content)
    - `Event` struct created with unique ID (`evt_` prefix + 20-char suffix)
 
 2. **Event Signing** (Monitor/Sender):
@@ -189,7 +290,7 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 
 | Layer | Responsibility | Can Access | Cannot Access |
 |-------|----------------|------------|---------------|
-| **Monitor** | Observe local activity, preserve privacy, authenticate | FileSystem, HTTP client, Crypto | Server internals, other Monitors, network stack details |
+| **Monitor** | Observe local activity, preserve privacy, authenticate, track metrics | FileSystem, HTTP client, Crypto, Stats files, history.jsonl, todos/, file history, projects directory | Server internals, other Monitors, network stack details |
 | **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state | File system, external APIs, Client implementation details |
 | **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
 | **GitHub Actions Composite Action** | Download, configure, launch monitor | GitHub releases, environment variables, bash shell | Monitor source code, Server config, Client code |
@@ -208,8 +309,20 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 | Interface | Purpose | Implementations |
 |-----------|---------|-----------------|
 | `Event` | Core event struct with type + payload | JSON serialization via `serde` |
-| `EventPayload` | Tagged union of event variants | Session, Activity, Tool, Agent, Summary, Error |
-| `EventType` | Enum discriminator | 6 variants (Session, Activity, Tool, Agent, Summary, Error) |
+| `EventPayload` | Tagged union of event variants | Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, ActivityPattern, ModelDistribution, SessionMetrics, TodoProgress, FileChange, ProjectActivity, etc. |
+| `EventType` | Enum discriminator | 15+ variants (Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution, TodoProgress, FileChange, ProjectActivity) |
+| `ParsedEventKind` | Parser output enum | SessionStarted, Activity, ToolStarted, ToolCompleted, Summary, AgentSpawned |
+| `AgentSpawnEvent` | Task tool agent spawn metadata | session_id, agent_type, description, timestamp |
+| `SkillInvocationEvent` | Skill/slash command invocation metadata | session_id, skill_name, project, timestamp |
+| `TokenUsageEvent` | Per-model token consumption | model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens |
+| `SessionMetricsEvent` | Global session statistics (Phase 8) | total_sessions, total_messages, total_tool_usage, longest_session |
+| `ActivityPatternEvent` | Hourly activity distribution (Phase 9) | hour_counts: HashMap<String, u64> |
+| `ModelDistributionEvent` | Model usage distribution (Phase 10) | model_usage: HashMap<String, TokenUsageSummary> |
+| `StatsEvent` | Union of stats tracker events (Phase 8-10) | TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution |
+| `TodoProgressEvent` | Todo list progress per session | session_id, completed, in_progress, pending, abandoned |
+| `FileChangeEvent` | File edit line deltas | session_id, file_hash, version, lines_added, lines_removed, lines_modified, timestamp |
+| `ProjectActivityEvent` | Project session activity status (Phase 11) | project_path, session_id, is_active |
+| `TaskToolInput` | Parsed Task tool input | subagent_type, description (prompt excluded for privacy) |
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
 | `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
@@ -265,6 +378,11 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 |------------|----------|---------|
 | **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown |
 | **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
+| **Skill Tracker State** | `SkillTracker` instance | Maintains byte offset for history.jsonl, processes immediately (no debounce) |
+| **Stats Tracker State** | `StatsTracker` instance | Watches stats-cache.json with 200ms debounce, emits all four event types (SessionMetrics, ActivityPattern, ModelDistribution, TokenUsage) |
+| **Todo Tracker State** | `TodoTracker` instance | Maintains ended sessions set, debounces file changes, processes immediately (Phase 6) |
+| **File History Tracker State** | `FileHistoryTracker` instance | Tracks file versions and computes line deltas |
+| **Project Tracker State** | `ProjectTracker` instance | Watches projects directory recursively, detects session activity (active/completed), no debouncing needed (Phase 11) |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
 | **Crypto Keys** | Loaded once at startup | KeySource tracked for logging, indicates origin (env var or file) |
 
@@ -370,67 +488,147 @@ info!(
 | **Logging** | Structured JSON (tracing crate) | Server: `main.rs`, Monitor: `main.rs`, Client: error boundaries in components |
 | **Error Handling** | Custom error enums + thiserror | `server/src/error.rs`, `monitor/src/error.rs` |
 | **Rate Limiting** | Per-source counter with TTL | `server/src/rate_limit.rs` |
-| **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
+| **Privacy** | Event payload sanitization + tracker opt-out | `monitor/src/privacy.rs` (removes sensitive fields), tracker modules follow privacy-first design |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
 | **Key Management** | Ed25519 key generation, storage, signing, export | `monitor/src/crypto.rs` (with KeySource tracking, memory zeroing, and export support) |
 | **GitHub Actions Integration** | Binary download, env var config, background launch | `.github/actions/vibetea-monitor/action.yml` |
 
-## Design Decisions
+## Enhanced Tracking Subsystem (Phase 4-11)
 
-### Why Hub-and-Spoke?
+New modular tracking architecture in `monitor/src/trackers/`:
 
-- **Decouples sources from sinks**: Multiple Monitor instances can run independently
-- **Centralized authentication**: Server is the only point needing cryptographic keys
-- **Easy horizontal scaling**: Monitors and Clients scale independently
-- **No inter-Monitor coupling**: Monitors don't need to know about each other
+### agent_tracker Module
 
-### Why No Persistence?
+- **Purpose**: Extract Task tool agent spawn events from JSONL
+- **Location**: `monitor/src/trackers/agent_tracker.rs`
+- **Key Functions**:
+  - `parse_task_tool_use()`: Detects Task tool_use blocks and extracts metadata
+  - `create_agent_spawn_event()`: Constructs `AgentSpawnEvent` from parsed Task input
+  - `try_extract_agent_spawn()`: Convenience wrapper for integration in parser
+- **Privacy**: Extracts only `subagent_type` and `description`; ignores `prompt` field
+- **Integration**: Called from `SessionParser::parse_line()` when processing tool_use content blocks
+- **Output**: `ParsedEventKind::AgentSpawned` variant → `EventPayload::AgentSpawn` → `EventType::AgentSpawn`
 
-- **Simplifies deployment**: No database to manage
-- **Supports distributed monitoring**: Each Client sees latest events only
-- **Privacy-first**: Events never written to disk (except logs)
-- **Real-time focus**: System optimized for live streams, not historical analysis
+### skill_tracker Module (Phase 5)
 
-### Why Ed25519?
+- **Purpose**: Monitor `~/.claude/history.jsonl` for skill/slash command invocations
+- **Location**: `monitor/src/trackers/skill_tracker.rs`
+- **Key Components**:
+  - `SkillTracker`: Main tracker instance managing file watch and byte offset
+  - `parse_history_entry()`: Parses JSON entry from history.jsonl
+  - `create_skill_invocation_event()`: Constructs `SkillInvocationEvent` from parsed entry
+  - `extract_skill_name()`: Tokenizes display string to extract skill name from `/command`
+- **Privacy**: Extracts only skill name (parsed from `display` field); ignores command arguments
+- **Integration**: Spawned as independent async task in `main.rs`; results queued via `sender.queue()`
+- **Output**: `SkillInvocationEvent` → queued by main event loop
+- **Architecture**: Uses `notify` crate for file changes; maintains byte offset for efficient tailing; processes immediately without debounce
+- **Data Source**: `~/.claude/history.jsonl` (append-only format with JSON entries)
 
-- **Widely supported**: NIST-standardized modern elliptic curve
-- **Signature verification only**: Public key crypto prevents Monitors impersonating each other
-- **Timing-safe implementation**: `subtle::ConstantTimeEq` prevents timing attacks
-- **Small key size**: ~32 bytes per key, easy to share via env vars
+### stats_tracker Module (Phase 8-10)
 
-### Why WebSocket?
+- **Purpose**: Monitor token usage, session metrics, activity patterns, and model distribution from stats-cache.json
+- **Location**: `monitor/src/trackers/stats_tracker.rs`
+- **Key Components**:
+  - `StatsTracker`: Main tracker instance managing file watch and debouncing
+  - `StatsCache`: Parsed contents of stats-cache.json with aggregated metrics
+  - `ModelTokens`: Per-model token usage (input, output, cache_read, cache_creation)
+  - `StatsEvent`: Enum with four variants (TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution)
+  - `emit_stats_events()`: Reads file and emits all four event types in sequence
+- **Data Source**: `~/.claude/stats-cache.json` with structure: totalSessions, totalMessages, totalToolUsage, longestSession, hourCounts, modelUsage
+- **Event Emission** (Phase 8-10):
+  - Emits one `SessionMetricsEvent` per file read
+  - Emits one `ActivityPatternEvent` per file read (if hourCounts non-empty) - Phase 9
+  - Emits one `ModelDistributionEvent` per file read (if modelUsage non-empty) - Phase 10
+  - Emits one `TokenUsageEvent` per model
+- **Integration**: Spawned as independent async task in `main.rs`; results queued via `sender.queue()`
+- **Architecture**:
+  - Uses `notify` crate for file changes (non-recursive directory watch)
+  - Debounces file changes (200ms) to coalesce rapid updates
+  - Includes retry logic for parse failures (up to 3 retries with 100ms delays)
+  - Performs initial read on startup if file exists
+  - Provides manual `refresh()` method for forcing a read
+- **Privacy**: Extracts only aggregated metrics; never transmits code or personal data
+- **Output**:
+  - `StatsEvent::SessionMetrics` → converted to Event with `EventType::SessionMetrics` and `EventPayload::SessionMetrics`
+  - `StatsEvent::ActivityPattern` → converted to Event with `EventType::ActivityPattern` and `EventPayload::ActivityPattern` (Phase 9)
+  - `StatsEvent::ModelDistribution` → converted to Event with `EventType::ModelDistribution` and `EventPayload::ModelDistribution` (Phase 10)
+  - `StatsEvent::TokenUsage` → converted to Event with `EventType::TokenUsage` and `EventPayload::TokenUsage`
+- **Testing**: Comprehensive test suite covering JSON parsing, event emission, debouncing, retries, and tracker lifecycle
 
-- **Bi-directional low-latency**: Better than HTTP polling for real-time updates
-- **Connection persistence**: Single connection replaces request/response overhead
-- **Native browser support**: No additional libraries needed for basic connectivity
-- **Standard protocol**: Works with existing proxies and load balancers
+### todo_tracker Module (Phase 6)
 
-### Why Environment Variable Precedence?
+- **Purpose**: Monitor `~/.claude/todos/` directory for todo list progress and abandonment detection
+- **Location**: `monitor/src/trackers/todo_tracker.rs`
+- **Data Source**: `~/.claude/todos/<session-uuid>-agent-<session-uuid>.json` files (JSON arrays of todo entries)
+- **Key Components**:
+  - `TodoTracker`: Main tracker instance managing directory watch and session state
+  - `TodoEntry`: Individual todo item with `content`, `status`, and optional `activeForm`
+  - `TodoStatus`: Enum with three states (Completed, InProgress, Pending)
+  - `parse_todo_file()`: Strict JSON array parsing with validation
+  - `parse_todo_file_lenient()`: Lenient parsing for partially-written files
+  - `count_todo_statuses()`: Aggregate task counts by status
+  - `is_abandoned()`: Detect incomplete tasks when session ends
+  - `create_todo_progress_event()`: Construct `TodoProgressEvent`
+- **Privacy**: Extracts only status counts and metadata; never transmits task content
+- **Integration**: Spawned as independent async task in `main.rs`; receives `mark_session_ended()` calls for abandonment detection
+- **Output**: `TodoProgressEvent` → queued by main event loop
+- **Architecture**:
+  - Uses `notify` crate for directory monitoring (non-recursive)
+  - Debounces file changes (default 100ms) to coalesce rapid status updates
+  - Maintains `RwLock<HashSet<String>>` of ended sessions for abandonment detection
+  - Async task processes debounced changes and emits events
+- **Debouncing**: Per research.md, 100ms is optimal to capture multiple status updates as single event
+- **Session Lifecycle**:
+  1. Session starts: TodoTracker begins watching
+  2. Todo file created/modified: Events emitted with `abandoned=false`
+  3. Session ends (summary event received): `mark_session_ended()` called
+  4. Subsequent todo changes: Events emitted with `abandoned=true` if incomplete tasks remain
 
-- **Container-friendly**: Secrets in env vars are standard practice for containerized apps
-- **No file permissions required**: Works in restricted environments (CI, serverless)
-- **Emergency override**: Can temporarily use different key without file system changes
-- **Key rotation support**: Switch keys by changing env var without file I/O
-- **Explicit precedence rules**: Clear error handling (env var errors don't silently fallback)
+### file_history_tracker Module (Phase 8+)
 
-### Why Separate export-key Command?
+- **Purpose**: Monitor file edit history and track line changes
+- **Location**: `monitor/src/trackers/file_history_tracker.rs`
+- **Data Source**: Project files watched during active Claude Code sessions
+- **Integration**: Spawned as independent async task in `main.rs`
+- **Output**: `FileChangeEvent` → queued by main event loop
+- **Architecture**: Computes line deltas without exposing code content
 
-- **Security**: Isolates key export from running monitor (no network involved)
-- **CI/CD Integration**: Enables headless key management in GitHub Actions
-- **Clean Output**: stdout contains only the key for direct piping to secret tools
-- **Auditability**: Separate invocation leaves clear audit trail in CI logs
+### project_tracker Module (Phase 11)
 
-### Why Composite GitHub Actions (Phase 6)?
-
-- **Abstraction**: Hides binary download details and shell script complexity
-- **Reusability**: Single action can be used in multiple workflows
-- **Simplicity**: Users don't need to understand curl, chmod, background processes
-- **Consistency**: Standardized approach across all workflows using VibeTea
-- **Error Handling**: Action gracefully skips if network fails (non-blocking to CI)
-- **Outputs**: Provides monitor status and PID for advanced workflows
-- **Documentation**: Action metadata serves as inline usage documentation
-- **Maintenance**: Changes to binary location or download strategy only need updating action.yml
+- **Purpose**: Monitor `~/.claude/projects/` to identify active and completed sessions per project
+- **Location**: `monitor/src/trackers/project_tracker.rs`
+- **Directory Structure**: Watches `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` files
+- **Project Slug Format**: Directory names use path-to-slug conversion (forward slashes → dashes)
+- **Key Components**:
+  - `ProjectTracker`: Main tracker instance managing directory watch and initial scan
+  - `ProjectTrackerConfig`: Configuration with `scan_on_init` flag
+  - `parse_project_slug()`: Converts slug format back to original absolute path
+  - `has_summary_event()`: Detects if session is completed (JSONL contains summary event)
+  - `extract_session_id()`: Validates UUID format in filename
+  - `create_project_activity_event()`: Constructs `ProjectActivityEvent`
+- **Session Activity Detection**:
+  - **Active**: Session JSONL does NOT contain a summary event (session ongoing)
+  - **Completed**: Session JSONL contains a summary event (session finished)
+- **Privacy**: Extracts only project paths and session IDs; never transmits code or file contents
+- **Integration**: Spawned as independent async task in `main.rs`; results queued via channel to `sender.queue()`
+- **Output**: `ProjectActivityEvent` → queued by main event loop
+- **Architecture**:
+  - Uses `notify` crate for recursive directory watching (handles project creation and session file changes)
+  - No debouncing (per research.md: 0ms needed for project files)
+  - Performs optional initial scan on startup (configurable via `ProjectTrackerConfig`)
+  - Supports manual `scan_projects()` method for refreshing all project state
+  - Channel-based communication (mpsc) for async event delivery
+- **Initialization**:
+  - Creates tracker with `ProjectTracker::new(tx)` - uses default config with scan_on_init=true
+  - Or `ProjectTracker::with_config()` for custom configuration
+  - Or `ProjectTracker::with_path()` to watch custom directory instead of ~/.claude/projects
+- **File Event Processing**:
+  - Only processes `.jsonl` files with valid UUID filenames
+  - Extracts project slug from parent directory name
+  - Verifies file is directly under project directory (not nested subdirs)
+  - Reads file and checks for summary event to determine activity status
+- **Testing**: Comprehensive unit + integration tests for path parsing, activity detection, file watching, and tracker lifecycle (39 test cases)
 
 ---
 

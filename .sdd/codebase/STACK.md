@@ -1,13 +1,13 @@
 # Technology Stack
 
-**Status**: Phase 6 - GitHub Actions composite action for monitor integration
+**Status**: Phase 11 - Monitor TUI with default launch, terminal size validation, NO_COLOR support, and signal handling
 **Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, CLI with export-key |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, CLI with TUI, export-key |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 | GitHub Actions | YAML/Bash | - | Composite action for monitor integration and workflow orchestration |
@@ -42,6 +42,8 @@
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
 | clap               | 4.5     | CLI argument parsing with derive macros | Monitor (clap Subcommand/Parser for export-key, Phase 4) |
+| ratatui            | 0.29    | Terminal UI framework (Phase 11) | Monitor (TUI rendering) |
+| crossterm          | 0.29    | Terminal backend for ratatui (Phase 11) | Monitor (terminal control, input handling) |
 
 ### TypeScript/JavaScript (Client)
 
@@ -105,13 +107,14 @@
 |--------|---------|
 | Server Runtime | Rust binary (tokio async) |
 | Client Runtime | Browser (ES2020+) |
-| Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI |
+| Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI and TUI (Phase 11) |
 | Node.js | Required for development and client build only |
 | Async Model | Tokio (Rust), Promises (TypeScript) |
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
-| CLI Support | clap Subcommand enum for command parsing (init, run, export-key via clap derive macros, Phase 4) |
+| CLI Support | clap Subcommand enum for command parsing (init, run, export-key, tui via clap derive macros, Phase 11) |
+| TUI Mode | ratatui terminal UI with crossterm backend (Phase 11, default launch mode) |
 | CI/CD Integration | GitHub Actions workflow with monitor deployment and background execution (Phase 5), composite action wrapper (Phase 6) |
 
 ## Communication Protocols & Formats
@@ -183,8 +186,23 @@
 - `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
 - `crypto.rs` - **Phase 3-6**: Ed25519 keypair generation, loading, saving, and event signing with memory safety
 - `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
-- `main.rs` - **Phase 4**: CLI entry point with init, run, and export-key commands (clap Subcommand enum)
+- `main.rs` - **Phase 4/11**: CLI entry point with init, run, export-key commands, and TUI mode (clap Subcommand enum)
 - `lib.rs` - Public interface
+- `tui/` - **Phase 11**: Terminal user interface module
+  - `mod.rs` - Module exports and documentation
+  - `terminal.rs` - Terminal setup, raw mode management, panic hook installation
+  - `app.rs` - Application state, event loop, theme management, NO_COLOR support
+  - `ui.rs` - Frame rendering and layout composition
+  - `input.rs` - Keyboard event handling (Escape, Ctrl+C, 'q' quit handlers)
+  - `widgets/` - Reusable TUI components
+    - `mod.rs` - Widget module exports
+    - `logo.rs` - VibeTea logo display
+    - `setup_form.rs` - Setup configuration form UI
+    - `credentials.rs` - Credentials input widget
+    - `event_stream.rs` - Event stream display
+    - `stats_footer.rs` - Statistics footer
+    - `header.rs` - Header widget
+    - `size_warning.rs` - **Phase 11**: Terminal size validation (80x24 minimum)
 
 ### GitHub Actions (Phase 6)
 - `.github/actions/vibetea-monitor/action.yml` - **Phase 6**: Composite action for monitor integration
@@ -200,7 +218,7 @@
 |-----------|--------|-----------|-------|
 | Server | Fly.io | Docker | Single Rust binary, minimal base image |
 | Client | CDN | Static files | Optimized builds with compression |
-| Monitor | Local + GitHub Actions | Native binary + workflow | Users download locally or use in CI workflows (Phase 5) |
+| Monitor | Local + GitHub Actions | Native binary + workflow | Users download locally or use in CI workflows (Phase 5); TUI available locally (Phase 11) |
 
 ## GitHub Actions Integration (Phase 6)
 
@@ -777,6 +795,62 @@
 - SessionOverview calculates recent event counts for activity indicators
 - Pulse animations defined in index.css applied via ActivityIndicator component
 - Session click handler allows filtering events by session (future feature)
+
+## Phase 11 Additions
+
+**Monitor TUI Default Launch** (`monitor/src/main.rs`):
+- **Default mode**: Running `vibetea-monitor` with no arguments launches TUI instead of requiring explicit `tui` subcommand
+- **Clap default**: `Command::Tui` is default when no subcommand provided (`unwrap_or(Command::Tui)`)
+- **Updated help text**: Documents that default behavior is TUI launch
+- **All commands available**: init, run, export-key still work with explicit naming
+
+**Terminal Size Validation** (`monitor/src/tui/widgets/size_warning.rs`):
+- **Minimum requirements**: Terminal must be at least 80 columns by 24 rows
+- **Constants**: `MIN_TERMINAL_WIDTH = 80`, `MIN_TERMINAL_HEIGHT = 24`
+- **Size warning widget**: Displays when terminal below minimums showing current/required dimensions
+- **check_terminal_size() function**: Validates width and height against minimums
+- **SizeWarningWidget**: Renders error message with helpful instructions
+- **Integration**: Checked in TUI main loop before rendering normal UI
+
+**NO_COLOR Environment Variable Support** (`monitor/src/tui/app.rs`):
+- **Standard compliance**: Implements https://no-color.org/ standard
+- **is_no_color_set() function**: Checks if `NO_COLOR` env var is set (even if empty)
+- **theme_from_env() function**: Returns monochrome Theme if NO_COLOR set, colorful otherwise
+- **Monochrome theme**: All colors disabled, text-only styling when NO_COLOR active
+- **Documentation**: Marked with "NO_COLOR Support" section in app.rs
+- **Application integration**: Called at startup to select theme based on environment
+
+**Signal Handling for TUI** (`monitor/src/tui/input.rs`):
+- **Escape key**: Always quits application from any screen
+- **Ctrl+C**: Keyboard combination detected as KeyCode::Char('c') with KeyModifiers::CONTROL, quits anywhere
+- **'q' key**: Quick quit when not typing in text fields (setup forms, credentials)
+- **Handler structure**: Global quit handlers in SetupAction and DashboardAction enums
+- **SetupAction::Quit**: Returned by Escape, Ctrl+C, or 'q' on non-text fields
+- **Documentation**: Signal handling strategy documented in main.rs lines 239-255
+
+**TUI Module Structure** (`monitor/src/tui/`):
+- **Complete TUI subsystem**: Terminal management, input handling, rendering, widgets
+- **Core files**:
+  - `terminal.rs` - Terminal setup with RAII cleanup, panic hook
+  - `app.rs` - State machine, event loop, theme/NO_COLOR logic
+  - `input.rs` - Keyboard event processing with quit handlers
+  - `ui.rs` - Frame rendering and layout
+  - `widgets/` - Reusable UI components (logo, form, event stream, stats, etc.)
+- **Panic safety**: install_panic_hook() restores terminal before panic message
+- **Raw mode & alternate screen**: Automatic entry/exit via Tui struct Drop impl
+
+## Environment Variables
+
+| Variable | Required | Default | Purpose | Phase |
+|----------|----------|---------|---------|-------|
+| `VIBETEA_SERVER_URL` | Yes (run mode) | - | Server URL (e.g., `https://vibetea.fly.dev`) | All |
+| `VIBETEA_SOURCE_ID` | No | hostname | Monitor identifier (must match key registration) | All |
+| `VIBETEA_KEY_PATH` | No | `~/.vibetea` | Directory containing `key.priv` and `key.pub` | All |
+| `VIBETEA_CLAUDE_DIR` | No | `~/.claude` | Claude Code directory | All |
+| `VIBETEA_BUFFER_SIZE` | No | 1000 | Event buffer capacity | All |
+| `VIBETEA_BASENAME_ALLOWLIST` | No | (all) | Comma-separated extensions to allow | Phase 5+ |
+| `NO_COLOR` | No | (not set) | Disable colors in TUI output (any value, even empty) | Phase 11 |
+| `RUST_LOG` | No | info | Structured logging filter (debug, info, warn, error) | All |
 
 ## Not Yet Implemented
 

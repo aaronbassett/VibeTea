@@ -28,6 +28,8 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+use chrono::Local;
+
 use base64::prelude::*;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::Rng;
@@ -80,6 +82,10 @@ pub enum CryptoError {
     /// Environment variable not set or empty.
     #[error("environment variable not set: {0}")]
     EnvVar(String),
+
+    /// Backup operation failed.
+    #[error("backup failed: {0}")]
+    BackupFailed(String),
 }
 
 /// Handles Ed25519 cryptographic operations.
@@ -361,6 +367,125 @@ impl Crypto {
     #[must_use]
     pub fn exists(dir: &Path) -> bool {
         dir.join(PRIVATE_KEY_FILE).exists()
+    }
+
+    /// Backs up existing keys by renaming them with a timestamp suffix.
+    ///
+    /// If keys exist at the configured path, they are renamed with a timestamp
+    /// suffix in the format `YYYYMMDD_HHMMSS`. For example:
+    /// - `key.priv` -> `key.priv.backup.20260204_143022`
+    /// - `key.pub` -> `key.pub.backup.20260204_143022`
+    ///
+    /// This method is idempotent: if no keys exist, it returns `Ok(None)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory containing the key files
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(timestamp))` if backup was performed, with the timestamp used
+    /// - `Ok(None)` if no keys existed (nothing to backup)
+    /// - `Err(CryptoError)` if backup failed due to permission or I/O errors
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::Crypto;
+    /// use std::path::Path;
+    ///
+    /// let dir = Path::new("/home/user/.vibetea");
+    /// match Crypto::backup_existing_keys(dir) {
+    ///     Ok(Some(timestamp)) => println!("Keys backed up with timestamp: {}", timestamp),
+    ///     Ok(None) => println!("No keys to backup"),
+    ///     Err(e) => eprintln!("Backup failed: {}", e),
+    /// }
+    /// ```
+    pub fn backup_existing_keys(dir: &Path) -> Result<Option<String>, CryptoError> {
+        let priv_path = dir.join(PRIVATE_KEY_FILE);
+        let pub_path = dir.join(PUBLIC_KEY_FILE);
+
+        // Check if private key exists (primary indicator)
+        if !priv_path.exists() {
+            return Ok(None);
+        }
+
+        // Generate timestamp for backup files
+        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+
+        // Backup private key
+        let priv_backup = dir.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, timestamp));
+        fs::rename(&priv_path, &priv_backup).map_err(|e| {
+            CryptoError::BackupFailed(format!(
+                "failed to backup private key to {:?}: {}",
+                priv_backup, e
+            ))
+        })?;
+
+        // Backup public key if it exists
+        if pub_path.exists() {
+            let pub_backup = dir.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, timestamp));
+            if let Err(e) = fs::rename(&pub_path, &pub_backup) {
+                // Try to restore private key backup on public key backup failure
+                // to maintain atomicity (best effort)
+                let _ = fs::rename(&priv_backup, &priv_path);
+                return Err(CryptoError::BackupFailed(format!(
+                    "failed to backup public key to {:?}: {}",
+                    pub_backup, e
+                )));
+            }
+        }
+
+        Ok(Some(timestamp))
+    }
+
+    /// Generates a new keypair, backing up existing keys if present.
+    ///
+    /// This is the recommended method for key generation when existing keys
+    /// may be present. It ensures that:
+    /// 1. Existing keys are backed up with a timestamp suffix (FR-015)
+    /// 2. New keys are generated and saved
+    /// 3. The operation is as atomic as possible
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory to save the key files
+    ///
+    /// # Returns
+    ///
+    /// A tuple of:
+    /// - The new `Crypto` instance
+    /// - `Option<String>` containing the backup timestamp if backup was performed
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError` if:
+    /// - Backup of existing keys fails (permission errors)
+    /// - New keys cannot be saved
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::Crypto;
+    /// use std::path::Path;
+    ///
+    /// let dir = Path::new("/home/user/.vibetea");
+    /// let (crypto, backup_timestamp) = Crypto::generate_with_backup(dir).unwrap();
+    ///
+    /// if let Some(ts) = backup_timestamp {
+    ///     println!("Old keys backed up with timestamp: {}", ts);
+    /// }
+    /// println!("New public key: {}", crypto.public_key_base64());
+    /// ```
+    pub fn generate_with_backup(dir: &Path) -> Result<(Self, Option<String>), CryptoError> {
+        // Backup existing keys if they exist
+        let backup_timestamp = Self::backup_existing_keys(dir)?;
+
+        // Generate and save new keys
+        let crypto = Self::generate();
+        crypto.save(dir)?;
+
+        Ok((crypto, backup_timestamp))
     }
 
     /// Returns the public key as a base64-encoded string.
@@ -823,6 +948,231 @@ mod tests {
                 assert!(msg.contains("expected 32 bytes"));
                 assert!(msg.contains("got 64"));
             }
+        }
+    }
+
+    mod backup_tests {
+        use super::*;
+
+        #[test]
+        fn test_backup_existing_keys_when_keys_exist() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate and save initial keys
+            let original = Crypto::generate();
+            let original_pubkey = original.public_key_base64();
+            original.save(dir_path).unwrap();
+
+            // Verify original files exist
+            assert!(dir_path.join(PRIVATE_KEY_FILE).exists());
+            assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path);
+            assert!(result.is_ok());
+            let timestamp = result.unwrap();
+            assert!(timestamp.is_some());
+
+            let ts = timestamp.unwrap();
+
+            // Verify timestamp format: YYYYMMDD_HHMMSS (15 characters)
+            assert_eq!(ts.len(), 15);
+            assert!(ts.chars().nth(8) == Some('_'));
+            // All other characters should be digits
+            assert!(ts
+                .chars()
+                .enumerate()
+                .all(|(i, c)| i == 8 || c.is_ascii_digit()));
+
+            // Verify original files no longer exist
+            assert!(!dir_path.join(PRIVATE_KEY_FILE).exists());
+            assert!(!dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Verify backup files exist
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
+            assert!(priv_backup.exists());
+            assert!(pub_backup.exists());
+
+            // Verify backup private key content is correct (can load it)
+            // Copy backup back to original location to test loading
+            fs::copy(&priv_backup, dir_path.join(PRIVATE_KEY_FILE)).unwrap();
+            let loaded = Crypto::load(dir_path).unwrap();
+            assert_eq!(original_pubkey, loaded.public_key_base64());
+        }
+
+        #[test]
+        fn test_backup_returns_none_when_no_keys_exist() {
+            let temp_dir = TempDir::new().unwrap();
+
+            // Perform backup on empty directory
+            let result = Crypto::backup_existing_keys(temp_dir.path());
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_none());
+        }
+
+        #[test]
+        fn test_backup_handles_only_private_key() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Create only private key file (32 bytes)
+            let priv_path = dir_path.join(PRIVATE_KEY_FILE);
+            let mut file = File::create(&priv_path).unwrap();
+            file.write_all(&[42u8; 32]).unwrap();
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path);
+            assert!(result.is_ok());
+            let timestamp = result.unwrap();
+            assert!(timestamp.is_some());
+
+            let ts = timestamp.unwrap();
+
+            // Verify private key backup exists
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            assert!(priv_backup.exists());
+
+            // Verify original no longer exists
+            assert!(!priv_path.exists());
+
+            // No public key backup should exist (there was none)
+            let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
+            assert!(!pub_backup.exists());
+        }
+
+        #[test]
+        fn test_generate_with_backup_creates_new_keys_after_backup() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate initial keys
+            let original = Crypto::generate();
+            let original_pubkey = original.public_key_base64();
+            original.save(dir_path).unwrap();
+
+            // Generate new keys with backup
+            let (new_crypto, backup_timestamp) = Crypto::generate_with_backup(dir_path).unwrap();
+
+            // Backup should have been performed
+            assert!(backup_timestamp.is_some());
+            let ts = backup_timestamp.unwrap();
+
+            // New keys should be different
+            let new_pubkey = new_crypto.public_key_base64();
+            assert_ne!(original_pubkey, new_pubkey);
+
+            // New key files should exist
+            assert!(dir_path.join(PRIVATE_KEY_FILE).exists());
+            assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Backup files should exist
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
+            assert!(priv_backup.exists());
+            assert!(pub_backup.exists());
+
+            // Verify new keys can be loaded
+            let loaded = Crypto::load(dir_path).unwrap();
+            assert_eq!(new_pubkey, loaded.public_key_base64());
+
+            // Verify backup keys are the original ones
+            fs::copy(&priv_backup, dir_path.join("key.priv.test")).unwrap();
+            fs::rename(
+                dir_path.join("key.priv.test"),
+                dir_path.join(PRIVATE_KEY_FILE),
+            )
+            .unwrap();
+            let loaded_original = Crypto::load(dir_path).unwrap();
+            assert_eq!(original_pubkey, loaded_original.public_key_base64());
+        }
+
+        #[test]
+        fn test_generate_with_backup_no_backup_when_no_keys_exist() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // No existing keys
+            assert!(!Crypto::exists(dir_path));
+
+            // Generate with backup
+            let (crypto, backup_timestamp) = Crypto::generate_with_backup(dir_path).unwrap();
+
+            // No backup should have been performed
+            assert!(backup_timestamp.is_none());
+
+            // New keys should exist
+            assert!(Crypto::exists(dir_path));
+            assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Verify keys can be loaded
+            let loaded = Crypto::load(dir_path).unwrap();
+            assert_eq!(crypto.public_key_base64(), loaded.public_key_base64());
+        }
+
+        #[test]
+        fn test_timestamp_format_is_correct() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate and save keys
+            let crypto = Crypto::generate();
+            crypto.save(dir_path).unwrap();
+
+            // Get timestamp before backup
+            let before = chrono::Local::now();
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path).unwrap();
+            let ts = result.unwrap();
+
+            // Get timestamp after backup
+            let after = chrono::Local::now();
+
+            // Parse the timestamp
+            let parsed = chrono::NaiveDateTime::parse_from_str(&ts, "%Y%m%d_%H%M%S").unwrap();
+
+            // The parsed timestamp should be between before and after
+            let before_naive = before.naive_local();
+            let after_naive = after.naive_local();
+
+            // Allow 1 second tolerance for timing
+            assert!(
+                parsed >= before_naive - chrono::Duration::seconds(1)
+                    && parsed <= after_naive + chrono::Duration::seconds(1),
+                "Timestamp {} should be between {:?} and {:?}",
+                ts,
+                before_naive,
+                after_naive
+            );
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn test_backup_preserves_permissions() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate and save keys (this sets permissions)
+            let crypto = Crypto::generate();
+            crypto.save(dir_path).unwrap();
+
+            // Verify original permissions
+            let priv_path = dir_path.join(PRIVATE_KEY_FILE);
+            let original_perms = fs::metadata(&priv_path).unwrap().permissions();
+            assert_eq!(original_perms.mode() & 0o777, 0o600);
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path).unwrap();
+            let ts = result.unwrap();
+
+            // Check backup file permissions (should be preserved by rename)
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            let backup_perms = fs::metadata(&priv_backup).unwrap().permissions();
+            assert_eq!(backup_perms.mode() & 0o777, 0o600);
         }
     }
 }

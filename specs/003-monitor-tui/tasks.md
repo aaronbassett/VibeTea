@@ -29,25 +29,25 @@
 **Purpose**: Project initialization, dependencies, and basic structure
 
 ### Git Workflow Start
-- [ ] T001 [GIT] Verify on main branch and working tree is clean
-- [ ] T002 [GIT] Pull latest changes from origin/main
-- [ ] T003 [GIT] Create feature branch: 003-monitor-tui
+- [x] T001 [GIT] Verify on main branch and working tree is clean
+- [x] T002 [GIT] Pull latest changes from origin/main
+- [x] T003 [GIT] Create feature branch: 003-monitor-tui
 
 ### Setup Tasks
-- [ ] T004 Add ratatui and crossterm dependencies to monitor/Cargo.toml (use devs:rust-dev agent)
-- [ ] T005 [GIT] Commit: add TUI dependencies
-- [ ] T006 [P] Create TUI module structure in monitor/src/tui/mod.rs (use devs:rust-dev agent)
-- [ ] T007 [P] Create widgets module structure in monitor/src/tui/widgets/mod.rs (use devs:rust-dev agent)
-- [ ] T008 [GIT] Commit: scaffold TUI module structure
-- [ ] T009 Update monitor/src/lib.rs to export tui module (use devs:rust-dev agent)
-- [ ] T010 [GIT] Commit: export TUI module from lib.rs
-- [ ] T011 Verify cargo build compiles with new structure
+- [x] T004 Add ratatui and crossterm dependencies to monitor/Cargo.toml (use devs:rust-dev agent)
+- [x] T005 [GIT] Commit: add TUI dependencies
+- [x] T006 [P] Create TUI module structure in monitor/src/tui/mod.rs (use devs:rust-dev agent)
+- [x] T007 [P] Create widgets module structure in monitor/src/tui/widgets/mod.rs (use devs:rust-dev agent)
+- [x] T008 [GIT] Commit: scaffold TUI module structure
+- [x] T009 Update monitor/src/lib.rs to export tui module (use devs:rust-dev agent)
+- [x] T010 [GIT] Commit: export TUI module from lib.rs
+- [x] T011 Verify cargo build compiles with new structure
 
 ### Phase Completion
-- [ ] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T013 [GIT] Create/update PR to main with phase summary
-- [ ] T014 [GIT] Verify all CI checks pass
-- [ ] T015 [GIT] Report PR ready status
+- [x] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T013 [GIT] Create/update PR to main with phase summary
+- [x] T014 [GIT] Verify all CI checks pass
+- [x] T015 [GIT] Report PR ready status
 
 ---
 
@@ -58,52 +58,52 @@
 **CRITICAL**: No user story work can begin until this phase is complete
 
 ### Phase Start
-- [ ] T016 [GIT] Verify working tree is clean before starting Phase 2
-- [ ] T017 [GIT] Pull and rebase on origin/main if needed
-- [ ] T018 Create retro/P2.md for this phase
+- [x] T016 [GIT] Verify working tree is clean before starting Phase 2
+- [x] T017 [GIT] Pull and rebase on origin/main if needed
+- [x] T018 Create retro/P2.md for this phase
 
 ### Terminal Infrastructure
-- [ ] T019 [GIT] Commit: initialize phase 2 retro
-- [ ] T020 Implement Tui struct with RAII terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
-- [ ] T021 [GIT] Commit: add terminal wrapper with RAII restoration
-- [ ] T022 Implement panic hook for terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
-- [ ] T023 [GIT] Commit: add panic hook for terminal safety
+- [x] T019 [GIT] Commit: initialize phase 2 retro
+- [x] T020 Implement Tui struct with RAII terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
+- [x] T021 [GIT] Commit: add terminal wrapper with RAII restoration
+- [x] T022 Implement panic hook for terminal restoration in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
+- [x] T023 [GIT] Commit: add panic hook for terminal safety
 
 ### Event Handler Infrastructure
-- [ ] T024 Implement TuiEvent enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T025 [GIT] Commit: add TuiEvent enum
-- [ ] T026 Implement EventHandler with tokio::select! pattern in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T027 [GIT] Commit: add EventHandler with async event loop
+- [x] T024 Implement TuiEvent enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T025 [GIT] Commit: add TuiEvent enum
+- [x] T026 Implement EventHandler with tokio::select! pattern in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T027 [GIT] Commit: add EventHandler with async event loop
 
 ### State Types
-- [ ] T028 [P] Implement AppState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T029 [P] Implement Screen enum (Setup, Dashboard) in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T030 [GIT] Commit: add AppState and Screen types
-- [ ] T031 [P] Implement Theme struct with default and monochrome variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T032 [P] Implement Symbols struct with unicode and ascii variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T033 [GIT] Commit: add Theme and Symbols configuration
+- [x] T028 [P] Implement AppState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T029 [P] Implement Screen enum (Setup, Dashboard) in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T030 [GIT] Commit: add AppState and Screen types
+- [x] T031 [P] Implement Theme struct with default and monochrome variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T032 [P] Implement Symbols struct with unicode and ascii variants in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T033 [GIT] Commit: add Theme and Symbols configuration
 
 ### Sender Metrics Extension
-- [ ] T034 Add SenderMetrics struct to monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T035 [GIT] Commit: add SenderMetrics struct
-- [ ] T036 Add metrics() method and counters to Sender in monitor/src/sender.rs (use devs:rust-dev agent)
-- [ ] T037 [GIT] Commit: implement sender metrics tracking
+- [x] T034 Add SenderMetrics struct to monitor/src/sender.rs (use devs:rust-dev agent)
+- [x] T035 [GIT] Commit: add SenderMetrics struct
+- [x] T036 Add metrics() method and counters to Sender in monitor/src/sender.rs (use devs:rust-dev agent)
+- [x] T037 [GIT] Commit: implement sender metrics tracking
 
 ### Error Types
-- [ ] T038 Add TuiError and SetupError types to monitor/src/error.rs (use devs:rust-dev agent)
-- [ ] T039 [GIT] Commit: add TUI error types
+- [x] T038 Add TuiError and SetupError types to monitor/src/error.rs (use devs:rust-dev agent)
+- [x] T039 [GIT] Commit: add TUI error types
 
 ### Codebase Mapping and Retro
-- [ ] T040 Run /sdd:map incremental for Phase 2 changes
-- [ ] T041 [GIT] Commit: update codebase documents for phase 2
-- [ ] T042 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T043 [GIT] Commit: finalize phase 2 retro
+- [x] T040 Run /sdd:map incremental for Phase 2 changes
+- [x] T041 [GIT] Commit: update codebase documents for phase 2
+- [x] T042 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T043 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
-- [ ] T044 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T045 [GIT] Create/update PR to main with phase summary
-- [ ] T046 [GIT] Verify all CI checks pass
-- [ ] T047 [GIT] Report PR ready status
+- [x] T044 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T045 [GIT] Create/update PR to main with phase summary
+- [x] T046 [GIT] Verify all CI checks pass
+- [x] T047 [GIT] Report PR ready status
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -116,56 +116,56 @@
 **Independent Test**: Launch monitor, press Enter through all prompts, verify main dashboard displays with streaming logs
 
 ### Phase Start
-- [ ] T048 [GIT] Verify working tree is clean before starting Phase 3
-- [ ] T049 [GIT] Pull and rebase on origin/main if needed
-- [ ] T050 [US1] Create retro/P3.md for this phase
-- [ ] T051 [GIT] Commit: initialize phase 3 retro
+- [x] T048 [GIT] Verify working tree is clean before starting Phase 3
+- [x] T049 [GIT] Pull and rebase on origin/main if needed
+- [x] T050 [US1] Create retro/P3.md for this phase
+- [x] T051 [GIT] Commit: initialize phase 3 retro
 
 ### Setup Form State
-- [ ] T052 [P] [US1] Implement SetupFormState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T053 [P] [US1] Implement SetupField enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T054 [P] [US1] Implement KeyOption enum with toggle() method in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T055 [GIT] Commit: add setup form state types
+- [x] T052 [P] [US1] Implement SetupFormState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T053 [P] [US1] Implement SetupField enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T054 [P] [US1] Implement KeyOption enum with toggle() method in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T055 [GIT] Commit: add setup form state types
 
 ### Setup Form Widget
-- [ ] T056 [US1] Implement setup_form widget in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T057 [GIT] Commit: add setup form widget
-- [ ] T058 [US1] Add session name validation per FR-026 in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T059 [GIT] Commit: add session name validation
+- [x] T056 [US1] Implement setup_form widget in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T057 [GIT] Commit: add setup form widget
+- [x] T058 [US1] Add session name validation per FR-026 in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T059 [GIT] Commit: add session name validation
 
 ### Setup Input Handling
-- [ ] T060 [US1] Implement setup form input handling in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T061 [GIT] Commit: add setup form input handling
-- [ ] T062 [US1] Implement Tab/Enter navigation with form submission in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T063 [GIT] Commit: add form navigation
+- [x] T060 [US1] Implement setup form input handling in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T061 [GIT] Commit: add setup form input handling
+- [x] T062 [US1] Implement Tab/Enter navigation with form submission in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T063 [GIT] Commit: add form navigation
 
 ### Setup Screen Rendering
-- [ ] T064 [US1] Implement setup screen layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
-- [ ] T065 [GIT] Commit: add setup screen rendering
+- [x] T064 [US1] Implement setup screen layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
+- [x] T065 [GIT] Commit: add setup screen rendering
 
 ### Setup-to-Dashboard Transition
-- [ ] T066 [US1] Implement complete_setup() transition in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T067 [GIT] Commit: add setup to dashboard transition
-- [ ] T068 [US1] Load existing keys or generate new keys on form submit in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T069 [GIT] Commit: integrate key generation in setup flow
+- [x] T066 [US1] Implement complete_setup() transition in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T067 [GIT] Commit: add setup to dashboard transition
+- [x] T068 [US1] Load existing keys or generate new keys on form submit in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T069 [GIT] Commit: integrate key generation in setup flow
 
 ### Default Values
-- [ ] T070 [US1] Implement hostname detection for default session name in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T071 [GIT] Commit: add hostname default for session name
-- [ ] T072 [US1] Auto-detect existing keys and set default key option in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T073 [GIT] Commit: auto-detect existing keys
+- [x] T070 [US1] Implement hostname detection for default session name in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T071 [GIT] Commit: add hostname default for session name
+- [x] T072 [US1] Auto-detect existing keys and set default key option in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T073 [GIT] Commit: auto-detect existing keys
 
 ### Codebase Mapping and Retro
-- [ ] T074 [US1] Run /sdd:map incremental for Phase 3 changes
-- [ ] T075 [GIT] Commit: update codebase documents for phase 3
-- [ ] T076 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T077 [GIT] Commit: finalize phase 3 retro
+- [x] T074 [US1] Run /sdd:map incremental for Phase 3 changes
+- [x] T075 [GIT] Commit: update codebase documents for phase 3
+- [x] T076 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T077 [GIT] Commit: finalize phase 3 retro
 
 ### Phase Completion
-- [ ] T078 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T079 [GIT] Create/update PR to main with phase summary
-- [ ] T080 [GIT] Verify all CI checks pass
-- [ ] T081 [GIT] Report PR ready status
+- [x] T078 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T079 [GIT] Create/update PR to main with phase summary
+- [x] T080 [GIT] Verify all CI checks pass
+- [x] T081 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 1 complete - users can quick-start with defaults
 
@@ -178,51 +178,51 @@
 **Independent Test**: Start monitor, trigger Claude Code activity, verify events appear in stream within 2 seconds
 
 ### Phase Start
-- [ ] T082 [GIT] Verify working tree is clean before starting Phase 4
-- [ ] T083 [GIT] Pull and rebase on origin/main if needed
-- [ ] T084 [US2] Create retro/P4.md for this phase
-- [ ] T085 [GIT] Commit: initialize phase 4 retro
+- [x] T082 [GIT] Verify working tree is clean before starting Phase 4
+- [x] T083 [GIT] Pull and rebase on origin/main if needed
+- [x] T084 [US2] Create retro/P4.md for this phase
+- [x] T085 [GIT] Commit: initialize phase 4 retro
 
 ### Display Event Types
-- [ ] T086 [P] [US2] Implement DisplayEvent struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T087 [P] [US2] Implement DisplayEventType enum with From trait in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T088 [GIT] Commit: add display event types
+- [x] T086 [P] [US2] Implement DisplayEvent struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T087 [P] [US2] Implement DisplayEventType enum with From trait in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T088 [GIT] Commit: add display event types
 
 ### Event Buffer
-- [ ] T089 [US2] Implement EventBuffer with VecDeque and FIFO eviction in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T090 [GIT] Commit: add bounded event buffer
+- [x] T089 [US2] Implement EventBuffer with VecDeque and FIFO eviction in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T090 [GIT] Commit: add bounded event buffer
 
 ### Event Stream Widget
-- [ ] T091 [US2] Implement event_stream widget in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
-- [ ] T092 [GIT] Commit: add event stream widget
-- [ ] T093 [US2] Add timestamp formatting (HH:MM:SS) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
-- [ ] T094 [GIT] Commit: add timestamp formatting
-- [ ] T095 [US2] Add event type icons (unicode and ascii) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
-- [ ] T096 [GIT] Commit: add event type icons
+- [x] T091 [US2] Implement event_stream widget in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
+- [x] T092 [GIT] Commit: add event stream widget
+- [x] T093 [US2] Add timestamp formatting (HH:MM:SS) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
+- [x] T094 [GIT] Commit: add timestamp formatting
+- [x] T095 [US2] Add event type icons (unicode and ascii) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
+- [x] T096 [GIT] Commit: add event type icons
 
 ### Scroll State
-- [ ] T097 [US2] Implement ScrollState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T098 [GIT] Commit: add scroll state
-- [ ] T099 [US2] Implement auto-scroll behavior (pause on manual scroll, resume on scroll-to-bottom) in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T100 [GIT] Commit: implement auto-scroll behavior
+- [x] T097 [US2] Implement ScrollState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T098 [GIT] Commit: add scroll state
+- [x] T099 [US2] Implement auto-scroll behavior (pause on manual scroll, resume on scroll-to-bottom) in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T100 [GIT] Commit: implement auto-scroll behavior
 
 ### Event Integration
-- [ ] T101 [US2] Integrate watcher events into display buffer in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T102 [GIT] Commit: integrate watcher events into TUI
-- [ ] T103 [US2] Handle terminal resize for event stream in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T104 [GIT] Commit: handle resize for event stream
+- [x] T101 [US2] Integrate watcher events into display buffer in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T102 [GIT] Commit: integrate watcher events into TUI
+- [x] T103 [US2] Handle terminal resize for event stream in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T104 [GIT] Commit: handle resize for event stream
 
 ### Codebase Mapping and Retro
-- [ ] T105 [US2] Run /sdd:map incremental for Phase 4 changes
-- [ ] T106 [GIT] Commit: update codebase documents for phase 4
-- [ ] T107 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T108 [GIT] Commit: finalize phase 4 retro
+- [x] T105 [US2] Run /sdd:map incremental for Phase 4 changes
+- [x] T106 [GIT] Commit: update codebase documents for phase 4
+- [x] T107 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T108 [GIT] Commit: finalize phase 4 retro
 
 ### Phase Completion
-- [ ] T109 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T110 [GIT] Create/update PR to main with phase summary
-- [ ] T111 [GIT] Verify all CI checks pass
-- [ ] T112 [GIT] Report PR ready status
+- [x] T109 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T110 [GIT] Create/update PR to main with phase summary
+- [x] T111 [GIT] Verify all CI checks pass
+- [x] T112 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 2 complete - real-time event streaming functional
 
@@ -235,44 +235,44 @@
 **Independent Test**: Start monitor, observe "Connected" status, disconnect network, observe status change
 
 ### Phase Start
-- [ ] T113 [GIT] Verify working tree is clean before starting Phase 5
-- [ ] T114 [GIT] Pull and rebase on origin/main if needed
-- [ ] T115 [US3] Create retro/P5.md for this phase
-- [ ] T116 [GIT] Commit: initialize phase 5 retro
+- [x] T113 [GIT] Verify working tree is clean before starting Phase 5
+- [x] T114 [GIT] Pull and rebase on origin/main if needed
+- [x] T115 [US3] Create retro/P5.md for this phase
+- [x] T116 [GIT] Commit: initialize phase 5 retro
 
 ### Connection Status Types
-- [ ] T117 [US3] Implement ConnectionStatus enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T118 [GIT] Commit: add ConnectionStatus enum
-- [ ] T119 [US3] Add connection_status field to DashboardState in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T120 [GIT] Commit: add connection status to dashboard state
+- [x] T117 [US3] Implement ConnectionStatus enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T118 [GIT] Commit: add ConnectionStatus enum
+- [x] T119 [US3] Add connection_status field to DashboardState in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T120 [GIT] Commit: add connection status to dashboard state
 
 ### Connection Status Widget
-- [ ] T121 [US3] Implement connection_status widget in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T122 [GIT] Commit: add connection status widget
-- [ ] T123 [US3] Add color-blind safe indicators (symbols + colors) in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T124 [GIT] Commit: add accessible status indicators
+- [x] T121 [US3] Implement connection_status widget in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T122 [GIT] Commit: add connection status widget
+- [x] T123 [US3] Add color-blind safe indicators (symbols + colors) in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T124 [GIT] Commit: add accessible status indicators
 
 ### Header Widget
-- [ ] T125 [US3] Implement header widget combining logo and status in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T126 [GIT] Commit: add combined header widget
-- [ ] T127 [US3] Handle narrow terminal graceful degradation in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T128 [GIT] Commit: add header graceful degradation
+- [x] T125 [US3] Implement header widget combining logo and status in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T126 [GIT] Commit: add combined header widget
+- [x] T127 [US3] Handle narrow terminal graceful degradation in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T128 [GIT] Commit: add header graceful degradation
 
 ### Connection Status Updates
-- [ ] T129 [US3] Integrate sender connection state into TUI in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T130 [GIT] Commit: integrate connection status updates
+- [x] T129 [US3] Integrate sender connection state into TUI in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T130 [GIT] Commit: integrate connection status updates
 
 ### Codebase Mapping and Retro
-- [ ] T131 [US3] Run /sdd:map incremental for Phase 5 changes
-- [ ] T132 [GIT] Commit: update codebase documents for phase 5
-- [ ] T133 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T134 [GIT] Commit: finalize phase 5 retro
+- [x] T131 [US3] Run /sdd:map incremental for Phase 5 changes
+- [x] T132 [GIT] Commit: update codebase documents for phase 5
+- [x] T133 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T134 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
-- [ ] T135 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T136 [GIT] Create/update PR to main with phase summary
-- [ ] T137 [GIT] Verify all CI checks pass
-- [ ] T138 [GIT] Report PR ready status
+- [x] T135 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T136 [GIT] Create/update PR to main with phase summary
+- [x] T137 [GIT] Verify all CI checks pass
+- [x] T138 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 3 complete - connection status visible in header
 
@@ -285,38 +285,38 @@
 **Independent Test**: Start monitor, verify credentials panel shows session name and base64 public key
 
 ### Phase Start
-- [ ] T139 [GIT] Verify working tree is clean before starting Phase 6
-- [ ] T140 [GIT] Pull and rebase on origin/main if needed
-- [ ] T141 [US4] Create retro/P6.md for this phase
-- [ ] T142 [GIT] Commit: initialize phase 6 retro
+- [x] T139 [GIT] Verify working tree is clean before starting Phase 6
+- [x] T140 [GIT] Pull and rebase on origin/main if needed
+- [x] T141 [US4] Create retro/P6.md for this phase
+- [x] T142 [GIT] Commit: initialize phase 6 retro
 
 ### Credentials Types
-- [ ] T143 [US4] Implement Credentials struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T144 [GIT] Commit: add Credentials struct
+- [x] T143 [US4] Implement Credentials struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T144 [GIT] Commit: add Credentials struct
 
 ### Credentials Widget
-- [ ] T145 [US4] Implement credentials widget in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
-- [ ] T146 [GIT] Commit: add credentials widget
-- [ ] T147 [US4] Format public key in base64 for copy-paste in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
-- [ ] T148 [GIT] Commit: add base64 public key formatting
-- [ ] T149 [US4] Handle narrow terminal key display (wrap/truncate) in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
-- [ ] T150 [GIT] Commit: handle narrow terminal for credentials
+- [x] T145 [US4] Implement credentials widget in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
+- [x] T146 [GIT] Commit: add credentials widget
+- [x] T147 [US4] Format public key in base64 for copy-paste in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
+- [x] T148 [GIT] Commit: add base64 public key formatting (combined with T146)
+- [x] T149 [US4] Handle narrow terminal key display (wrap/truncate) in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
+- [x] T150 [GIT] Commit: handle narrow terminal for credentials (combined with T146)
 
 ### Dashboard Layout Integration
-- [ ] T151 [US4] Integrate credentials panel into dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
-- [ ] T152 [GIT] Commit: integrate credentials into dashboard
+- [x] T151 [US4] Integrate credentials panel into dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
+- [x] T152 [GIT] Commit: integrate credentials into dashboard
 
 ### Codebase Mapping and Retro
-- [ ] T153 [US4] Run /sdd:map incremental for Phase 6 changes
-- [ ] T154 [GIT] Commit: update codebase documents for phase 6
-- [ ] T155 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T156 [GIT] Commit: finalize phase 6 retro
+- [x] T153 [US4] Run /sdd:map incremental for Phase 6 changes
+- [x] T154 [GIT] Commit: update codebase documents for phase 6
+- [x] T155 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T156 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
-- [ ] T157 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T158 [GIT] Create/update PR to main with phase summary
-- [ ] T159 [GIT] Verify all CI checks pass
-- [ ] T160 [GIT] Report PR ready status
+- [x] T157 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T158 [GIT] Create/update PR to main with phase summary
+- [x] T159 [GIT] Verify all CI checks pass
+- [x] T160 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 4 complete - credentials visible for server setup
 
@@ -329,38 +329,38 @@
 **Independent Test**: Start monitor, trigger events, verify footer counters increment appropriately
 
 ### Phase Start
-- [ ] T161 [GIT] Verify working tree is clean before starting Phase 7
-- [ ] T162 [GIT] Pull and rebase on origin/main if needed
-- [ ] T163 [US5] Create retro/P7.md for this phase
-- [ ] T164 [GIT] Commit: initialize phase 7 retro
+- [x] T161 [GIT] Verify working tree is clean before starting Phase 7
+- [x] T162 [GIT] Pull and rebase on origin/main if needed
+- [x] T163 [US5] Create retro/P7.md for this phase
+- [x] T164 [GIT] Commit: initialize phase 7 retro
 
 ### Event Stats Types
-- [ ] T165 [US5] Implement EventStats struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T166 [GIT] Commit: add EventStats struct
+- [x] T165 [US5] Implement EventStats struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T166 [GIT] Commit: add EventStats struct
 
 ### Stats Footer Widget
-- [ ] T167 [US5] Implement stats_footer widget in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
-- [ ] T168 [GIT] Commit: add stats footer widget
-- [ ] T169 [US5] Add visual distinction for failed count (color + style) in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
-- [ ] T170 [GIT] Commit: highlight failed events
+- [x] T167 [US5] Implement stats_footer widget in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
+- [x] T168 [GIT] Commit: add stats footer widget
+- [x] T169 [US5] Add visual distinction for failed count (color + style) in monitor/src/tui/widgets/stats_footer.rs (use devs:rust-dev agent)
+- [x] T170 [GIT] Commit: highlight failed events (combined with T168)
 
 ### Stats Integration
-- [ ] T171 [US5] Integrate SenderMetrics into EventStats updates in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T172 [GIT] Commit: integrate sender metrics into stats display
-- [ ] T173 [US5] Add stats footer to dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
-- [ ] T174 [GIT] Commit: add stats footer to dashboard layout
+- [x] T171 [US5] Integrate SenderMetrics into EventStats updates in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T172 [GIT] Commit: integrate sender metrics into stats display
+- [x] T173 [US5] Add stats footer to dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
+- [x] T174 [GIT] Commit: add stats footer to dashboard layout
 
 ### Codebase Mapping and Retro
-- [ ] T175 [US5] Run /sdd:map incremental for Phase 7 changes
-- [ ] T176 [GIT] Commit: update codebase documents for phase 7
-- [ ] T177 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T178 [GIT] Commit: finalize phase 7 retro
+- [x] T175 [US5] Run /sdd:map incremental for Phase 7 changes
+- [x] T176 [GIT] Commit: update codebase documents for phase 7
+- [x] T177 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T178 [GIT] Commit: finalize phase 7 retro
 
 ### Phase Completion
-- [ ] T179 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T180 [GIT] Create/update PR to main with phase summary
-- [ ] T181 [GIT] Verify all CI checks pass
-- [ ] T182 [GIT] Report PR ready status
+- [x] T179 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T180 [GIT] Create/update PR to main with phase summary
+- [x] T181 [GIT] Verify all CI checks pass
+- [x] T182 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 5 complete - event statistics visible in footer
 
@@ -373,32 +373,32 @@
 **Independent Test**: Launch monitor, enter custom session name, complete setup, verify credentials shows custom name
 
 ### Phase Start
-- [ ] T183 [GIT] Verify working tree is clean before starting Phase 8
-- [ ] T184 [GIT] Pull and rebase on origin/main if needed
-- [ ] T185 [US6] Create retro/P8.md for this phase
-- [ ] T186 [GIT] Commit: initialize phase 8 retro
+- [x] T183 [GIT] Verify working tree is clean before starting Phase 8
+- [x] T184 [GIT] Pull and rebase on origin/main if needed
+- [x] T185 [US6] Create retro/P8.md for this phase
+- [x] T186 [GIT] Commit: initialize phase 8 retro
 
 ### Session Name Input
-- [ ] T187 [US6] Enhance session name input field with character input/delete in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T188 [GIT] Commit: enhance session name input handling
-- [ ] T189 [US6] Add inline validation error display in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T190 [GIT] Commit: add inline validation errors
+- [x] T187 [US6] Enhance session name input field with character input/delete in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T188 [GIT] Commit: enhance session name input handling
+- [x] T189 [US6] Add inline validation error display in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T190 [GIT] Commit: add inline validation errors (combined with T188)
 
 ### Validation Rules
-- [ ] T191 [US6] Implement validation rules per FR-026 (64 char limit, alphanumeric/-/_) in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T192 [GIT] Commit: implement session name validation rules
+- [x] T191 [US6] Implement validation rules per FR-026 (64 char limit, alphanumeric/-/_) in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T192 [GIT] Commit: implement session name validation rules (combined with T188)
 
 ### Codebase Mapping and Retro
-- [ ] T193 [US6] Run /sdd:map incremental for Phase 8 changes
-- [ ] T194 [GIT] Commit: update codebase documents for phase 8
-- [ ] T195 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T196 [GIT] Commit: finalize phase 8 retro
+- [x] T193 [US6] Run /sdd:map incremental for Phase 8 changes
+- [x] T194 [GIT] Commit: update codebase documents for phase 8
+- [x] T195 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T196 [GIT] Commit: finalize phase 8 retro
 
 ### Phase Completion
-- [ ] T197 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T198 [GIT] Create/update PR to main with phase summary
-- [ ] T199 [GIT] Verify all CI checks pass
-- [ ] T200 [GIT] Report PR ready status
+- [x] T197 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T198 [GIT] Create/update PR to main with phase summary
+- [x] T199 [GIT] Verify all CI checks pass
+- [x] T200 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 6 complete - custom session names supported
 
@@ -411,32 +411,32 @@
 **Independent Test**: Run monitor with existing keys, select "Generate new key", verify new keypair created and old backed up
 
 ### Phase Start
-- [ ] T201 [GIT] Verify working tree is clean before starting Phase 9
-- [ ] T202 [GIT] Pull and rebase on origin/main if needed
-- [ ] T203 [US7] Create retro/P9.md for this phase
-- [ ] T204 [GIT] Commit: initialize phase 9 retro
+- [x] T201 [GIT] Verify working tree is clean before starting Phase 9
+- [x] T202 [GIT] Pull and rebase on origin/main if needed
+- [x] T203 [US7] Create retro/P9.md for this phase
+- [x] T204 [GIT] Commit: initialize phase 9 retro
 
 ### Key Option UI
-- [ ] T205 [US7] Implement key option toggle in setup form in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T206 [GIT] Commit: add key option toggle UI
-- [ ] T207 [US7] Show "Use existing" only when keys exist in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
-- [ ] T208 [GIT] Commit: conditionally show key options
+- [x] T205 [US7] Implement key option toggle in setup form in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T206 [GIT] Commit: add key option toggle UI
+- [x] T207 [US7] Show "Use existing" only when keys exist in monitor/src/tui/widgets/setup_form.rs (use devs:rust-dev agent)
+- [x] T208 [GIT] Commit: conditionally show key options
 
 ### Key Backup Logic
-- [ ] T209 [US7] Implement key backup with timestamp suffix in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T210 [GIT] Commit: add key backup before regeneration
+- [x] T209 [US7] Implement key backup with timestamp suffix in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T210 [GIT] Commit: add key backup before regeneration
 
 ### Codebase Mapping and Retro
-- [ ] T211 [US7] Run /sdd:map incremental for Phase 9 changes
-- [ ] T212 [GIT] Commit: update codebase documents for phase 9
-- [ ] T213 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T214 [GIT] Commit: finalize phase 9 retro
+- [x] T211 [US7] Run /sdd:map incremental for Phase 9 changes
+- [x] T212 [GIT] Commit: update codebase documents for phase 9
+- [x] T213 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T214 [GIT] Commit: finalize phase 9 retro
 
 ### Phase Completion
-- [ ] T215 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T216 [GIT] Create/update PR to main with phase summary
-- [ ] T217 [GIT] Verify all CI checks pass
-- [ ] T218 [GIT] Report PR ready status
+- [x] T215 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T216 [GIT] Create/update PR to main with phase summary
+- [x] T217 [GIT] Verify all CI checks pass
+- [x] T218 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 7 complete - key management options available
 
@@ -449,32 +449,32 @@
 **Independent Test**: Start monitor, verify ASCII art logo appears in header area
 
 ### Phase Start
-- [ ] T219 [GIT] Verify working tree is clean before starting Phase 10
-- [ ] T220 [GIT] Pull and rebase on origin/main if needed
-- [ ] T221 [US8] Create retro/P10.md for this phase
-- [ ] T222 [GIT] Commit: initialize phase 10 retro
+- [x] T219 [GIT] Verify working tree is clean before starting Phase 10
+- [x] T220 [GIT] Pull and rebase on origin/main if needed
+- [x] T221 [US8] Create retro/P10.md for this phase
+- [x] T222 [GIT] Commit: initialize phase 10 retro
 
 ### Logo Widget
-- [ ] T223 [US8] Implement logo widget with ASCII art in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
-- [ ] T224 [GIT] Commit: add VibeTea ASCII logo widget
-- [ ] T225 [US8] Implement graceful degradation for narrow terminals in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
-- [ ] T226 [GIT] Commit: add logo degradation for narrow terminals
+- [x] T223 [US8] Implement logo widget with ASCII art in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
+- [x] T224 [GIT] Commit: add VibeTea ASCII logo widget
+- [x] T225 [US8] Implement graceful degradation for narrow terminals in monitor/src/tui/widgets/logo.rs (use devs:rust-dev agent)
+- [x] T226 [GIT] Commit: add logo degradation for narrow terminals (combined with T224)
 
 ### Logo Integration
-- [ ] T227 [US8] Integrate logo into header layout in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T228 [GIT] Commit: integrate logo into header
+- [x] T227 [US8] Integrate logo into header layout in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T228 [GIT] Commit: integrate logo into header
 
 ### Codebase Mapping and Retro
-- [ ] T229 [US8] Run /sdd:map incremental for Phase 10 changes
-- [ ] T230 [GIT] Commit: update codebase documents for phase 10
-- [ ] T231 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T232 [GIT] Commit: finalize phase 10 retro
+- [x] T229 [US8] Run /sdd:map incremental for Phase 10 changes
+- [x] T230 [GIT] Commit: update codebase documents for phase 10
+- [x] T231 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T232 [GIT] Commit: finalize phase 10 retro
 
 ### Phase Completion
-- [ ] T233 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T234 [GIT] Create/update PR to main with phase summary
-- [ ] T235 [GIT] Verify all CI checks pass
-- [ ] T236 [GIT] Report PR ready status
+- [x] T233 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T234 [GIT] Create/update PR to main with phase summary
+- [x] T235 [GIT] Verify all CI checks pass
+- [x] T236 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 8 complete - VibeTea logo displayed
 
@@ -485,62 +485,62 @@
 **Purpose**: Final integration, main.rs updates, and overall quality
 
 ### Phase Start
-- [ ] T237 [GIT] Verify working tree is clean before starting Phase 11
-- [ ] T238 [GIT] Pull and rebase on origin/main if needed
-- [ ] T239 Create retro/P11.md for this phase
-- [ ] T240 [GIT] Commit: initialize phase 11 retro
+- [x] T237 [GIT] Verify working tree is clean before starting Phase 11
+- [x] T238 [GIT] Pull and rebase on origin/main if needed
+- [x] T239 Create retro/P11.md for this phase
+- [x] T240 [GIT] Commit: initialize phase 11 retro
 
 ### Main.rs Integration
-- [ ] T241 Update monitor/src/main.rs to make TUI the default mode in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T242 [GIT] Commit: make TUI default mode
-- [ ] T243 Preserve existing init/run subcommands for scripting in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T244 [GIT] Commit: preserve CLI subcommands
+- [x] T241 Update monitor/src/main.rs to make TUI the default mode in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T242 [GIT] Commit: make TUI default mode
+- [x] T243 Preserve existing init/run subcommands for scripting in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T244 [GIT] Commit: preserve CLI subcommands
 
 ### Dashboard Input Handling
-- [ ] T245 Implement dashboard input handling (q/Esc quit, scroll keys) in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T246 [GIT] Commit: add dashboard input handling
+- [x] T245 Implement dashboard input handling (q/Esc quit, scroll keys) in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T246 [GIT] Commit: add dashboard input handling (completed in Phase 4)
 
 ### Size Warning
-- [ ] T247 [P] Implement size_warning widget for terminals below 80x24 in monitor/src/tui/widgets/size_warning.rs (use devs:rust-dev agent)
-- [ ] T248 [GIT] Commit: add terminal size warning widget
-- [ ] T249 Add minimum size check before entering TUI mode in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
-- [ ] T250 [GIT] Commit: add minimum terminal size check
+- [x] T247 [P] Implement size_warning widget for terminals below 80x24 in monitor/src/tui/widgets/size_warning.rs (use devs:rust-dev agent)
+- [x] T248 [GIT] Commit: add terminal size warning widget
+- [x] T249 Add minimum size check before entering TUI mode in monitor/src/tui/terminal.rs (use devs:rust-dev agent)
+- [x] T250 [GIT] Commit: add minimum terminal size check
 
 ### Log Redirection
-- [ ] T251 Suppress stderr logging in TUI mode per NFR-005 in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T252 [GIT] Commit: suppress logging in TUI mode
+- [x] T251 Suppress stderr logging in TUI mode per NFR-005 in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T252 [GIT] Commit: suppress logging in TUI mode
 
 ### Signal Handling
-- [ ] T253 Integrate TUI shutdown with existing signal handlers in monitor/src/main.rs (use devs:rust-dev agent)
-- [ ] T254 [GIT] Commit: integrate TUI with signal handlers
+- [x] T253 Integrate TUI shutdown with existing signal handlers in monitor/src/main.rs (use devs:rust-dev agent)
+- [x] T254 [GIT] Commit: integrate TUI with signal handlers
 
 ### Performance
-- [ ] T255 Verify 60ms tick rate and render throttling in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T256 [GIT] Commit: verify TUI performance settings
+- [x] T255 Verify 60ms tick rate and render throttling in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T256 [GIT] Commit: verify TUI performance settings
 
 ### NO_COLOR Support
-- [ ] T257 Implement NO_COLOR environment variable detection in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T258 [GIT] Commit: add NO_COLOR support
+- [x] T257 Implement NO_COLOR environment variable detection in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T258 [GIT] Commit: add NO_COLOR support
 
 ### Documentation
-- [ ] T259 [P] Update CLAUDE.md with TUI feature documentation
-- [ ] T260 [GIT] Commit: update CLAUDE.md for TUI feature
+- [x] T259 [P] Update CLAUDE.md with TUI feature documentation
+- [x] T260 [GIT] Commit: update CLAUDE.md for TUI feature
 
 ### Run Quickstart Validation
-- [ ] T261 Run quickstart.md validation steps to verify TUI works
-- [ ] T262 [GIT] Commit: verify quickstart validation passes
+- [x] T261 Run quickstart.md validation steps to verify TUI works
+- [x] T262 [GIT] Commit: verify quickstart validation passes
 
 ### Codebase Mapping and Retro
-- [ ] T263 Run /sdd:map incremental for Phase 11 changes
-- [ ] T264 [GIT] Commit: update codebase documents for phase 11
-- [ ] T265 Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T266 [GIT] Commit: finalize phase 11 retro
+- [x] T263 Run /sdd:map incremental for Phase 11 changes
+- [x] T264 [GIT] Commit: update codebase documents for phase 11
+- [x] T265 Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T266 [GIT] Commit: finalize phase 11 retro
 
 ### Phase Completion
-- [ ] T267 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T268 [GIT] Create/update PR to main with phase summary
-- [ ] T269 [GIT] Verify all CI checks pass
-- [ ] T270 [GIT] Report PR ready status
+- [x] T267 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T268 [GIT] Create/update PR to main with phase summary
+- [x] T269 [GIT] Verify all CI checks pass
+- [x] T270 [GIT] Report PR ready status
 
 ---
 

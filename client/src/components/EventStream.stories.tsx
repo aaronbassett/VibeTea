@@ -82,6 +82,62 @@ function createSampleEvent(
           index % 5
         ] ?? 'unknown',
     },
+    // Enhanced tracking event payloads
+    agent_spawn: {
+      sessionId,
+      agentType: ['Explore', 'Plan', 'Bash', 'general-purpose'][index % 4] ?? 'Explore',
+      description: 'Spawned agent to explore codebase',
+      timestamp,
+    },
+    skill_invocation: {
+      sessionId,
+      skillName: ['commit', 'review-pr', 'debug'][index % 3] ?? 'commit',
+      project: 'vibetea',
+      timestamp,
+    },
+    token_usage: {
+      model: ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku'][index % 3] ?? 'claude-3-sonnet',
+      inputTokens: 1000 + index * 100,
+      outputTokens: 500 + index * 50,
+      cacheReadTokens: 200,
+      cacheCreationTokens: 100,
+    },
+    session_metrics: {
+      totalSessions: 10 + index,
+      totalMessages: 100 + index * 10,
+      totalToolUsage: 50 + index * 5,
+      longestSession: '2h 30m',
+    },
+    activity_pattern: {
+      hourCounts: { '9': 10, '10': 15, '11': 20, '14': 25, '15': 30 },
+    },
+    model_distribution: {
+      modelUsage: {
+        'claude-3-opus': { inputTokens: 5000, outputTokens: 2500, cacheReadTokens: 1000, cacheCreationTokens: 500 },
+        'claude-3-sonnet': { inputTokens: 10000, outputTokens: 5000, cacheReadTokens: 2000, cacheCreationTokens: 1000 },
+      },
+    },
+    todo_progress: {
+      sessionId,
+      completed: 5,
+      inProgress: 2,
+      pending: 3,
+      abandoned: false,
+    },
+    file_change: {
+      sessionId,
+      fileHash: `hash-${index}`,
+      version: 1,
+      linesAdded: 50 + index * 10,
+      linesRemoved: 10 + index * 2,
+      linesModified: 20 + index * 5,
+      timestamp,
+    },
+    project_activity: {
+      projectPath: '/home/user/projects/vibetea',
+      sessionId,
+      isActive: index % 2 === 0,
+    },
   };
 
   return {

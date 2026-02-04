@@ -56,6 +56,142 @@ use thiserror::Error;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, trace, warn};
 
+// ============================================================================
+// Inotify usage monitoring (Linux-specific)
+// ============================================================================
+
+/// Information about inotify watch usage on Linux.
+///
+/// This struct provides visibility into the system's inotify limits and current
+/// usage, which is important when monitoring many Claude Code projects.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InotifyUsage {
+    /// Number of inotify watches currently in use by this process.
+    pub current: u64,
+    /// Maximum number of inotify watches allowed per user.
+    pub max: u64,
+    /// Percentage of the limit currently in use (0.0 to 100.0).
+    pub percentage: f64,
+}
+
+/// Threshold percentage at which to warn about inotify usage.
+const INOTIFY_WARNING_THRESHOLD: f64 = 80.0;
+
+/// Path to the inotify max user watches sysctl.
+#[cfg(target_os = "linux")]
+const INOTIFY_MAX_WATCHES_PATH: &str = "/proc/sys/fs/inotify/max_user_watches";
+
+/// Path to the current process's file descriptor directory.
+#[cfg(target_os = "linux")]
+const PROC_SELF_FD_PATH: &str = "/proc/self/fd";
+
+/// Checks the current inotify usage on Linux.
+///
+/// Returns `Some(InotifyUsage)` on Linux with the current watch count and limit,
+/// or `None` on non-Linux platforms or if the information cannot be read.
+///
+/// # Linux Implementation
+///
+/// On Linux, this function:
+/// 1. Reads the max watch limit from `/proc/sys/fs/inotify/max_user_watches`
+/// 2. Counts inotify file descriptors in `/proc/self/fd` by checking symlink targets
+///
+/// # Example
+///
+/// ```no_run
+/// use vibetea_monitor::watcher::check_inotify_usage;
+///
+/// if let Some(usage) = check_inotify_usage() {
+///     println!("Using {}/{} inotify watches ({:.1}%)",
+///         usage.current, usage.max, usage.percentage);
+/// }
+/// ```
+#[cfg(target_os = "linux")]
+pub fn check_inotify_usage() -> Option<InotifyUsage> {
+    check_inotify_usage_with_paths(INOTIFY_MAX_WATCHES_PATH, PROC_SELF_FD_PATH)
+}
+
+/// Non-Linux implementation - returns None since inotify is Linux-specific.
+#[cfg(not(target_os = "linux"))]
+pub fn check_inotify_usage() -> Option<InotifyUsage> {
+    None
+}
+
+/// Internal implementation that accepts paths for testing.
+#[cfg(target_os = "linux")]
+fn check_inotify_usage_with_paths(max_watches_path: &str, fd_path: &str) -> Option<InotifyUsage> {
+    // Read the maximum watch limit
+    let max_str = fs::read_to_string(max_watches_path).ok()?;
+    let max: u64 = max_str.trim().parse().ok()?;
+
+    // Count inotify file descriptors
+    let current = count_inotify_fds(fd_path);
+
+    let percentage = if max > 0 {
+        (current as f64 / max as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Some(InotifyUsage {
+        current,
+        max,
+        percentage,
+    })
+}
+
+/// Counts the number of inotify file descriptors in the given fd directory.
+#[cfg(target_os = "linux")]
+fn count_inotify_fds(fd_path: &str) -> u64 {
+    let entries = match fs::read_dir(fd_path) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
+    };
+
+    let mut count = 0u64;
+    for entry in entries.flatten() {
+        // Read the symlink target to check if it's an inotify fd
+        if let Ok(target) = fs::read_link(entry.path()) {
+            let target_str = target.to_string_lossy();
+            // inotify fds show as "anon_inode:inotify"
+            if target_str.contains("inotify") {
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
+
+/// Checks inotify usage and logs a warning if approaching the limit.
+///
+/// This function is called during `FileWatcher::new()` to proactively warn
+/// users before they hit the system limit.
+fn check_and_warn_inotify_usage() {
+    if let Some(usage) = check_inotify_usage() {
+        if usage.percentage >= INOTIFY_WARNING_THRESHOLD {
+            warn!(
+                current = usage.current,
+                max = usage.max,
+                percentage = format!("{:.1}", usage.percentage),
+                "inotify watch limit approaching: {}/{} ({:.1}% used). \
+                 Consider increasing the limit with: \
+                 echo 524288 | sudo tee /proc/sys/fs/inotify/max_user_watches",
+                usage.current,
+                usage.max,
+                usage.percentage
+            );
+        } else {
+            debug!(
+                current = usage.current,
+                max = usage.max,
+                percentage = format!("{:.1}", usage.percentage),
+                "inotify usage within normal limits"
+            );
+        }
+    }
+}
+
 /// Events emitted by the file watcher.
 ///
 /// These events represent significant file system changes relevant to monitoring
@@ -230,6 +366,9 @@ impl FileWatcher {
         if !watch_dir.exists() {
             return Err(WatcherError::DirectoryNotFound(watch_dir));
         }
+
+        // Check inotify usage on Linux and warn if approaching limits
+        check_and_warn_inotify_usage();
 
         let positions = Arc::new(RwLock::new(HashMap::new()));
 
@@ -1217,5 +1356,209 @@ mod tests {
                 path
             );
         }
+    }
+}
+
+// ============================================================================
+// Inotify usage tests (Linux-specific with mock data)
+// ============================================================================
+
+#[cfg(all(test, target_os = "linux"))]
+mod inotify_tests {
+    use super::*;
+    use std::io::Write;
+    use std::os::unix::fs::symlink;
+    use tempfile::TempDir;
+
+    /// Creates a mock /proc/sys/fs/inotify/max_user_watches file.
+    fn create_mock_max_watches(dir: &Path, value: u64) -> PathBuf {
+        let path = dir.join("max_user_watches");
+        let mut file = File::create(&path).expect("Failed to create mock max_watches");
+        writeln!(file, "{}", value).expect("Failed to write max_watches value");
+        path
+    }
+
+    /// Creates a mock fd directory with simulated inotify file descriptors.
+    fn create_mock_fd_dir(dir: &Path, inotify_count: usize, other_count: usize) -> PathBuf {
+        let fd_dir = dir.join("fd");
+        fs::create_dir_all(&fd_dir).expect("Failed to create mock fd dir");
+
+        // Create inotify symlinks
+        for i in 0..inotify_count {
+            let link_path = fd_dir.join(format!("{}", i));
+            symlink("anon_inode:inotify", &link_path).expect("Failed to create inotify symlink");
+        }
+
+        // Create other fd symlinks (sockets, pipes, etc.)
+        for i in 0..other_count {
+            let link_path = fd_dir.join(format!("{}", inotify_count + i));
+            symlink(format!("socket:[{}]", 12345 + i), &link_path)
+                .expect("Failed to create socket symlink");
+        }
+
+        fd_dir
+    }
+
+    #[test]
+    fn test_check_inotify_usage_basic() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let max_watches_path = create_mock_max_watches(temp_dir.path(), 65536);
+        let fd_path = create_mock_fd_dir(temp_dir.path(), 10, 5);
+
+        let usage = check_inotify_usage_with_paths(
+            max_watches_path.to_str().unwrap(),
+            fd_path.to_str().unwrap(),
+        );
+
+        assert!(usage.is_some());
+        let usage = usage.unwrap();
+        assert_eq!(usage.current, 10);
+        assert_eq!(usage.max, 65536);
+        // Percentage: 10 / 65536 * 100 ~= 0.0153%
+        assert!(usage.percentage < 1.0);
+    }
+
+    #[test]
+    fn test_check_inotify_usage_high_usage() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Set up 85% usage (85 out of 100)
+        let max_watches_path = create_mock_max_watches(temp_dir.path(), 100);
+        let fd_path = create_mock_fd_dir(temp_dir.path(), 85, 10);
+
+        let usage = check_inotify_usage_with_paths(
+            max_watches_path.to_str().unwrap(),
+            fd_path.to_str().unwrap(),
+        );
+
+        assert!(usage.is_some());
+        let usage = usage.unwrap();
+        assert_eq!(usage.current, 85);
+        assert_eq!(usage.max, 100);
+        assert!((usage.percentage - 85.0).abs() < 0.01);
+        assert!(usage.percentage >= INOTIFY_WARNING_THRESHOLD);
+    }
+
+    #[test]
+    fn test_check_inotify_usage_below_threshold() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Set up 50% usage
+        let max_watches_path = create_mock_max_watches(temp_dir.path(), 1000);
+        let fd_path = create_mock_fd_dir(temp_dir.path(), 500, 100);
+
+        let usage = check_inotify_usage_with_paths(
+            max_watches_path.to_str().unwrap(),
+            fd_path.to_str().unwrap(),
+        );
+
+        assert!(usage.is_some());
+        let usage = usage.unwrap();
+        assert_eq!(usage.current, 500);
+        assert_eq!(usage.max, 1000);
+        assert!((usage.percentage - 50.0).abs() < 0.01);
+        assert!(usage.percentage < INOTIFY_WARNING_THRESHOLD);
+    }
+
+    #[test]
+    fn test_check_inotify_usage_zero_inotify_fds() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let max_watches_path = create_mock_max_watches(temp_dir.path(), 65536);
+        let fd_path = create_mock_fd_dir(temp_dir.path(), 0, 20);
+
+        let usage = check_inotify_usage_with_paths(
+            max_watches_path.to_str().unwrap(),
+            fd_path.to_str().unwrap(),
+        );
+
+        assert!(usage.is_some());
+        let usage = usage.unwrap();
+        assert_eq!(usage.current, 0);
+        assert_eq!(usage.max, 65536);
+        assert!((usage.percentage - 0.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_check_inotify_usage_missing_max_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let fd_path = create_mock_fd_dir(temp_dir.path(), 10, 5);
+
+        // Use a non-existent path for max_watches
+        let usage = check_inotify_usage_with_paths(
+            "/nonexistent/max_user_watches",
+            fd_path.to_str().unwrap(),
+        );
+
+        assert!(
+            usage.is_none(),
+            "Should return None if max_watches file is missing"
+        );
+    }
+
+    #[test]
+    fn test_check_inotify_usage_invalid_max_value() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create max_watches file with invalid content
+        let max_path = temp_dir.path().join("max_user_watches");
+        let mut file = File::create(&max_path).expect("Failed to create file");
+        writeln!(file, "not_a_number").expect("Failed to write");
+
+        let fd_path = create_mock_fd_dir(temp_dir.path(), 10, 5);
+
+        let usage =
+            check_inotify_usage_with_paths(max_path.to_str().unwrap(), fd_path.to_str().unwrap());
+
+        assert!(
+            usage.is_none(),
+            "Should return None if max_watches value is invalid"
+        );
+    }
+
+    #[test]
+    fn test_check_inotify_usage_missing_fd_dir() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let max_watches_path = create_mock_max_watches(temp_dir.path(), 65536);
+
+        // Use a non-existent fd directory
+        let usage =
+            check_inotify_usage_with_paths(max_watches_path.to_str().unwrap(), "/nonexistent/fd");
+
+        // Should still work but report 0 current watches
+        assert!(usage.is_some());
+        let usage = usage.unwrap();
+        assert_eq!(usage.current, 0);
+        assert_eq!(usage.max, 65536);
+    }
+
+    #[test]
+    fn test_inotify_usage_struct_clone_and_eq() {
+        let usage1 = InotifyUsage {
+            current: 100,
+            max: 1000,
+            percentage: 10.0,
+        };
+        let usage2 = usage1.clone();
+
+        assert_eq!(usage1, usage2);
+        assert_eq!(usage1.current, usage2.current);
+        assert_eq!(usage1.max, usage2.max);
+        assert!((usage1.percentage - usage2.percentage).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_inotify_usage_debug_format() {
+        let usage = InotifyUsage {
+            current: 50,
+            max: 100,
+            percentage: 50.0,
+        };
+
+        let debug_str = format!("{:?}", usage);
+        assert!(debug_str.contains("50"));
+        assert!(debug_str.contains("100"));
     }
 }

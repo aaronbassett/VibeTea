@@ -29,19 +29,19 @@
 
 | Source | Priority | Behavior | Location |
 |--------|----------|----------|----------|
-| Environment variable | First (takes precedence) | `VIBETEA_PRIVATE_KEY` must be valid base64-encoded 32 bytes | `monitor/src/crypto.rs:143` |
-| File fallback | Second | `{VIBETEA_KEY_PATH}/key.priv` (defaults to `~/.vibetea`) | `monitor/src/crypto.rs:206` |
-| Auto-generation | N/A | Can generate new keypair if neither exists | `monitor/src/crypto.rs:108` |
+| Environment variable | First (takes precedence) | `VIBETEA_PRIVATE_KEY` must be valid base64-encoded 32 bytes | `monitor/src/crypto.rs:149-176` |
+| File fallback | Second | `{VIBETEA_KEY_PATH}/key.priv` (defaults to `~/.vibetea`) | `monitor/src/crypto.rs:272-292` |
+| Auto-generation | N/A | Can generate new keypair if neither exists | `monitor/src/crypto.rs:114-122` |
 
 ### Key Material Security
 
 | Aspect | Implementation | Location |
 |--------|----------------|----------|
-| Private key seed (32 bytes) | Zeroed after SigningKey creation (zeroize crate) | `monitor/src/crypto.rs:114,169,233,287` |
-| Decoded key buffer | Zeroed on error and success paths | `monitor/src/crypto.rs:157,221` |
-| Environment variable trimming | Whitespace/newlines removed before decoding | `monitor/src/crypto.rs:147` |
-| Key length validation | Exactly 32 bytes required, errors on mismatch | `monitor/src/crypto.rs:155,219,276` |
-| File permissions | Unix mode 0600 (owner read/write only) | `monitor/src/crypto.rs:329-335` |
+| Private key seed (32 bytes) | Zeroed after SigningKey creation (zeroize crate) | `monitor/src/crypto.rs:120,173,235,289` |
+| Decoded key buffer | Zeroed on error and success paths | `monitor/src/crypto.rs:163,225,281` |
+| Environment variable trimming | Whitespace/newlines removed before decoding | `monitor/src/crypto.rs:153` |
+| Key length validation | Exactly 32 bytes required, errors on mismatch | `monitor/src/crypto.rs:161,222,279` |
+| File permissions | Unix mode 0600 (owner read/write only) | `monitor/src/crypto.rs:334-338` |
 
 ### Signature Verification
 
@@ -97,6 +97,7 @@
 | Event payload (API) | JSON deserialization | serde with custom Event types |
 | Private key (env var) | Base64 + length validation | Standard RFC 4648 base64, exactly 32 bytes |
 | Private key (file) | File size validation | Exactly 32 bytes required |
+| Session name | Alphanumeric + hyphens/underscores | `monitor/src/tui/widgets/setup_form.rs:90-114` |
 | Headers | String length and format checks | Empty string rejection |
 | Request body | Size limit | 1 MB maximum (DefaultBodyLimit) |
 | Event fields | Type validation | Timestamp, UUID, enum types enforced by serde |
@@ -109,7 +110,8 @@
 | Headers | Whitespace trimming + empty check | `server/src/auth.rs:270-276` |
 | Source ID | Must not be empty | `server/src/config.rs:182-187` |
 | Public key | Must not be empty, must be valid base64 | `server/src/config.rs:189-193` |
-| Private key (env var) | Whitespace trimmed before base64 decode | `monitor/src/crypto.rs:147` |
+| Private key (env var) | Whitespace trimmed before base64 decode | `monitor/src/crypto.rs:153` |
+| Session name | 64 char max, alphanumeric + `-_` only | `monitor/src/tui/widgets/setup_form.rs:99-107` |
 
 ## Data Protection
 
@@ -149,89 +151,139 @@
 | Practice | Implementation | Location |
 |----------|-----------------|----------|
 | Private key logging | Never logged (no string conversion of seed) | Throughout `monitor/src/crypto.rs` |
-| Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:429` |
-| Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:42` |
+| Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:551-553` |
+| Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:44-49` |
 
-## Key Export Functionality (Phase 4-6)
+## Key Management
 
-### Export-Key Command
+### Key Generation
+
+- **Method**: `Crypto::generate()` using OS RNG via `rand::rng()`
+- **Location**: `monitor/src/crypto.rs:114-122`
+- **Seed**: 32 random bytes, zeroized after key construction
+
+### Key Backup Functionality (Phase 9 - NEW)
+
+| Feature | Implementation | Location |
+|---------|----------------|----------|
+| Backup existing keys | `backup_existing_keys()` method | `monitor/src/crypto.rs:404-440` |
+| Backup format | Timestamp suffix: `key.priv.backup.YYYYMMDD_HHMMSS` | Line 414 |
+| Idempotent backup | Returns `Ok(None)` if no keys exist | Line 410 |
+| Atomic operations | Private key backed up first; restores on public key failure | Lines 417-436 |
+| Generate with backup | `generate_with_backup()` high-level API | Lines 480-489 |
+| Tests | Comprehensive backup test suite (14 tests) | Lines 954-1177 |
+| Timestamp validation | Format YYYYMMDD_HHMMSS (15 chars), parseable | Line 980-981 |
+| Permission preservation | Backup files retain original Unix permissions | Line 1152-1176 |
+
+### Key Loading
+
+| Method | Source | Priority | Location |
+|--------|--------|----------|----------|
+| `load_from_env()` | `VIBETEA_PRIVATE_KEY` env var | - | Lines 149-176 |
+| `load()` | File at `{dir}/key.priv` | - | Lines 272-292 |
+| `load_with_fallback()` | Env var first, file fallback | Env takes precedence | Lines 210-247 |
+
+### Key Export
 
 | Feature | Implementation | Location |
 |---------|-----------------|----------|
-| CLI subcommand | `vibetea-monitor export-key` | `monitor/src/main.rs:101-109` |
-| Output target | stdout only | `monitor/src/main.rs:191-192` |
-| Output format | Base64-encoded seed + single newline | `monitor/src/main.rs:192` |
-| Diagnostic messages | All go to stderr | `monitor/src/main.rs:196-199` |
-| Exit code success | 0 | `monitor/src/main.rs:193` |
-| Exit code failure | 1 (configuration error) | `monitor/src/main.rs:199` |
-| Path argument | Optional --path flag for key directory | `monitor/src/main.rs:107-108` |
-| Error handling | Missing key returns error message to stderr | `monitor/src/main.rs:196-199` |
+| CLI subcommand | `vibetea-monitor export-key` | `monitor/src/main.rs` |
+| Output target | stdout only | Stdout contains base64 key + newline |
+| Output format | Base64-encoded seed + single newline | FR-003 compliant |
+| Diagnostic messages | All go to stderr | FR-023 compliant |
+| Exit code success | 0 | - |
+| Exit code failure | 1 (configuration error) | - |
+| Path argument | Optional --path flag for key directory | - |
+| Error handling | Missing key returns error message to stderr | - |
+| Test Coverage | `monitor/tests/key_export_test.rs` (integration tests) | Comprehensive roundtrip validation |
 
-### Export Use Cases
+### Setup Form Key Option (Phase 9)
 
-| Use Case | Purpose | Integration | Phase |
-|----------|---------|-------------|-------|
-| GitHub Actions setup | Export key for CI/CD environment | Pipe output to GitHub secret creation | Phase 5 |
-| Key migration | Move keys between systems | Base64 output compatible with `VIBETEA_PRIVATE_KEY` | Phase 4 |
-| Backup verification | Verify exported key roundtrips | Integration tests verify signing consistency | Phase 4 |
-| Composite GitHub Action | Pre-built reusable action wrapper | Used in GitHub Actions workflows | Phase 6 |
+| Feature | Behavior | Location |
+|---------|----------|----------|
+| Key option display | Conditional based on `existing_keys_found` | `monitor/src/tui/widgets/setup_form.rs:309-353` |
+| No keys found | Only "Generate new key" shown (no radio toggle) | Lines 345-352 |
+| Keys found | Both options shown with radio button indicators | Lines 310-343 |
+| User selection | Toggle between "Use existing" and "Generate new" | Enforces choice during setup |
 
-### GitHub Actions Integration (Phase 5-6)
+## Privacy Controls
 
-#### Phase 5: Manual Workflow Setup
+### Sensitive Tool Filtering
 
-| Component | Implementation | Location |
-|-----------|-----------------|----------|
-| Private key secret | Stored as `VIBETEA_PRIVATE_KEY` | `.github/workflows/ci-with-monitor.yml:35` |
-| Server URL secret | Stored as `VIBETEA_SERVER_URL` | `.github/workflows/ci-with-monitor.yml:36` |
-| Source ID | Dynamic: `github-{repo}-{run_id}` | `.github/workflows/ci-with-monitor.yml:39` |
-| Binary download | Pre-built binary from releases | `.github/workflows/ci-with-monitor.yml:49-50` |
-| Process management | Background task with signal handling | `.github/workflows/ci-with-monitor.yml:63-70, 108-113` |
+| Tool | Context Handling | Purpose |
+|------|------------------|---------|
+| Bash | Always stripped | Prevent shell command exposure |
+| Grep | Always stripped | Prevent search pattern exposure |
+| Glob | Always stripped | Prevent path pattern exposure |
+| WebSearch | Always stripped | Prevent query exposure |
+| WebFetch | Always stripped | Prevent URL exposure |
 
-#### Phase 6: Composite GitHub Action
+### Path Sanitization
 
-| Component | Implementation | Location |
-|-----------|-----------------|----------|
-| Action name | `VibeTea Monitor` | `.github/actions/vibetea-monitor/action.yml:16-17` |
-| Action inputs | `server-url`, `private-key`, `source-id`, `version`, `shutdown-timeout` | `.github/actions/vibetea-monitor/action.yml:24-46` |
-| Action outputs | `monitor-pid`, `monitor-started` | `.github/actions/vibetea-monitor/action.yml:48-55` |
-| Binary download step | Handles version resolution and platform-specific URLs | `.github/actions/vibetea-monitor/action.yml:61-87` |
-| Monitor startup step | Sets environment variables, validates config, starts process | `.github/actions/vibetea-monitor/action.yml:90-144` |
-| Graceful shutdown | Documents SIGTERM signal handling and cleanup | `.github/actions/vibetea-monitor/action.yml:146-166` |
-| Non-blocking errors | Network failures don't fail workflow; warnings logged | `.github/actions/vibetea-monitor/action.yml:101-120` |
+- Full paths reduced to basenames before transmission
+- Example: `/home/user/project/src/auth.ts` → `auth.ts`
+- Implementation: `monitor/src/privacy.rs:433-442`
 
-### Composite Action Security Properties
+### Extension Allowlist
 
-| Property | Implementation | Location |
-|----------|-----------------|----------|
-| Environment variables passed safely | Uses GitHub Actions env context | `.github/actions/vibetea-monitor/action.yml:93-96` |
-| Secret masking | Private key automatically masked by GitHub Actions | `VIBETEA_PRIVATE_KEY` parameter |
-| Source ID interpolation | Dynamic generation with repo and run_id | `.github/actions/vibetea-monitor/action.yml:96` |
-| Process lifecycle | Monitor runs in background; output via job logs | `.github/actions/vibetea-monitor/action.yml:127-144` |
-| Signal handling documented | Post-job cleanup requires manual SIGTERM step | `.github/actions/vibetea-monitor/action.yml:146-166` |
-| Failure tolerance | Missing binary or config logs warning, doesn't fail | `.github/actions/vibetea-monitor/action.yml:101-120` |
+- Environment variable: `VIBETEA_BASENAME_ALLOWLIST` (comma-separated)
+- Example: `.rs,.ts,.md` - only these files transmitted
+- Files with disallowed extensions: context stripped
+- Default: Allow all extensions
 
-### Action Integration with README
+### Privacy Pipeline
 
-| Section | Content | Location |
-|---------|---------|----------|
-| GitHub Actions Setup | Prerequisites and key export instructions | `README.md:134-166` |
-| Manual Workflow Setup | Step-by-step instructions for manual workflows | `README.md:169-210` |
-| Reusable Action Usage | Basic usage with the composite action | `README.md:212-252` |
-| Custom Source ID | Example with custom source identifier | `README.md:254-263` |
-| Pinned Version | Example with specific monitor version | `README.md:265-274` |
-| Action Inputs | Complete input parameter reference | `README.md:276-284` |
-| Action Outputs | Available output parameters | `README.md:286-291` |
+- **Location**: `monitor/src/privacy.rs`
+- **Processing**: All event payloads filtered before transmission
+- **Session events**: Passed through (project sanitized at parse time)
+- **Summary events**: Text stripped to "Session ended"
+- **Error events**: Passed through (category pre-sanitized)
 
-### Security Properties of Export
+## Cryptographic Best Practices
 
-| Property | Guarantee |
-|----------|-----------|
-| Key integrity | Exported key matches file content exactly |
-| Output purity | stdout contains only key data, no diagnostic text |
-| Roundtrip compatibility | Exported key can be loaded via `VIBETEA_PRIVATE_KEY` |
-| Signature consistency | Ed25519 is deterministic; exported key produces identical signatures |
-| Memory safety | Seed array explicitly zeroed after use (zeroize crate) |
+### Signature Algorithm
+
+- **Algorithm**: Ed25519 (RFC 8032 compliant)
+- **Library**: `ed25519_dalek` with `verify_strict()`
+- **Benefit**: Deterministic, pre-hashing protection, strong curve
+
+### Constant-Time Operations
+
+- **Token comparison**: `subtle::ConstantTimeEq` for bearer tokens
+- **Location**: `server/src/auth.rs:290`
+- **Purpose**: Prevent timing attacks on token validation
+
+### Error Handling
+
+- **No detailed errors on invalid signature**: Returns generic `InvalidSignature`
+- **Unknown source**: Returns specific `UnknownSource` (source discovery risk accepted)
+- **Implementation**: `server/src/auth.rs:49-145`
+
+## Secrets Management
+
+### Environment Variables
+
+| Category | Naming | Example | Purpose |
+|----------|--------|---------|---------|
+| Private Key | `VIBETEA_PRIVATE_KEY` | Base64-encoded 32-byte seed | Monitor signing key |
+| Public Keys | `VIBETEA_PUBLIC_KEYS` | Space/comma-separated base64 keys | Server key registry |
+| WebSocket Token | `VIBETEA_SUBSCRIBER_TOKEN` | Bearer token string | Client authentication |
+
+### Secrets Storage
+
+| Environment | Method | Security Notes |
+|-------------|--------|-----------------|
+| Development | `.env` files (gitignored) or export statements | File-based, cleartext |
+| GitHub Actions | GitHub Secrets | AES-128 encrypted at rest, rotatable |
+| Production | Environment variables via container orchestration | Depends on orchestration platform |
+| Private keys (file) | File-based (~/.vibetea/key.priv with mode 0600) | Owner-only readable |
+| Private keys (env var) | Environment variable (base64-encoded) | Visible in process listing; GitHub Secrets encrypted |
+
+### No Hardcoded Secrets
+
+- All sensitive values loaded from environment variables
+- No default credentials in code
+- Key files stored with restrictive permissions (0600 for private, 0644 for public)
 
 ## Rate Limiting
 
@@ -251,59 +303,16 @@
 | Capacity | 100 tokens (allows bursts) |
 | Response | 429 Too Many Requests with Retry-After header |
 
-## Secrets Management
+## Audit Logging
 
-### Environment Variables
-
-| Category | Naming | Example | Required |
-|----------|--------|---------|----------|
-| Monitor auth | `VIBETEA_SOURCE_ID` | monitor-1 | No (defaults to hostname) |
-| Monitor keys | `VIBETEA_KEY_PATH` | ~/.vibetea | No (defaults) |
-| Monitor private key | `VIBETEA_PRIVATE_KEY` | base64-encoded-32-bytes | No (fallback to file) |
-| Server public keys | `VIBETEA_PUBLIC_KEYS` | source1:base64key,source2:base64key | Yes (unless unsafe_no_auth) |
-| WebSocket token | `VIBETEA_SUBSCRIBER_TOKEN` | secret-token-string | Yes (unless unsafe_no_auth) |
-| Server URL (monitor) | `VIBETEA_SERVER_URL` | https://vibetea.fly.dev | Yes (required) |
-
-### Secrets Storage
-
-| Environment | Method | Security Notes |
-|-------------|--------|-----------------|
-| Development | `.env` files (gitignored) or export statements | File-based, cleartext |
-| GitHub Actions | GitHub Secrets | AES-128 encrypted at rest, rotatable |
-| Production | Environment variables via container orchestration | Depends on orchestration platform |
-| Private keys (file) | File-based (~/.vibetea/key.priv with mode 0600) | Owner-only readable |
-| Private keys (env var) | Environment variable (base64-encoded) | Visible in process listing; GitHub Secrets encrypted |
-
-### Key Provisioning
-
-| Process | Location |
-|---------|----------|
-| Monitor key generation | `monitor/src/crypto.rs:108` - Crypto::generate() |
-| Environment variable loading | `monitor/src/crypto.rs:143` - Crypto::load_from_env() |
-| File with env fallback | `monitor/src/crypto.rs:206` - Crypto::load_with_fallback() |
-| Key export for external use | `monitor/src/main.rs:181-202` - run_export_key() |
-| Server registration | Manual environment variable setup |
-| Public key fingerprint | `monitor/src/crypto.rs:429` - public_key_fingerprint() (8 chars) |
-
-### GitHub Actions Key Management (Phase 5-6)
-
-#### Manual Workflow Setup
-
-| Step | Command | Security |
-|------|---------|----------|
-| 1. Export | `vibetea-monitor export-key` | Outputs base64 key to stdout only |
-| 2. Store | Add to GitHub Secrets as `VIBETEA_PRIVATE_KEY` | GitHub encrypts at rest |
-| 3. Use | Injected as env var during workflow | Masked in logs; available to monitor process |
-| 4. Cleanup | Automatically cleared after workflow | GitHub Actions cleanup |
-
-#### Composite Action Usage
-
-| Step | Implementation | Security |
-|------|-----------------|----------|
-| 1. Input | `private-key` parameter with `secrets.VIBETEA_PRIVATE_KEY` | GitHub automatically masks in logs |
-| 2. Load | Action passes private-key to monitor via env var | Masked by GitHub Actions |
-| 3. Start | Monitor starts in background with env vars set | Process inherits masked variable |
-| 4. Cleanup | Manual SIGTERM step or automatic job cleanup | Documents recommended post-job step |
+| Event | Logged Data | Implementation |
+|-------|-------------|-----------------|
+| Signature Verification | Success/failure, source_id | `server/src/auth.rs` (error types) |
+| Token Validation | Success/failure | `server/src/auth.rs:269-295` |
+| Key Load | Source (file or env var) + fingerprint | `KeySource` enum + startup logging |
+| Key Generation | Fingerprint (first 8 chars of pubkey) | `monitor/src/crypto.rs:551-553` |
+| Rate limit exceeded | source_id, retry_after | info level |
+| WebSocket connect | filter params | info level |
 
 ## Security Headers
 
@@ -322,18 +331,6 @@
 | Allowed methods | POST (events), GET (ws, health) |
 | Credentials | WebSocket token via query param |
 
-## Audit Logging
-
-| Event | Logged Data | Level |
-|-------|-------------|-------|
-| Key source identification | Environment variable vs file | info |
-| Authentication failures | source_id, error type | warn/debug |
-| Signature verification failures | source_id, error details | warn |
-| Rate limit exceeded | source_id, retry_after | info |
-| WebSocket connect | filter params | info |
-| WebSocket disconnect | - | info |
-| Configuration errors | Missing variables | error |
-
 ---
 
 ## Development Mode Security
@@ -346,6 +343,14 @@ When `VIBETEA_UNSAFE_NO_AUTH=true`:
 - WARNING logged at startup
 - Intended for local development only
 - Located in `server/src/config.rs:94-99`
+
+---
+
+## What Does NOT Belong Here
+
+- Tech debt and risks → CONCERNS.md
+- Testing strategy → TESTING.md
+- Code conventions → CONVENTIONS.md
 
 ---
 
