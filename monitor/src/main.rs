@@ -244,6 +244,23 @@ fn run_export_key(path: Option<PathBuf>) -> Result<()> {
 /// - Enters raw mode and alternate screen via [`Tui::new()`]
 /// - Terminal is restored via RAII when [`Tui`] is dropped
 ///
+/// # Signal Handling Strategy
+///
+/// The TUI handles shutdown signals through crossterm's event system:
+///
+/// - **SIGINT (Ctrl+C)**: Detected as a [`KeyEvent`] with `KeyCode::Char('c')` and
+///   `KeyModifiers::CONTROL`. The event loop explicitly checks for this combination
+///   and breaks cleanly, allowing the [`Tui`]'s Drop implementation to restore
+///   the terminal.
+///
+/// - **SIGTERM**: Since the TUI is currently synchronous, SIGTERM handling relies on
+///   the OS default behavior. However, because [`Tui`] implements Drop with terminal
+///   restoration logic, and we install a panic hook via [`install_panic_hook()`],
+///   the terminal will be properly restored in most termination scenarios.
+///
+/// The full async event loop (implemented in later tasks) will integrate with
+/// tokio signals for more robust SIGTERM handling.
+///
 /// # Event Loop
 ///
 /// The TUI event loop (to be implemented in later tasks):
@@ -295,7 +312,7 @@ fn run_tui() -> Result<()> {
         let text = Paragraph::new(
             "TUI mode initialized successfully.\n\n\
              The full event loop will be implemented in subsequent tasks.\n\n\
-             Press any key to exit.",
+             Press 'q' or Ctrl+C to exit.",
         )
         .alignment(Alignment::Center)
         .block(block);
@@ -314,15 +331,34 @@ fn run_tui() -> Result<()> {
     })
     .context("Failed to render TUI frame")?;
 
-    // Wait for any key press before exiting
+    // Wait for quit signal (Ctrl+C, Escape, or 'q') before exiting.
+    // This mirrors the input handling in tui/input.rs where these keys
+    // produce DashboardAction::Quit or SetupAction::Quit.
     loop {
         if crossterm::event::poll(std::time::Duration::from_millis(100))
             .context("Failed to poll for events")?
         {
-            if let crossterm::event::Event::Key(_) =
+            if let crossterm::event::Event::Key(key_event) =
                 crossterm::event::read().context("Failed to read terminal event")?
             {
-                break;
+                use crossterm::event::{KeyCode, KeyModifiers};
+
+                match key_event.code {
+                    // Ctrl+C - graceful shutdown on SIGINT equivalent
+                    KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                        break;
+                    }
+                    // Escape - universal quit key
+                    KeyCode::Esc => {
+                        break;
+                    }
+                    // 'q' - standard TUI quit key
+                    KeyCode::Char('q') => {
+                        break;
+                    }
+                    // Ignore other keys
+                    _ => {}
+                }
             }
         }
     }
