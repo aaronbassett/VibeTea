@@ -843,7 +843,11 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
       {/* Header with title and view toggle */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-100">Activity</h2>
-        <ViewToggle viewDays={viewDays} onViewChange={handleViewChange} prefersReducedMotion={prefersReducedMotion} />
+        <ViewToggle
+          viewDays={viewDays}
+          onViewChange={handleViewChange}
+          prefersReducedMotion={prefersReducedMotion}
+        />
       </div>
 
       {/* Heatmap grid or empty state */}

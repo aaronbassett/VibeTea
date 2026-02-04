@@ -322,7 +322,8 @@ export const AnimatedBackground = memo(function AnimatedBackground({
 }: AnimatedBackgroundProps) {
   const prefersReducedMotion = useReducedMotion();
   const isPageVisible = usePageVisibility();
-  const [containerRef, isInViewport] = useIntersectionObserver<HTMLDivElement>();
+  const [containerRef, isInViewport] =
+    useIntersectionObserver<HTMLDivElement>();
   const styleRef = useRef<HTMLStyleElement | null>(null);
 
   // Track viewport dimensions for grid cell calculation

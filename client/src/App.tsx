@@ -278,9 +278,16 @@ export default function App() {
                               whileHover={
                                 prefersReducedMotion
                                   ? undefined
-                                  : { scale: 1.2, transition: SPRING_CONFIGS.gentle }
+                                  : {
+                                      scale: 1.2,
+                                      transition: SPRING_CONFIGS.gentle,
+                                    }
                               }
-                              whileTap={prefersReducedMotion ? undefined : { scale: 0.9 }}
+                              whileTap={
+                                prefersReducedMotion
+                                  ? undefined
+                                  : { scale: 0.9 }
+                              }
                             >
                               &times;
                             </m.button>
@@ -310,9 +317,16 @@ export default function App() {
                               whileHover={
                                 prefersReducedMotion
                                   ? undefined
-                                  : { scale: 1.2, transition: SPRING_CONFIGS.gentle }
+                                  : {
+                                      scale: 1.2,
+                                      transition: SPRING_CONFIGS.gentle,
+                                    }
                               }
-                              whileTap={prefersReducedMotion ? undefined : { scale: 0.9 }}
+                              whileTap={
+                                prefersReducedMotion
+                                  ? undefined
+                                  : { scale: 0.9 }
+                              }
                             >
                               &times;
                             </m.button>
@@ -325,9 +339,14 @@ export default function App() {
                           whileHover={
                             prefersReducedMotion
                               ? undefined
-                              : { scale: 1.05, transition: SPRING_CONFIGS.gentle }
+                              : {
+                                  scale: 1.05,
+                                  transition: SPRING_CONFIGS.gentle,
+                                }
                           }
-                          whileTap={prefersReducedMotion ? undefined : { scale: 0.95 }}
+                          whileTap={
+                            prefersReducedMotion ? undefined : { scale: 0.95 }
+                          }
                         >
                           Clear all
                         </m.button>
