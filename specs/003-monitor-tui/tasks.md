@@ -433,10 +433,10 @@
 - [x] T214 [GIT] Commit: finalize phase 9 retro
 
 ### Phase Completion
-- [ ] T215 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T216 [GIT] Create/update PR to main with phase summary
-- [ ] T217 [GIT] Verify all CI checks pass
-- [ ] T218 [GIT] Report PR ready status
+- [x] T215 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T216 [GIT] Create/update PR to main with phase summary
+- [x] T217 [GIT] Verify all CI checks pass
+- [x] T218 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 7 complete - key management options available
 
