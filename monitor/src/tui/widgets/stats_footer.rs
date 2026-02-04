@@ -144,8 +144,11 @@ impl<'a> StatsFooterWidget<'a> {
         let sent_segment_len = SENT_LABEL.len() + sent_value.len();
         let failed_segment_len = FAILED_LABEL.len() + failed_value.len();
 
-        let full_width_needed =
-            total_segment_len + SEPARATOR.len() + sent_segment_len + SEPARATOR.len() + failed_segment_len;
+        let full_width_needed = total_segment_len
+            + SEPARATOR.len()
+            + sent_segment_len
+            + SEPARATOR.len()
+            + failed_segment_len;
 
         // Determine the style for the failed count
         let failed_style = if self.stats.events_failed > 0 {
@@ -183,7 +186,8 @@ impl<'a> StatsFooterWidget<'a> {
                 ])
             } else {
                 // Ultra-compact: show abbreviated labels
-                let abbrev_width = 2 + total_value.len() + 1 + 2 + sent_value.len() + 1 + 2 + failed_value.len();
+                let abbrev_width =
+                    2 + total_value.len() + 1 + 2 + sent_value.len() + 1 + 2 + failed_value.len();
                 if available_width >= abbrev_width {
                     Line::from(vec![
                         Span::styled("T:", self.theme.text_secondary),
