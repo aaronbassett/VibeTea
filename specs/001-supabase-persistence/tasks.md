@@ -260,13 +260,13 @@
 - [x] T141 [US1] Run codebase mapping for Phase 6 changes (/sdd:map incremental)
 - [x] T142 [GIT] Commit: update codebase documents for phase 6
 - [x] T143 [US1] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T144 [GIT] Commit: finalize phase 6 retro
+- [x] T144 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
-- [ ] T145 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T146 [GIT] Create/update PR to main with phase summary
-- [ ] T147 [GIT] Verify all CI checks pass
-- [ ] T148 [GIT] Report PR ready status
+- [x] T145 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T146 [GIT] Create/update PR to main with phase summary
+- [x] T147 [GIT] Verify all CI checks pass
+- [x] T148 [GIT] Report PR ready status
 
 **Checkpoint**: Heatmap displays historic data merged with real-time; hidden when persistence disabled
 
