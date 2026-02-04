@@ -1688,7 +1688,7 @@ also not valid
         }
 
         assert!(
-            received_events.len() >= 1,
+            !received_events.is_empty(),
             "Should receive at least 1 event from multiple projects"
         );
 
@@ -1734,10 +1734,9 @@ also not valid
         let result = timeout(TokioDuration::from_millis(300), rx.recv()).await;
         // This may or may not receive an event depending on timing with the watcher
         // The important test is that scan_all_projects skips hidden directories
-        if result.is_ok() {
+        if let Ok(Some(event)) = result {
             // If we did get an event, it shouldn't be from the hidden directory
             // (would be from watcher, not from scan)
-            let event = result.unwrap().unwrap();
             // Hidden directories don't have slug format starting with '-'
             // so they would parse differently
             assert!(!event.project_path.starts_with("/.hidden"));
