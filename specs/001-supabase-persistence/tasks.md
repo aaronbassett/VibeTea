@@ -258,8 +258,8 @@
 - [x] T139 [P] [US1] Create integration test for data merging logic (use devs:typescript-dev agent)
 - [x] T140 [GIT] Commit: add heatmap tests
 - [x] T141 [US1] Run codebase mapping for Phase 6 changes (/sdd:map incremental)
-- [ ] T142 [GIT] Commit: update codebase documents for phase 6
-- [ ] T143 [US1] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T142 [GIT] Commit: update codebase documents for phase 6
+- [x] T143 [US1] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T144 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
