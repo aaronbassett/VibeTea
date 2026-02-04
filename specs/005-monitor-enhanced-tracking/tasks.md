@@ -221,10 +221,10 @@
 - [x] T109 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
-- [ ] T110 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T111 [GIT] Create/update PR to main with phase summary
-- [ ] T112 [GIT] Verify all CI checks pass
-- [ ] T113 [GIT] Report PR ready status
+- [x] T110 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T111 [GIT] Create/update PR to main with phase summary
+- [x] T112 [GIT] Verify all CI checks pass
+- [x] T113 [GIT] Report PR ready status
 
 **Checkpoint**: Skill invocation tracking fully functional and testable independently
 
