@@ -319,10 +319,10 @@
 - [x] T171 [GIT] Commit: finalize phase 7 retro
 
 ### Phase Completion
-- [ ] T172 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T173 [GIT] Create/update PR to main with phase summary
-- [ ] T174 [GIT] Verify all CI checks pass
-- [ ] T175 [GIT] Report PR ready status
+- [x] T172 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T173 [GIT] Create/update PR to main with phase summary
+- [x] T174 [GIT] Verify all CI checks pass
+- [x] T175 [GIT] Report PR ready status
 
 **Checkpoint**: File edit line change tracking fully functional
 
