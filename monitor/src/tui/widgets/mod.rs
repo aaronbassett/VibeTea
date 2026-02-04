@@ -30,7 +30,7 @@
 
 // TODO: Uncomment these module declarations as implementations are added
 // pub mod credentials;
-// pub mod event_stream;
+pub mod event_stream;
 // pub mod header;
 // pub mod logo;
 pub mod setup_form;
@@ -39,7 +39,7 @@ pub mod setup_form;
 
 // Re-exports will be added as modules are implemented
 // pub use credentials::CredentialsWidget;
-// pub use event_stream::EventStreamWidget;
+pub use event_stream::EventStreamWidget;
 // pub use header::HeaderWidget;
 // pub use logo::LogoWidget;
 pub use setup_form::{validate_session_name, SetupFormWidget};
