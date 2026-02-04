@@ -38,7 +38,7 @@ use ratatui::{
 use crate::tui::app::{AppState, Credentials, Screen};
 use crate::tui::widgets::{
     header_height, CredentialsWidget, EventStreamWidget, HeaderWidget, SetupFormWidget,
-    CREDENTIALS_HEIGHT,
+    StatsFooterWidget, CREDENTIALS_HEIGHT, STATS_FOOTER_HEIGHT,
 };
 
 /// Renders the appropriate screen based on the current application state.
@@ -103,17 +103,19 @@ pub fn render_setup_screen(frame: &mut Frame, state: &AppState) {
     frame.render_widget(setup_widget, frame.area());
 }
 
-/// Renders the main dashboard screen with header, event stream, and credentials.
+/// Renders the main dashboard screen with header, event stream, credentials, and stats footer.
 ///
-/// This function renders the complete dashboard view with a three-section layout:
+/// This function renders the complete dashboard view with a four-section layout:
 ///
 /// 1. **Header** - Shows "VibeTea" branding and connection status indicator
 /// 2. **Event stream** - Scrollable list of session events with timestamps and icons
 /// 3. **Credentials** - Session name and public key for server configuration
+/// 4. **Stats Footer** - Real-time event statistics (total events, events per second, uptime)
 ///
 /// The layout adapts to terminal size using ratatui's Layout system:
 /// - Header gets a fixed height based on terminal width
 /// - Credentials panel gets a fixed height of 4 rows
+/// - Stats footer gets a fixed height of 3 rows
 /// - Event stream fills the remaining vertical space
 ///
 /// # Arguments
@@ -141,13 +143,14 @@ fn render_dashboard_screen(frame: &mut Frame, state: &AppState) {
     // Calculate the header height based on terminal width
     let h_height = header_height(area.width);
 
-    // Create the three-section vertical layout
+    // Create the four-section vertical layout
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(h_height),           // Header
-            Constraint::Min(1),                     // Event stream (fills remaining space)
-            Constraint::Length(CREDENTIALS_HEIGHT), // Credentials
+            Constraint::Length(h_height),            // Header
+            Constraint::Min(1),                      // Event stream (fills remaining space)
+            Constraint::Length(CREDENTIALS_HEIGHT),  // Credentials
+            Constraint::Length(STATS_FOOTER_HEIGHT), // Stats footer
         ])
         .split(area);
 
@@ -179,6 +182,10 @@ fn render_dashboard_screen(frame: &mut Frame, state: &AppState) {
     };
     let credentials_widget = CredentialsWidget::new(&credentials, &state.theme);
     frame.render_widget(credentials_widget, chunks[2]);
+
+    // Render the stats footer widget
+    let stats_footer_widget = StatsFooterWidget::new(&state.dashboard.stats, &state.theme);
+    frame.render_widget(stats_footer_widget, chunks[3]);
 }
 
 #[cfg(test)]
@@ -340,6 +347,29 @@ mod tests {
         assert!(
             content.contains("VibeTea"),
             "Dashboard should show VibeTea title in header"
+        );
+    }
+
+    #[test]
+    fn render_dashboard_screen_contains_stats_footer() {
+        let mut terminal = create_test_terminal();
+        let state = AppState::new();
+
+        terminal
+            .draw(|f| render_dashboard_screen(f, &state))
+            .expect("Drawing should not fail");
+
+        // Get the buffer content
+        let buffer = terminal.backend().buffer();
+        let content: String = buffer
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect();
+
+        assert!(
+            content.contains("Statistics"),
+            "Dashboard should show Statistics section in footer"
         );
     }
 
