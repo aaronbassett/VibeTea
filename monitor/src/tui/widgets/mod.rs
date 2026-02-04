@@ -35,7 +35,7 @@ pub mod header;
 // pub mod logo;
 pub mod setup_form;
 // pub mod size_warning;
-// pub mod stats_footer;
+pub mod stats_footer;
 
 // Re-exports will be added as modules are implemented
 pub use credentials::{CredentialsWidget, CREDENTIALS_HEIGHT};
@@ -44,4 +44,4 @@ pub use header::{header_height, ConnectionStatusWidget, HeaderWidget};
 // pub use logo::LogoWidget;
 pub use setup_form::{validate_session_name, SetupFormWidget};
 // pub use size_warning::SizeWarningWidget;
-// pub use stats_footer::StatsFooterWidget;
+pub use stats_footer::{StatsFooterWidget, STATS_FOOTER_HEIGHT};
