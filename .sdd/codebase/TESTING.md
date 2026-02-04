@@ -2,7 +2,7 @@
 
 **Purpose**: Document test frameworks, patterns, organization, and coverage requirements.
 **Generated**: 2026-02-03
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-02-04
 
 ## Test Framework
 
@@ -28,7 +28,8 @@
 | Type | Framework | Configuration | Status |
 |------|-----------|---------------|--------|
 | Unit | Rust built-in | `#[cfg(test)]` inline | In use |
-| Integration | Rust built-in | `tests/` directory with `serial_test` crate | In use (Phase 11) |
+| Integration | Rust built-in | `tests/` directory with `serial_test` crate | In use (Phase 11+) |
+| CLI | Subprocess-based binary execution | `tests/` with `std::process::Command` | In use (Phase 12) |
 | E2E | Not selected | TBD | Not started |
 
 ### Running Tests
@@ -55,6 +56,7 @@
 | `cargo test -p vibetea-monitor privacy` | Run privacy module tests |
 | `cargo test --test privacy_test` | Run privacy integration tests |
 | `cargo test --test env_key_test` | Run environment key loading tests (Phase 11, 21 tests) |
+| `cargo test --test key_export_test` | Run export-key CLI tests (Phase 12, 12 tests) |
 | `cargo test -p vibetea-monitor crypto` | Run crypto module tests |
 | `cargo test -p vibetea-monitor sender` | Run sender module tests |
 
@@ -126,7 +128,8 @@ monitor/
 └── tests/
     ├── env_key_test.rs         # 21 integration tests for env var key loading (Phase 11)
     ├── privacy_test.rs         # 17 integration tests for privacy compliance
-    └── sender_recovery_test.rs # Integration tests for error recovery
+    ├── sender_recovery_test.rs # Integration tests for error recovery
+    └── key_export_test.rs      # 12 integration tests for export-key subcommand (Phase 12, 698 lines)
 ```
 
 ### Test File Location Strategy
@@ -274,6 +277,217 @@ Key patterns in integration tests:
 4. **Clear documentation**: Each test documents which requirements it verifies
 5. **Test helpers**: Centralized helper functions at top of file
 
+### Integration Tests - CLI Command Execution (Rust - Phase 12)
+
+New CLI testing pattern for subprocess-based command testing:
+
+#### File: `monitor/tests/key_export_test.rs` (12 tests, 698 lines)
+
+```rust
+//! Integration tests for the `export-key` subcommand.
+//!
+//! These tests verify the following requirements:
+//!
+//! - **FR-003**: Monitor MUST provide `export-key` subcommand to output ONLY the base64-encoded
+//!   private key followed by a single newline (no additional text), enabling direct piping to
+//!   clipboard or secret management tools.
+//!
+//! - **FR-023**: All diagnostic and error messages from `export-key` MUST go to stderr; only the
+//!   key itself goes to stdout.
+//!
+//! - **FR-026**: Exit codes: 0 for success, 1 for configuration error (invalid env var, missing
+//!   key), 2 for runtime error.
+//!
+//! - **FR-027**: Integration tests MUST verify that a key exported with `export-key` can be loaded
+//!   via `VIBETEA_PRIVATE_KEY`.
+//!
+//! - **FR-028**: Integration tests MUST verify round-trip: generate key, export, load from env var,
+//!   verify signing produces valid signatures.
+//!
+//! # Important Notes
+//!
+//! These tests modify environment variables and MUST be run with `--test-threads=1`
+//! or use the `serial_test` crate to prevent interference between tests.
+
+use base64::prelude::*;
+use ed25519_dalek::Verifier;
+use serial_test::serial;
+use std::env;
+use std::process::Command;
+use tempfile::TempDir;
+use vibetea_monitor::crypto::Crypto;
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+/// Environment variable name for the private key.
+const ENV_VAR_NAME: &str = "VIBETEA_PRIVATE_KEY";
+
+/// Exit code for successful execution.
+const EXIT_SUCCESS: i32 = 0;
+
+/// Exit code for configuration errors (invalid env var, missing key).
+const EXIT_CONFIG_ERROR: i32 = 1;
+
+/// Exit code for runtime errors.
+#[allow(dead_code)]
+const EXIT_RUNTIME_ERROR: i32 = 2;
+
+/// RAII guard that saves and restores an environment variable.
+struct EnvGuard {
+    name: String,
+    original: Option<String>,
+}
+
+impl EnvGuard {
+    fn new(name: &str) -> Self {
+        let original = env::var(name).ok();
+        Self {
+            name: name.to_string(),
+            original,
+        }
+    }
+
+    fn set(&self, value: &str) {
+        env::set_var(&self.name, value);
+    }
+
+    fn remove(&self) {
+        env::remove_var(&self.name);
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(val) => env::set_var(&self.name, val),
+            None => env::remove_var(&self.name),
+        }
+    }
+}
+
+/// Builds and returns the path to the vibetea-monitor binary.
+fn get_monitor_binary_path() -> String {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let target_dir = std::path::Path::new(manifest_dir)
+        .parent()
+        .expect("Should have parent directory")
+        .join("target")
+        .join("debug")
+        .join("vibetea-monitor");
+    target_dir.to_string_lossy().to_string()
+}
+
+/// Runs the vibetea-monitor export-key command with the given path.
+fn run_export_key_command(key_path: &std::path::Path) -> std::process::Output {
+    Command::new(get_monitor_binary_path())
+        .arg("export-key")
+        .arg("--path")
+        .arg(key_path.to_string_lossy().as_ref())
+        .output()
+        .expect("Failed to execute vibetea-monitor binary")
+}
+
+// =============================================================================
+// FR-027/FR-028: Round-trip verification with export-key command
+// =============================================================================
+
+/// Verifies the complete round-trip using the export-key command:
+/// 1. Generate key with `Crypto::generate()`
+/// 2. Save key to file
+/// 3. Export via `export-key` command
+/// 4. Load via `VIBETEA_PRIVATE_KEY` environment variable
+/// 5. Sign and verify
+///
+/// **Covers:** FR-003, FR-027, FR-028
+#[test]
+#[serial]
+fn roundtrip_generate_export_command_import_sign_verify() {
+    let guard = EnvGuard::new(ENV_VAR_NAME);
+    guard.remove();
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // Step 1 & 2: Generate and save keypair
+    let original_crypto = Crypto::generate();
+    original_crypto
+        .save(temp_dir.path())
+        .expect("Failed to save keypair");
+    let original_pubkey = original_crypto.public_key_base64();
+
+    // Step 3: Export via export-key command
+    let output = run_export_key_command(temp_dir.path());
+
+    // Step 4: Command should succeed with exit code 0
+    assert!(
+        output.status.success(),
+        "export-key should exit with code 0, got: {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Step 5: Verify exported key matches original seed and can be loaded
+    let exported_key =
+        String::from_utf8(output.stdout.clone()).expect("stdout should be valid UTF-8");
+    let exported_key_trimmed = exported_key.trim();
+
+    let original_seed = original_crypto.seed_base64();
+    assert_eq!(
+        exported_key_trimmed, original_seed,
+        "Exported key should match the original seed"
+    );
+
+    guard.set(exported_key_trimmed);
+    let result = Crypto::load_from_env();
+    assert!(result.is_ok(), "Should load exported key from env var");
+
+    let (loaded_crypto, _) = result.unwrap();
+    let loaded_pubkey = loaded_crypto.public_key_base64();
+    assert_eq!(original_pubkey, loaded_pubkey);
+}
+
+/// Verifies that signatures from the original key and the key loaded via
+/// export-key are identical (Ed25519 is deterministic).
+///
+/// **Covers:** FR-027, FR-028
+#[test]
+#[serial]
+fn roundtrip_export_command_signatures_are_identical() {
+    // ... test code
+}
+```
+
+Test organization in key_export_test.rs (12 tests total):
+
+1. **Round-trip tests** (2 tests):
+   - `roundtrip_generate_export_command_import_sign_verify` - Full cycle verification
+   - `roundtrip_export_command_signatures_are_identical` - Deterministic signing
+
+2. **Output format tests** (2 tests):
+   - `export_key_output_format_base64_with_single_newline` - Exact format (base64 + \n)
+   - `export_key_output_is_valid_base64_32_bytes` - Base64 validity and length
+
+3. **Stream separation tests** (2 tests):
+   - `export_key_diagnostics_go_to_stderr` - Diagnostics on stderr only
+   - `export_key_error_messages_go_to_stderr` - Error messages on stderr only
+
+4. **Error handling tests** (3 tests):
+   - Missing key error with exit code 1
+   - Error message clarity tests
+   - Path argument validation
+
+5. **Default path behavior** (1 test):
+   - Uses default key directory when no --path provided
+
+Key conventions in CLI testing:
+- **Subprocess execution**: Tests spawn the actual binary using `Command::new()`
+- **Exit code validation**: Tests verify expected exit codes (0 success, 1 config error, 2 runtime error)
+- **Output stream separation**: Verify output goes to correct stream (stdout for data, stderr for diagnostics)
+- **Format validation**: Tests verify output format exactly (e.g., base64 key + single newline)
+- **Base64 validation**: Exported keys are verified to decode to exactly 32 bytes
+- **Round-trip verification**: Keys exported via command can be loaded and used for signing
+
 ### Integration Tests - Privacy Compliance (Rust)
 
 File: `monitor/tests/privacy_test.rs` (17 tests)
@@ -342,6 +556,7 @@ async fn test_oversized_event_does_not_block_normal_events() {
 | Database (TypeScript) | In-memory or test database | TBD |
 | Time | `vi.useFakeTimers()` (Vitest) | In test functions |
 | Environment | `EnvGuard` RAII pattern (Rust) | Integration tests |
+| Subprocess | Real binary execution | CLI integration tests |
 
 ### Test Data
 
@@ -424,6 +639,7 @@ Critical path tests that must pass before deploy:
 | `events.test.ts` | Event type creation and validation | `client/src/__tests__/` |
 | `privacy_test.rs` | Privacy compliance across all event types | `monitor/tests/privacy_test.rs` |
 | `env_key_test.rs` | Environment key loading and validation | `monitor/tests/env_key_test.rs` |
+| `key_export_test.rs` | Export-key subcommand functionality | `monitor/tests/key_export_test.rs` |
 
 ### Regression Tests
 
@@ -432,6 +648,27 @@ Tests for previously fixed bugs:
 | Test | Issue | Description |
 |------|-------|-------------|
 | `unsafe_mode_test.rs` | N/A | Verify unsafe auth mode disables validation |
+
+## Test Execution Summary
+
+### Test Count by Package
+
+| Package | Test Type | Count | Status |
+|---------|-----------|-------|--------|
+| monitor | Unit (inline) | 60+ | In use |
+| monitor | Integration (env_key_test) | 21 | Phase 11 |
+| monitor | Integration (privacy_test) | 17 | In use |
+| monitor | Integration (key_export_test) | 12 | Phase 12 |
+| monitor | Integration (sender_recovery_test) | N/A | In use |
+| server | Unit (inline) | 40+ | In use |
+| server | Integration | 1+ | In use |
+| client | Unit (Vitest) | 33+ | In use |
+
+### Total Test Coverage (Phase 12)
+- **Rust/Monitor**: 110+ tests across unit and integration
+- **Rust/Server**: 40+ unit tests
+- **TypeScript/Client**: 33+ tests
+- **Grand Total**: 180+ tests
 
 ## CI Integration
 
@@ -453,6 +690,7 @@ Tests for previously fixed bugs:
 |-------|----------|-------|
 | Unit tests pass | Yes | Must pass before merge |
 | Integration tests pass | Yes | Must pass before merge |
+| CLI tests pass | Yes | export-key subcommand (Phase 12) |
 | Coverage threshold met | No | Informational only |
 | Type checking passes | Yes | TypeScript strict mode |
 | Linting passes | Yes | ESLint + Clippy |
@@ -478,7 +716,7 @@ Tests are organized by execution priority in CI:
 
 4. **Integration Tests** (Slower, 5-10 min)
    - Rust: `cargo test --test '*'`
-   - Includes privacy, crypto, sender tests
+   - Includes privacy, crypto, sender, export-key tests
 
 5. **Build Release** (Slow, 10+ min)
    - `cargo build --release`
@@ -494,6 +732,9 @@ Tests are organized by execution priority in CI:
 5. **Test error messages**: Verify errors are clear and actionable
 6. **Use RAII patterns**: Automatically clean up resources
 7. **Group related tests**: Use module organization with clear comments
+8. **Test subprocess interactions**: For CLI, spawn actual binary with Command::new()
+9. **Validate output streams**: Ensure correct stream usage (stdout vs stderr)
+10. **Verify exit codes**: Expect specific exit codes for different scenarios
 
 ### TypeScript
 

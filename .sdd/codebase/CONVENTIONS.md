@@ -2,7 +2,7 @@
 
 **Purpose**: Document code style, naming conventions, error handling, and common patterns.
 **Generated**: 2026-02-03
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-02-04
 
 ## Code Style
 
@@ -76,7 +76,7 @@
 | Type | Convention | Example |
 |------|------------|---------|
 | Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs` |
-| Test files | `*_test.rs` in `tests/` directory | `env_key_test.rs`, `privacy_test.rs`, `sender_recovery_test.rs` |
+| Test files | `*_test.rs` in `tests/` directory | `env_key_test.rs`, `privacy_test.rs`, `sender_recovery_test.rs`, `key_export_test.rs` |
 | Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command` |
 | Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
@@ -85,11 +85,11 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60` |
+| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()`, `run_export_key()` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60`, `ENV_VAR_NAME = "VIBETEA_PRIVATE_KEY"` |
 | Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command` |
 | Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command` |
-| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()` |
+| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()`, `.seed_base64()`, `.public_key_fingerprint()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
 ## Error Handling
@@ -250,6 +250,52 @@ console.error('[useWebSocket] Failed to create WebSocket:', error);
 
 ## Common Patterns
 
+### CLI Subcommand Pattern (New - Phase 12)
+
+The monitor binary uses clap for CLI commands with structured parsing:
+
+```rust
+// monitor/src/main.rs - Command enum with subcommands
+#[derive(Subcommand, Debug)]
+enum Command {
+    /// Generate Ed25519 keypair for server authentication.
+    Init {
+        /// Force overwrite existing keys without confirmation.
+        #[arg(short, long)]
+        force: bool,
+    },
+
+    /// Export private key for GitHub Actions.
+    ///
+    /// Outputs the base64-encoded private key seed to stdout.
+    /// Use this to set the VIBETEA_PRIVATE_KEY secret in GitHub Actions.
+    ExportKey {
+        /// Directory containing keypair.
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
+
+    /// Start the monitor daemon.
+    Run,
+}
+
+impl Cli {
+    fn run() -> Result<()> {
+        match cli.command {
+            Command::Init { force } => run_init(force),
+            Command::ExportKey { path } => run_export_key(path),
+            Command::Run => run_monitor(),
+        }
+    }
+}
+```
+
+Key conventions:
+- **Documentation**: Each subcommand has a doc comment describing its purpose
+- **Arguments**: Structured using clap attributes (`#[arg]`)
+- **Error handling**: Returns `Result<()>` with context-rich errors
+- **Stdout vs stderr**: Diagnostics go to stderr, output data to stdout (e.g., keys)
+
 ### Event-Driven Architecture
 
 The codebase uses discriminated unions for type-safe event handling:
@@ -306,7 +352,7 @@ pub struct Event {
 }
 ```
 
-### RAII Pattern for Test Cleanup (New - Phase 11)
+### RAII Pattern for Test Cleanup (Phase 11)
 
 The `EnvGuard` pattern saves and restores environment variables automatically:
 
@@ -361,7 +407,7 @@ Key benefits:
 3. **Safe for nested guards**: Multiple EnvGuards can be created safely
 4. **Thread-safe when combined with #[serial]**: Prevents test interference
 
-### Test Parallelism with serial_test (New - Phase 11)
+### Test Parallelism with serial_test (Phase 11)
 
 Tests modifying environment variables must use `#[serial]` from the `serial_test` crate:
 
@@ -393,7 +439,7 @@ From `.github/workflows/ci.yml`:
   run: cargo test --package ${{ matrix.crate }} -- --test-threads=1
 ```
 
-### Test Documentation Pattern (New - Phase 11)
+### Test Documentation Pattern (Phase 11)
 
 Tests document the requirement they verify:
 
@@ -412,7 +458,7 @@ fn load_valid_base64_key_from_env() {
 
 Pattern: Each test documents its feature requirement (FR-###) from the spec.
 
-### Test Organization Pattern (New - Phase 11)
+### Test Organization Pattern (Phase 11)
 
 Integration tests are organized in `tests/` directory with meaningful names:
 
@@ -420,7 +466,8 @@ Integration tests are organized in `tests/` directory with meaningful names:
 monitor/tests/
 ├── env_key_test.rs       # 21 tests for env var key loading (FR-001, FR-002, FR-004, etc.)
 ├── privacy_test.rs       # Tests for privacy compliance
-└── sender_recovery_test.rs # Tests for error recovery
+├── sender_recovery_test.rs # Tests for error recovery
+└── key_export_test.rs    # 12 tests for export-key subcommand (Phase 12)
 ```
 
 Each test file is a complete integration test that can run independently:
@@ -439,7 +486,7 @@ Each test file is a complete integration test that can run independently:
 //! or use the `serial_test` crate to prevent interference between tests.
 ```
 
-### Test Helper Pattern (New - Phase 11)
+### Test Helper Pattern (Phase 11)
 
 Helper functions organize common test setup:
 
@@ -466,7 +513,7 @@ fn load_valid_base64_key_from_env() {
 }
 ```
 
-### Round-Trip Testing Pattern (New - Phase 11)
+### Round-Trip Testing Pattern (Phase 11)
 
 Crypto tests use round-trip patterns to verify full workflows:
 
@@ -525,7 +572,84 @@ fn roundtrip_generate_export_import_sign_verify() {
 }
 ```
 
-### Error Message Testing Pattern (New - Phase 11)
+### CLI Testing Pattern (New - Phase 12)
+
+Integration tests for CLI commands use subprocess execution:
+
+```rust
+//! Integration tests for the `export-key` subcommand.
+//!
+//! These tests verify the following requirements:
+//! - FR-003: Monitor MUST provide `export-key` subcommand to output ONLY
+//!   the base64-encoded private key followed by a single newline
+//! - FR-023: All diagnostic and error messages from `export-key` MUST go to stderr;
+//!   only the key itself goes to stdout
+//! - FR-026: Exit codes: 0 for success, 1 for configuration error, 2 for runtime error
+//! - FR-027/FR-028: Round-trip verification (generate -> export -> load -> sign -> verify)
+
+use std::process::Command;
+
+/// Runs the vibetea-monitor export-key command with the given path.
+fn run_export_key_command(key_path: &std::path::Path) -> std::process::Output {
+    Command::new(get_monitor_binary_path())
+        .arg("export-key")
+        .arg("--path")
+        .arg(key_path.to_string_lossy().as_ref())
+        .output()
+        .expect("Failed to execute vibetea-monitor binary")
+}
+
+/// Verifies the complete round-trip using the export-key command.
+#[test]
+#[serial]
+fn roundtrip_generate_export_command_import_sign_verify() {
+    let guard = EnvGuard::new(ENV_VAR_NAME);
+    guard.remove();
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // Step 1 & 2: Generate and save keypair
+    let original_crypto = Crypto::generate();
+    original_crypto
+        .save(temp_dir.path())
+        .expect("Failed to save keypair");
+    let original_pubkey = original_crypto.public_key_base64();
+
+    // Step 3: Export via export-key command
+    let output = run_export_key_command(temp_dir.path());
+
+    // Step 4: Command should succeed with exit code 0
+    assert!(
+        output.status.success(),
+        "export-key should exit with code 0, got: {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Step 5: Get the exported key from stdout and set as env var
+    let exported_key =
+        String::from_utf8(output.stdout.clone()).expect("stdout should be valid UTF-8");
+    let exported_key_trimmed = exported_key.trim();
+
+    // Verify the exported key matches the original seed
+    let original_seed = original_crypto.seed_base64();
+    assert_eq!(
+        exported_key_trimmed, original_seed,
+        "Exported key should match the original seed"
+    );
+
+    // ... continue with env var loading and signature verification
+}
+```
+
+Key conventions in CLI testing:
+- **Subprocess execution**: Tests spawn the actual binary using `Command::new()`
+- **Exit code validation**: Tests verify expected exit codes (0 success, 1 config error, 2 runtime error)
+- **Output stream separation**: Verify output goes to correct stream (stdout for data, stderr for diagnostics)
+- **Format validation**: Tests verify output format exactly (e.g., base64 key + single newline)
+- **Base64 validation**: Exported keys are verified to decode to exactly 32 bytes
+
+### Error Message Testing Pattern (Phase 11)
 
 Tests verify error messages are clear and actionable:
 
@@ -742,11 +866,14 @@ impl Crypto {
     // Signs and returns raw 64-byte signature
     pub fn sign_raw(&self, message: &[u8]) -> [u8; 64] { ... }
 
-    // Export seed as base64 for round-trip testing
+    // Export seed as base64 (used by export-key subcommand)
     pub fn seed_base64(&self) -> String { ... }
 
     // Get public key as base64
     pub fn public_key_base64(&self) -> String { ... }
+
+    // Get fingerprint of public key (short identifier for logging)
+    pub fn public_key_fingerprint(&self) -> String { ... }
 
     // Get verifying key for signature verification
     pub fn verifying_key(&self) -> VerifyingKey { ... }
@@ -766,6 +893,7 @@ Key conventions in crypto module:
 - **Deterministic signing**: Ed25519 produces consistent signatures for same message
 - **Error clarity**: Specific error types for I/O, invalid keys, base64 issues
 - **Key source tracking**: Returns `KeySource` enum to indicate origin (env var or file)
+- **Public key methods**: `seed_base64()` used by export-key command, `public_key_fingerprint()` for logging
 
 ## Import Ordering
 
@@ -850,12 +978,12 @@ Format: `type(scope): description`
 
 | Type | Usage | Example |
 |------|-------|---------|
-| feat | New feature | `feat(monitor): add public_key_fingerprint method` |
+| feat | New feature | `feat(monitor): add export-key subcommand for GitHub Actions` |
 | fix | Bug fix | `fix(client): add vite-env.d.ts for ImportMeta.env types` |
 | docs | Documentation | `docs: add specs for 5 new features` |
 | style | Formatting | `style: fix indentation in error.rs` |
 | refactor | Code restructure | `refactor(monitor): rename load_with_env to load_with_fallback` |
-| test | Adding/updating tests | `test(monitor): add env var key loading tests` |
+| test | Adding/updating tests | `test(monitor): add export-key integration tests (12 tests)` |
 | chore | Maintenance | `chore: update Cargo.lock for zeroize dependency` |
 | security | Security improvements | `security(monitor): zero intermediate key material buffers` |
 

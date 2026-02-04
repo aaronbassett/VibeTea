@@ -2,7 +2,7 @@
 
 > **Purpose**: Document system design, patterns, component relationships, and data flow.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Architecture Overview
 
@@ -35,6 +35,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Cryptographic signing of events (Ed25519)
   - Event buffering and exponential backoff retry
   - Graceful shutdown with event flushing
+  - Key export functionality for GitHub Actions integration
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events`)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
@@ -153,7 +154,7 @@ Claude Code → Monitor → Server → Client:
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
 | `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
 | `KeySource` | Tracks key origin for logging | EnvironmentVariable, File(PathBuf) |
-| `Crypto` | Ed25519 key operations | generate(), load(), save(), sign(), public_key_fingerprint() |
+| `Crypto` | Ed25519 key operations | generate(), load(), save(), sign(), public_key_fingerprint(), seed_base64() |
 
 ## Authentication & Authorization
 
@@ -237,6 +238,24 @@ The Monitor implements a flexible key loading mechanism with precedence rules:
    - Logs key fingerprint and source at INFO level
    - Logs warning if file key exists but env var takes precedence
 
+### Key Export for CI/CD Integration (Phase 4)
+
+The Monitor now supports exporting private keys for GitHub Actions and other CI systems:
+
+- **Command**: `vibetea-monitor export-key [--path <DIR>]`
+- **Output**: Outputs base64-encoded seed to stdout, only (no diagnostics)
+- **Diagnostics**: All messages (errors, logs) go to stderr
+- **Use Case**: `vibetea-monitor export-key | gh secret set VIBETEA_PRIVATE_KEY`
+- **Exit Codes**:
+  - 0: Success (key exported to stdout)
+  - 1: Configuration error (missing key, invalid directory)
+  - 2: Runtime error (I/O failures)
+- **Security Considerations**:
+  - Command reads from filesystem only (no environment variable fallback)
+  - Suitable for piping to clipboard or secret management tools
+  - No ANSI codes or extra formatting in stdout
+  - Clean output enables direct integration with CI/CD systems
+
 ### Memory Safety & Zeroization
 
 The crypto module implements memory-safe key handling:
@@ -284,7 +303,7 @@ info!(
 | **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
-| **Key Management** | Ed25519 key generation, storage, signing | `monitor/src/crypto.rs` (with KeySource tracking and memory zeroing) |
+| **Key Management** | Ed25519 key generation, storage, signing, export | `monitor/src/crypto.rs` (with KeySource tracking, memory zeroing, and export support) |
 
 ## Design Decisions
 
@@ -323,6 +342,13 @@ info!(
 - **Emergency override**: Can temporarily use different key without file system changes
 - **Key rotation support**: Switch keys by changing env var without file I/O
 - **Explicit precedence rules**: Clear error handling (env var errors don't silently fallback)
+
+### Why Separate export-key Command?
+
+- **Security**: Isolates key export from running monitor (no network involved)
+- **CI/CD Integration**: Enables headless key management in GitHub Actions
+- **Clean Output**: stdout contains only the key for direct piping to secret tools
+- **Auditability**: Separate invocation leaves clear audit trail in CI logs
 
 ---
 

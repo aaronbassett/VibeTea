@@ -1,13 +1,13 @@
 # Technology Stack
 
-**Status**: Phase 3 Enhancement - Zeroize memory safety, environment variable key loading, and key export
-**Last Updated**: 2026-02-03
+**Status**: Phase 4 Enhancement - Export-key CLI command and integration tests for GitHub Actions
+**Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, CLI with export-key |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 
@@ -40,7 +40,7 @@
 | zeroize            | 1.8     | Secure memory wiping for cryptographic material | Monitor (Phase 3) |
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
-| clap               | 4.5     | CLI argument parsing with derive macros | Monitor |
+| clap               | 4.5     | CLI argument parsing with derive macros | Monitor (clap Subcommand/Parser for export-key, Phase 4) |
 
 ### TypeScript/JavaScript (Client)
 
@@ -109,7 +109,7 @@
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
-| CLI Support | clap derive macros for command parsing in monitor main.rs (init, run, help, version) |
+| CLI Support | clap Subcommand enum for command parsing (init, run, export-key via clap derive macros, Phase 4) |
 
 ## Communication Protocols & Formats
 
@@ -179,7 +179,7 @@
 - `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
 - `crypto.rs` - **Phase 3-6**: Ed25519 keypair generation, loading, saving, and event signing with memory safety
 - `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
-- `main.rs` - **Phase 6**: CLI entry point with init and run commands
+- `main.rs` - **Phase 4**: CLI entry point with init, run, and export-key commands (clap Subcommand enum)
 - `lib.rs` - Public interface
 
 ## Deployment Targets
@@ -246,33 +246,86 @@
 
 ## Phase 4 Additions
 
-**Monitor Parser Module** (`monitor/src/parser.rs`):
-- Claude Code JSONL parsing with privacy-first approach
-- Extracts only metadata: tool names, timestamps, file basenames
-- Never processes code content, prompts, or assistant responses
-- Event mapping: assistant tool_use → ToolStarted, progress PostToolUse → ToolCompleted
-- SessionParser state tracking for multi-line file processing
-- ParsedEvent and ParsedEventKind types for normalized event representation
-- Support for session detection from file paths (slugified project names)
-- Comprehensive ParseError enum for error handling
+**Monitor CLI Enhancement** (`monitor/src/main.rs` - 566 lines):
+- **Clap Subcommand enum**: Structured command parsing with derive macros (Phase 4)
+  - Replaces manual argument parsing with type-safe clap framework
+  - Command variants: Init, ExportKey, Run
+  - Automatic help generation and version output
 
-**Monitor File Watcher Module** (`monitor/src/watcher.rs`):
-- Watches `~/.claude/projects/**/*.jsonl` for changes using notify crate
-- Position tracking map to efficiently tail files (no re-reading previous content)
-- WatchEvent enum: FileCreated, LinesAdded, FileRemoved
-- BufReader-based line reading with seek position management
-- Automatic cleanup of removed files from position tracking
-- WatcherError enum for I/O and initialization failures
-- Thread-safe Arc<RwLock<>> position map for async operation
+- **ExportKey subcommand** (lines 101-109):
+  - Command: `vibetea-monitor export-key [--path <PATH>]`
+  - Loads private key from disk (not environment variable)
+  - Outputs base64-encoded seed to stdout (only the key + single newline)
+  - All diagnostic messages go to stderr
+  - Exit code 0 on success, 1 on missing key/invalid path
+  - Suitable for piping to clipboard tools or secret management systems
+  - Enables GitHub Actions workflow integration (FR-003, FR-023)
 
-**New Dependencies**:
-- `futures` 0.3 - Futures trait and utilities for async coordination
-- `tempfile` 3.15 - Temporary file/directory management for testing
+- **run_export_key() function** (lines 180-202):
+  - Accepts optional `--path` argument for custom key directory
+  - Defaults to `get_key_directory()` if path not provided
+  - Calls `Crypto::load()` to read from disk (not env var precedence)
+  - Prints only the base64 seed followed by newline to stdout
+  - Errors written to stderr with helpful message
+  - Exit with code 1 if key not found or unreadable
 
-**Enhanced Module Exports** (`monitor/src/lib.rs`):
-- Public exports: FileWatcher, WatchEvent, WatcherError
-- Public exports: SessionParser, ParsedEvent, ParsedEventKind
-- Documentation expanded with overview, privacy statement, and module descriptions
+- **Init command enhancement**:
+  - Existing `vibetea-monitor init [--force]` still works
+  - Uses clap derive for flags (--force/-f)
+  - Displays instructions for exporting key
+
+- **Run command**:
+  - Existing functionality preserved
+  - Uses tokio runtime builder for async execution
+
+- **CLI help text**:
+  - Updated with export-key example
+  - Lists all environment variables
+  - Shows example workflows
+
+**Integration Test Suite** (`monitor/tests/key_export_test.rs` - 699 lines):
+- **Framework**: Uses `serial_test` crate to run tests with `--test-threads=1` (prevents env var interference)
+- **EnvGuard RAII pattern**: Saves/restores environment variables on drop for test isolation
+
+- **Test Coverage** (13 tests total):
+
+1. **Round-trip Tests** (FR-027, FR-028):
+   - `roundtrip_generate_export_command_import_sign_verify` - Full round-trip: generate → save → export → load env → sign → verify
+   - `roundtrip_export_command_signatures_are_identical` - Ed25519 determinism verification
+
+2. **Output Format Tests** (FR-003):
+   - `export_key_output_format_base64_with_single_newline` - Validates exact output format (base64 + \n)
+   - `export_key_output_is_valid_base64_32_bytes` - Verifies base64 decodes to 32 bytes
+
+3. **Diagnostic Output Tests** (FR-023):
+   - `export_key_diagnostics_go_to_stderr` - Confirms stdout contains only base64 (no prose/labels)
+   - `export_key_error_messages_go_to_stderr` - Error messages on stderr, stdout empty on failure
+
+4. **Exit Code Tests** (FR-026):
+   - `export_key_exit_code_success` - Returns 0 on success
+   - `export_key_exit_code_missing_key_file` - Returns 1 for missing key.priv
+   - `export_key_exit_code_nonexistent_path` - Returns 1 for non-existent directory
+
+5. **Edge Case Tests**:
+   - `export_key_handles_path_with_spaces` - Paths with spaces handled correctly
+   - `export_key_suitable_for_piping` - No ANSI codes, no carriage returns
+   - `export_key_reads_from_key_priv_file` - Reads from correct file with known seed
+
+**Test Infrastructure**:
+- Uses tempfile crate for isolated test directories
+- Uses Command::new() to invoke vibetea-monitor binary
+- Tests use get_monitor_binary_path() to find compiled binary
+- All tests marked with `#[serial]` and `#[test]` attributes
+- Tests verify both success and failure paths
+- Base64 validation using base64 crate
+- Ed25519 signature verification with ed25519_dalek::Verifier
+
+**Requirements Addressed**:
+- FR-003: Export-key command outputs base64 key with single newline
+- FR-023: Diagnostics on stderr, key on stdout
+- FR-026: Exit codes 0 (success), 1 (config error)
+- FR-027: Exported key can be loaded via VIBETEA_PRIVATE_KEY
+- FR-028: Round-trip verified with signature validation
 
 ## Phase 5 Additions
 
@@ -336,8 +389,9 @@
 - **SenderError enum**: Http, ServerError, AuthFailed, RateLimited, BufferOverflow, MaxRetriesExceeded, Json
 - **Event signing**: Signs JSON payload with X-Signature header using Crypto
 
-**Monitor CLI Module** (`monitor/src/main.rs` - 301 lines):
-- **Command enum**: Init, Run, Help, Version variants
+**Monitor CLI Module** (`monitor/src/main.rs` - 301-566 lines):
+- **Command enum**: Init, Run, Help, Version variants (Phase 6: before clap)
+- **ExportKey variant** (Phase 4): Subcommand for GitHub Actions integration
 - **init command**: `vibetea-monitor init [--force]`
   - Generates new Ed25519 keypair
   - Saves to ~/.vibetea or VIBETEA_KEY_PATH
@@ -349,7 +403,11 @@
   - Creates sender with buffering and retry
   - Waits for shutdown signal (SIGINT/SIGTERM)
   - Graceful shutdown with timeout
-- **CLI parsing**: Manual argument parsing with support for flags
+- **export-key command** (Phase 4): `vibetea-monitor export-key [--path]`
+  - Outputs base64-encoded private key to stdout
+  - All diagnostics to stderr
+  - Exit code 0 on success, 1 on error
+- **CLI parsing**: Manual argument parsing with support for flags (Phase 6), clap Subcommand (Phase 4)
 - **Logging initialization**: Environment-based filtering via RUST_LOG
 - **Signal handling**: Unix SIGTERM + SIGINT support (cross-platform)
 - **Help/Version**: Built-in documentation

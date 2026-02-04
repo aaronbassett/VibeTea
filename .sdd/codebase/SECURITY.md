@@ -2,7 +2,7 @@
 
 > **Purpose**: Document authentication, authorization, security controls, and vulnerability status.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Authentication
 
@@ -152,6 +152,39 @@
 | Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:429` |
 | Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:42` |
 
+## Key Export Functionality (Phase 4)
+
+### Export-Key Command
+
+| Feature | Implementation | Location |
+|---------|-----------------|----------|
+| CLI subcommand | `vibetea-monitor export-key` | `monitor/src/main.rs:101-109` |
+| Output target | stdout only | `monitor/src/main.rs:191-192` |
+| Output format | Base64-encoded seed + single newline | `monitor/src/main.rs:192` |
+| Diagnostic messages | All go to stderr | `monitor/src/main.rs:196-199` |
+| Exit code success | 0 | `monitor/src/main.rs:193` |
+| Exit code failure | 1 (configuration error) | `monitor/src/main.rs:199` |
+| Path argument | Optional --path flag for key directory | `monitor/src/main.rs:107-108` |
+| Error handling | Missing key returns error message to stderr | `monitor/src/main.rs:196-199` |
+
+### Export Use Cases
+
+| Use Case | Purpose | Integration |
+|----------|---------|-------------|
+| GitHub Actions setup | Export key for CI/CD environment | Pipe output to GitHub secret creation |
+| Key migration | Move keys between systems | Base64 output compatible with `VIBETEA_PRIVATE_KEY` |
+| Backup verification | Verify exported key roundtrips | Integration tests verify signing consistency |
+
+### Security Properties of Export
+
+| Property | Guarantee |
+|----------|-----------|
+| Key integrity | Exported key matches file content exactly |
+| Output purity | stdout contains only key data, no diagnostic text |
+| Roundtrip compatibility | Exported key can be loaded via `VIBETEA_PRIVATE_KEY` |
+| Signature consistency | Ed25519 is deterministic; exported key produces identical signatures |
+| Memory safety | Seed array explicitly zeroed after use (zeroize crate) |
+
 ## Rate Limiting
 
 | Endpoint | Default Limit | Configuration |
@@ -200,6 +233,7 @@
 | Monitor key generation | `monitor/src/crypto.rs:108` - Crypto::generate() |
 | Environment variable loading | `monitor/src/crypto.rs:143` - Crypto::load_from_env() |
 | File with env fallback | `monitor/src/crypto.rs:206` - Crypto::load_with_fallback() |
+| Key export for external use | `monitor/src/main.rs:181-202` - run_export_key() |
 | Server registration | Manual environment variable setup |
 | Public key fingerprint | `monitor/src/crypto.rs:429` - public_key_fingerprint() (8 chars) |
 

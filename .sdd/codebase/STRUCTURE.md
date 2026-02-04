@@ -2,7 +2,7 @@
 
 > **Purpose**: Document directory layout, module boundaries, and where to add new code.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Directory Layout
 
@@ -10,20 +10,21 @@
 VibeTea/
 ├── monitor/                    # Rust CLI for watching Claude Code sessions
 │   ├── src/
-│   │   ├── main.rs            # Entry point, CLI commands (init, run)
+│   │   ├── main.rs            # Entry point, CLI commands (init, run, export-key)
 │   │   ├── lib.rs             # Module exports
 │   │   ├── config.rs          # Environment configuration loading
 │   │   ├── watcher.rs         # File system watcher (inotify/FSEvents/ReadDirectoryChangesW)
 │   │   ├── parser.rs          # Claude Code JSONL parsing
 │   │   ├── privacy.rs         # Event payload sanitization
-│   │   ├── crypto.rs          # Ed25519 keypair generation/management with key loading strategies
+│   │   ├── crypto.rs          # Ed25519 keypair generation/management with key loading strategies and export
 │   │   ├── sender.rs          # HTTP client with retry and buffering
 │   │   ├── types.rs           # Event type definitions
 │   │   └── error.rs           # Error types
 │   ├── tests/
 │   │   ├── privacy_test.rs    # Privacy filtering tests
 │   │   ├── sender_recovery_test.rs  # Retry logic tests
-│   │   └── env_key_test.rs    # Environment variable key loading tests
+│   │   ├── env_key_test.rs    # Environment variable key loading tests
+│   │   └── key_export_test.rs # export-key command integration tests (Phase 4)
 │   └── Cargo.toml
 │
 ├── server/                     # Rust HTTP server (event hub)
@@ -91,19 +92,19 @@ VibeTea/
 
 | File | Purpose | Key Types |
 |------|---------|-----------|
-| `main.rs` | CLI entry (init/run commands), signal handling | `Cli`, `Command` |
+| `main.rs` | CLI entry (init/run/export-key commands), signal handling | `Cli`, `Command` |
 | `config.rs` | Load from env vars: `VIBETEA_*` | `Config` |
 | `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` | `FileWatcher`, `WatchEvent` |
 | `parser.rs` | Parse JSONL, extract Session/Activity/Tool events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
-| `crypto.rs` | Ed25519 keypair with dual loading strategy (env var + file fallback) | `Crypto`, `KeySource`, `CryptoError` |
+| `crypto.rs` | Ed25519 keypair with dual loading strategy (env var + file fallback) and key export | `Crypto`, `KeySource`, `CryptoError` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
 | `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType` |
 | `error.rs` | Error types | `MonitorError`, custom errors |
 
 ### Crypto Module Details (`monitor/src/crypto.rs`)
 
-The crypto module provides Ed25519 key management with flexible loading strategies:
+The crypto module provides Ed25519 key management with flexible loading strategies and export support:
 
 | Method | Purpose | Returns |
 |--------|---------|---------|
@@ -114,12 +115,13 @@ The crypto module provides Ed25519 key management with flexible loading strategi
 | `Crypto::save(dir)` | Save keypair to files (mode 0600/0644) | `Result<()>` |
 | `Crypto::public_key_base64()` | Get public key as base64 (RFC 4648) | `String` |
 | `Crypto::public_key_fingerprint()` | Get first 8 chars of public key (for logging) | `String` |
-| `Crypto::seed_base64()` | Export seed as base64 (for `VIBETEA_PRIVATE_KEY`) | `String` |
+| `Crypto::seed_base64()` | Export seed as base64 (for `VIBETEA_PRIVATE_KEY` and `export-key`) | `String` |
 | `Crypto::sign(message)` | Sign message, return base64 signature | `String` |
 | `Crypto::sign_raw(message)` | Sign message, return raw 64-byte signature | `[u8; 64]` |
 
 **Key Loading Behavior:**
-- `load_with_fallback()` used in `monitor/src/main.rs` at startup (see lines 183-187)
+- `load_with_fallback()` used in `monitor/src/main.rs` at startup (see lines 222-226)
+- `load()` used in `run_export_key()` for filesystem-only export (see lines 189-193)
 - Environment variable `VIBETEA_PRIVATE_KEY` contains base64-encoded 32-byte Ed25519 seed
 - Whitespace trimming applied before base64 decoding
 - If env var set but invalid: error immediately (no fallback to file)
@@ -131,6 +133,25 @@ The crypto module provides Ed25519 key management with flexible loading strategi
 - Seed arrays zeroed immediately after `SigningKey` creation
 - Error paths also zero buffers before returning errors
 - Marked with FR-020 comments for security audit
+
+### Monitor CLI Commands
+
+The Monitor now supports three subcommands:
+
+| Command | File Location | Purpose | Arguments |
+|---------|---|---------|-----------|
+| `init` | `monitor/src/main.rs:138-178` | Generate Ed25519 keypair | `--force` (optional) |
+| `export-key` | `monitor/src/main.rs:180-202` | Export private key for CI/CD | `--path <DIR>` (optional, defaults to `~/.vibetea`) |
+| `run` | `monitor/src/main.rs:204-337` | Start monitor daemon | (none, requires `VIBETEA_SERVER_URL`) |
+
+**Phase 4 Addition: export-key Command**
+- Lines 101-109: CLI definition (ExportKey struct)
+- Lines 180-202: Implementation (run_export_key function)
+- Supports `--path` argument for custom key directory
+- Falls back to `VIBETEA_KEY_PATH` or `~/.vibetea` if not specified
+- Outputs only base64 seed to stdout (no diagnostics)
+- All errors go to stderr
+- Exit code 0 on success, 1 on configuration error
 
 ### `server/src/` - Server Component
 
@@ -171,22 +192,26 @@ Self-contained CLI with these responsibilities:
 1. **Watch** files via `FileWatcher`
 2. **Parse** JSONL via `SessionParser`
 3. **Filter** events via `PrivacyPipeline`
-4. **Sign** events via `Crypto` (with dual-source key loading)
+4. **Sign** events via `Crypto` (with dual-source key loading and export)
 5. **Send** to server via `Sender`
+6. **Export** keys via `export-key` command
 
 No cross-dependencies with Server or Client.
 
 ```
 monitor/src/main.rs
-├── config.rs (load env)
-├── crypto.rs (load keys from env var OR file, track KeySource)
-├── watcher.rs → sender.rs
-│   ↓
-├── parser.rs → privacy.rs
-│   ↓
-├── sender.rs (HTTP, retry, buffering)
-│   ├── crypto.rs (sign events)
-│   └── types.rs (Event schema)
+├── Command::Init → run_init()
+├── Command::ExportKey → run_export_key()
+├── Command::Run → run_monitor()
+│   ├── config.rs (load env)
+│   ├── crypto.rs (load keys from env var OR file, track KeySource)
+│   ├── watcher.rs → sender.rs
+│   │   ↓
+│   ├── parser.rs → privacy.rs
+│   │   ↓
+│   └── sender.rs (HTTP, retry, buffering)
+│       ├── crypto.rs (sign events)
+│       └── types.rs (Event schema)
 ```
 
 ### Server Module
@@ -304,6 +329,8 @@ import type { Session } from '../types/events';
 | Component | File | Launch Command |
 |-----------|------|-----------------|
 | **Monitor** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- run` |
+| **Monitor (init)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- init` |
+| **Monitor (export-key)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- export-key` |
 | **Server** | `server/src/main.rs` | `cargo run -p vibetea-server` |
 | **Client** | `client/src/main.tsx` | `npm run dev` (from `client/`) |
 
@@ -373,11 +400,26 @@ Files that are auto-generated or should not be manually edited:
 
 Located in `monitor/tests/` with `serial_test` crate for environment variable safety:
 
-| File | Purpose | Key Pattern |
-|------|---------|-------------|
-| `env_key_test.rs` | Environment variable key loading (FR-001 through FR-028) | `#[test] #[serial]` |
-| `privacy_test.rs` | Privacy filtering validation | — |
-| `sender_recovery_test.rs` | Retry logic and buffering | — |
+| File | Purpose | Key Pattern | Added In |
+|------|---------|-------------|----------|
+| `env_key_test.rs` | Environment variable key loading (FR-001 through FR-028) | `#[test] #[serial]` | Phase 3 |
+| `key_export_test.rs` | export-key command integration tests (FR-003, FR-023, FR-026, FR-027, FR-028) | `#[test] #[serial]` | Phase 4 |
+| `privacy_test.rs` | Privacy filtering validation | — | Phase 1 |
+| `sender_recovery_test.rs` | Retry logic and buffering | — | Phase 1 |
+
+**Test Coverage by Phase 4:**
+- `roundtrip_generate_export_command_import_sign_verify()` - Full round-trip via export-key
+- `roundtrip_export_command_signatures_are_identical()` - Ed25519 determinism verification
+- `export_key_output_format_base64_with_single_newline()` - Output format validation
+- `export_key_output_is_valid_base64_32_bytes()` - Base64 decoding verification
+- `export_key_diagnostics_go_to_stderr()` - Separation of concerns (stdout/stderr)
+- `export_key_error_messages_go_to_stderr()` - Error output routing
+- `export_key_exit_code_success()` - Exit code 0 on success
+- `export_key_exit_code_missing_key_file()` - Exit code 1 on missing key
+- `export_key_exit_code_nonexistent_path()` - Exit code 1 on invalid path
+- `export_key_handles_path_with_spaces()` - Edge case support
+- `export_key_suitable_for_piping()` - CI/CD integration support
+- `export_key_reads_from_key_priv_file()` - Correct file reading
 
 **Important**: Tests modifying environment variables MUST use `#[serial]` from `serial_test` crate or run with `cargo test --workspace --test-threads=1` to prevent interference.
 

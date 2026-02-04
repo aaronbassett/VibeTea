@@ -1,12 +1,12 @@
 # External Integrations
 
-**Status**: Phase 3 Enhancement - Zeroize memory safety, environment variable key loading, and key export
-**Last Updated**: 2026-02-03
+**Status**: Phase 4 Enhancement - Export-key CLI command and integration tests for GitHub Actions
+**Last Updated**: 2026-02-04
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4).
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization with token-based authentication
 
@@ -228,7 +228,7 @@ Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
 - Enables flexible key management without modifying code
 - Example usage:
   ```bash
-  export VIBETEA_PRIVATE_KEY=$(vibetea-monitor seed-export)
+  export VIBETEA_PRIVATE_KEY=$(vibetea-monitor export-key)
   # Monitor loads from env var on next run
   ```
 
@@ -247,13 +247,117 @@ Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
 - Suitable for storing in `VIBETEA_PRIVATE_KEY` environment variable
 - Marked sensitive: handle with care, avoid logging
 - Used for user-friendly key export workflows
-- Example: `vibetea-monitor export-seed` displays exportable key format
+- Example: `vibetea-monitor export-key` displays exportable key format
 
 **CryptoError::EnvVar Variant** (Phase 3 Addition):
 - New error variant for environment variable issues
 - Returned when `VIBETEA_PRIVATE_KEY` is missing or empty
 - Distinct from file-based key loading errors
 - Enables precise error handling and logging
+
+### Phase 4: Export-Key Command for GitHub Actions
+
+**CLI Command Location**: `monitor/src/main.rs` (lines 101-109, 180-202)
+
+**export-key Subcommand** (FR-003, FR-023, FR-026, FR-027, FR-028):
+- **Command**: `vibetea-monitor export-key [--path <PATH>]`
+- **Purpose**: Export private key for use in GitHub Actions secrets or other deployment systems
+- **Implementation**: Loads key from disk via `Crypto::load()` (not environment variable)
+- **Output**: Base64-encoded seed to stdout followed by exactly one newline
+- **Diagnostics**: All error messages and logging go to stderr only
+- **Exit Codes**:
+  - 0 on success
+  - 1 on configuration error (missing key, invalid path)
+- **Features**:
+  - Suitable for piping to clipboard tools (`pbpaste`, `xclip`)
+  - Suitable for piping to secret management systems
+  - No ANSI escape codes, no carriage returns
+  - Clean output for automation and scripting
+  - Optional `--path` argument for custom key directory
+
+**run_export_key() Function** (lines 180-202):
+- Accepts optional `path` parameter from `--path` flag
+- Defaults to `get_key_directory()` if not provided
+- Calls `Crypto::load()` to read from disk only
+- Prints base64 seed to stdout with single trailing newline
+- Errors printed to stderr with helpful context
+- Exit code 1 if key file not found
+- Example stderr message: "Error: No key found at /path/to/keys/key.priv"
+
+**Usage Examples**:
+```bash
+# Export to environment variable for local testing
+export VIBETEA_PRIVATE_KEY=$(vibetea-monitor export-key)
+
+# Export to GitHub Actions secret
+EXPORTED_KEY=$(vibetea-monitor export-key)
+gh secret set VIBETEA_PRIVATE_KEY --body "$EXPORTED_KEY"
+
+# Export from custom key directory
+vibetea-monitor export-key --path ~/.keys/vibetea
+
+# Pipe directly to file
+vibetea-monitor export-key > private_key.txt
+```
+
+**Integration Test Suite** (`monitor/tests/key_export_test.rs` - 699 lines):
+
+**Framework**:
+- Uses `serial_test` crate with `#[serial]` attribute
+- Ensures tests run with `--test-threads=1` to prevent env var interference
+- **EnvGuard RAII pattern**: Saves/restores environment variables on drop for isolation
+
+**Test Coverage** (13 tests total):
+
+1. **Round-trip Tests** (FR-027, FR-028):
+   - `roundtrip_generate_export_command_import_sign_verify`
+     - Generate new key → Save → Export via command → Load from env → Sign message → Verify signature
+     - Validates exported key can be loaded and used for cryptography
+   - `roundtrip_export_command_signatures_are_identical`
+     - Verifies Ed25519 determinism: same key produces identical signatures
+     - Tests that exported key produces same signatures as original
+
+2. **Output Format Tests** (FR-003):
+   - `export_key_output_format_base64_with_single_newline`
+     - Validates exact format: base64 seed + exactly one newline
+     - No leading/trailing whitespace other than final newline
+   - `export_key_output_is_valid_base64_32_bytes`
+     - Decodes output as base64 and verifies 32-byte length
+     - Ensures cryptographic validity of exported data
+
+3. **Diagnostic Output Tests** (FR-023):
+   - `export_key_diagnostics_go_to_stderr`
+     - Confirms stdout contains only base64 characters
+     - No diagnostic patterns in stdout (no labels, no prose)
+   - `export_key_error_messages_go_to_stderr`
+     - Verifies errors written to stderr, not stdout
+     - Stdout empty on error, stderr contains error message
+
+4. **Exit Code Tests** (FR-026):
+   - `export_key_exit_code_success` - Returns 0 on success
+   - `export_key_exit_code_missing_key_file` - Returns 1 for missing key.priv
+   - `export_key_exit_code_nonexistent_path` - Returns 1 for non-existent directory
+
+5. **Edge Case Tests**:
+   - `export_key_handles_path_with_spaces` - Paths with spaces handled correctly
+   - `export_key_suitable_for_piping` - No ANSI codes, no carriage returns for clean piping
+   - `export_key_reads_from_key_priv_file` - Verifies correct file is read (key.priv)
+
+**Test Infrastructure**:
+- Uses `tempfile` crate for isolated test directories (no interference)
+- Uses `Command::new()` to invoke vibetea-monitor binary
+- Tests find compiled binary via `get_monitor_binary_path()`
+- Uses `base64` crate for decoding verification
+- Uses `ed25519_dalek::Verifier` for signature validation
+- All tests marked with `#[test]` and `#[serial]` attributes
+- Comprehensive error message assertions with stderr capture
+
+**Requirements Addressed**:
+- **FR-003**: Export-key command outputs base64 key with single newline (piping-friendly)
+- **FR-023**: Diagnostics on stderr, key only on stdout (machine-readable)
+- **FR-026**: Exit codes 0 (success), 1 (config/missing key error), 2 (runtime error)
+- **FR-027**: Exported key can be loaded via `VIBETEA_PRIVATE_KEY` environment variable
+- **FR-028**: Round-trip verified: generate → export → load → sign → verify
 
 ### Phase 6: Monitor Cryptographic Operations
 
@@ -459,7 +563,7 @@ pub struct SenderConfig {
 
 ### Phase 6: Monitor CLI
 
-**Module Location**: `monitor/src/main.rs` (301 lines)
+**Module Location**: `monitor/src/main.rs` (301 lines, expanded to 566 lines in Phase 4)
 
 **Command Structure**:
 
@@ -484,7 +588,17 @@ pub struct SenderConfig {
    - Waits for shutdown signal
    - Graceful shutdown with event flushing
 
-3. **help Command**: Show documentation
+3. **export-key Command**: Export private key (Phase 4)
+   ```bash
+   vibetea-monitor export-key [--path <PATH>]
+   ```
+   - Loads private key from disk
+   - Outputs base64-encoded seed to stdout (+ single newline)
+   - All diagnostics to stderr
+   - Exit code 0 on success, 1 on error
+   - Suitable for piping to clipboard or secret management tools
+
+4. **help Command**: Show documentation
    ```bash
    vibetea-monitor help
    vibetea-monitor --help
@@ -495,7 +609,7 @@ pub struct SenderConfig {
    - Shows environment variables
    - Provides example commands
 
-4. **version Command**: Show version
+5. **version Command**: Show version
    ```bash
    vibetea-monitor version
    vibetea-monitor --version
@@ -503,13 +617,12 @@ pub struct SenderConfig {
    ```
    - Prints binary version from Cargo.toml
 
-**CLI Features**:
-- Manual argument parsing (no external CLI framework)
-- Flag support: `--force`, `-f` for init overwrite
-- Short and long option variants for help/version
-- User prompts on stdout/stderr
-- Structured error messages
-- Exit codes: 0 on success, 1 on error
+**CLI Framework** (Phase 4):
+- Uses `clap` crate with Subcommand and Parser derive macros
+- Type-safe command parsing with automatic help generation
+- Replaces manual argument parsing from Phase 6
+- Command enum variants: Init, ExportKey, Run
+- Flag support: `--force/-f` for init, `--path` for export-key
 
 **Environment Variables Used**:
 
@@ -518,7 +631,7 @@ pub struct SenderConfig {
 | `VIBETEA_SERVER_URL` | Yes | - | run |
 | `VIBETEA_SOURCE_ID` | No | hostname | run |
 | `VIBETEA_PRIVATE_KEY` | No* | - | run (Phase 3 - loads from env) |
-| `VIBETEA_KEY_PATH` | No | ~/.vibetea | init, run |
+| `VIBETEA_KEY_PATH` | No | ~/.vibetea | init, run, export-key |
 | `VIBETEA_CLAUDE_DIR` | No | ~/.claude | run |
 | `VIBETEA_BUFFER_SIZE` | No | 1000 | run |
 | `VIBETEA_BASENAME_ALLOWLIST` | No | - | run |
@@ -549,7 +662,7 @@ pub struct SenderConfig {
 **Phase 3 Key Loading Workflow**:
 ```bash
 # Option 1: Use environment variable (new in Phase 3)
-export VIBETEA_PRIVATE_KEY=$(vibetea-monitor export-seed)
+export VIBETEA_PRIVATE_KEY=$(vibetea-monitor export-key)
 vibetea-monitor run
 
 # Option 2: Use file (Phase 2)
@@ -560,6 +673,21 @@ vibetea-monitor run
 export VIBETEA_PRIVATE_KEY=...  # Checked first
 # If not set, falls back to ~/.vibetea/key.priv
 vibetea-monitor run
+```
+
+**Phase 4 GitHub Actions Workflow**:
+```bash
+# Export key from development machine
+exported_key=$(vibetea-monitor export-key)
+
+# Register in GitHub Actions secret
+gh secret set VIBETEA_PRIVATE_KEY --body "$exported_key"
+
+# Use in workflow
+- name: Export monitor key
+  env:
+    VIBETEA_PRIVATE_KEY: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+  run: vibetea-monitor run
 ```
 
 ## Client-Side Integrations (Phase 7-10)
@@ -1336,7 +1464,7 @@ RUST_LOG=debug                                   # Logging level
 
 **Key Management** (Phase 3):
 - `vibetea-monitor init` generates Ed25519 keypair
-- `vibetea-monitor export-seed` exports private key as base64 (Phase 3 feature)
+- `vibetea-monitor export-key` exports private key as base64 (Phase 4 feature)
 - Keys stored in ~/.vibetea/ or VIBETEA_KEY_PATH
 - Private key: key.priv (0600 permissions)
 - Public key: key.pub (0644 permissions)
@@ -1723,6 +1851,35 @@ None required for production (future configuration planned).
 
 ## Phase Changes Summary
 
+### Phase 4: Export-Key CLI Command and Integration Tests
+
+**Monitor CLI Enhancements** (`monitor/src/main.rs` - 566 lines):
+- **Clap integration**: Replaced manual argument parsing with clap Subcommand/Parser derive macros
+- **ExportKey subcommand**: New command for exporting private key to stdout
+- **Integration test suite**: 13 comprehensive tests using serial_test for env var isolation
+
+**Key Features**:
+- Command: `vibetea-monitor export-key [--path <PATH>]`
+- Output: Base64-encoded 32-byte seed + single newline to stdout
+- Diagnostics: All messages to stderr
+- Exit codes: 0 on success, 1 on error
+- Piping-friendly: No ANSI codes, no carriage returns
+- GitHub Actions ready: Suitable for use in workflows and secret management
+
+**Test Coverage**:
+- Round-trip: generate → save → export → load → sign → verify
+- Output format: Exact base64+newline verification
+- Diagnostic separation: stdout/stderr validation
+- Exit codes: Success (0) and error (1) paths
+- Edge cases: Paths with spaces, ANSI code absence, binary format validation
+
+**Requirements Addressed**:
+- FR-003: Export functionality with clean output
+- FR-023: Proper stdout/stderr separation
+- FR-026: Correct exit codes
+- FR-027: Exported key loadable via VIBETEA_PRIVATE_KEY
+- FR-028: Round-trip and signature compatibility
+
 ### Phase 3: Memory Safety & Environment Variable Key Loading
 
 **Crypto Module Enhancements** (`monitor/src/crypto.rs`):
@@ -1743,7 +1900,7 @@ None required for production (future configuration planned).
 **Example Workflow**:
 ```bash
 # Export key from monitor
-export EXPORTED_KEY=$(vibetea-monitor export-seed)
+export EXPORTED_KEY=$(vibetea-monitor export-key)
 
 # Use in different environment
 export VIBETEA_PRIVATE_KEY=$EXPORTED_KEY

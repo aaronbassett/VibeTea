@@ -2,7 +2,7 @@
 
 > **Purpose**: Document technical debt, known risks, bugs, fragile areas, and improvement opportunities.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Security Concerns
 
@@ -22,8 +22,11 @@
 | SEC-005 | Private key environment variable | `VIBETEA_PRIVATE_KEY` env var alternative now documented and implemented | Low | Documented in SECURITY.md; same validation as file-based keys | Resolved |
 | SEC-006 | Rate limiting overhead | Per-source token bucket tracking could consume memory with many unique sources | Medium | Implement stale entry cleanup (partially done); add configurable limits | Open |
 | SEC-007 | Event persistence | Events are in-memory only; no persistence means events lost on restart | Medium | Document as design decision; recommend replay mechanism at application level | Open |
+| SEC-008 | Export-key stdout purity | Diagnostic/error messages must be stderr-only to enable safe piping | Low | Export-key explicitly prints errors to stderr; only key goes to stdout | Mitigated (Phase 4) |
 
-## Security Improvements (Phase 3)
+## Security Improvements (Phase 3-4)
+
+### Phase 3 Features
 
 | ID | Feature | Implementation | Status | Location |
 |----|---------|-----------------|--------|----------|
@@ -31,6 +34,16 @@
 | FR-020 | Memory zeroing for key material | Zeroize crate wipes intermediate buffers after SigningKey construction | Implemented | `monitor/src/crypto.rs:114,157,169,221,233,287` |
 | FR-021 | Standard Base64 RFC 4648 | All key encoding uses standard (not URL-safe) base64 | Implemented | `monitor/src/crypto.rs:152,216` uses `BASE64_STANDARD` |
 | FR-022 | Validate key material is exactly 32 bytes | Strict validation on load/decode, clear error messages | Implemented | `monitor/src/crypto.rs:155-162,219-226,276-283` |
+
+### Phase 4 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-003 | Export-key command | CLI subcommand outputs base64-encoded private key + single newline | Implemented | `monitor/src/main.rs:101-109, 181-202` |
+| FR-023 | Stderr for diagnostics | All diagnostic/error messages go to stderr; stdout is key-only | Implemented | `monitor/src/main.rs:196-199` - errors print to eprintln! |
+| FR-026 | Exit code semantics | 0 for success, 1 for configuration error (missing key) | Implemented | `monitor/src/main.rs:199` |
+| FR-027 | Integration tests | Tests verify exported key roundtrips via `VIBETEA_PRIVATE_KEY` | Implemented | `monitor/tests/key_export_test.rs:148-221` |
+| FR-028 | Signature consistency | Ed25519 deterministic; tests verify identical signatures after export-import | Implemented | `monitor/tests/key_export_test.rs:229-264` |
 
 ## Technical Debt
 
@@ -48,6 +61,7 @@
 | TD-003 | Configuration validation | VIBETEA_PUBLIC_KEYS parsing doesn't validate that decoded base64 is exactly 32 bytes | Confusing error messages at runtime | Low | Open |
 | TD-004 | Type safety | EventPayload uses untagged enum which could be fragile with certain JSON structures | API contract ambiguity | Medium | Open |
 | TD-005 | Logging | Some debug/trace logs are verbose and could impact performance under load | Performance in high-traffic scenarios | Low | Open |
+| TD-008 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
 
 ### Low Priority
 
@@ -72,6 +86,8 @@
 | `monitor/src/crypto.rs` | Cryptographic key handling; file permissions and memory management matter | Tests verify file permissions on Unix; tests verify zeroization; regenerate if compromised |
 | `server/src/config.rs` | Configuration parsing with environment variables; tests required `#[serial]` | Never modify without running full test suite with `--test-threads=1` |
 | `monitor/tests/env_key_test.rs` | Environment variable tests must serialize to avoid race conditions | All tests use `#[serial]` decorator (24 env-var-touching tests) |
+| `monitor/tests/key_export_test.rs` | Export-key tests modify env vars and spawn subprocesses; must use `#[serial]` | All tests use `#[serial]` decorator (15 export-key tests) |
+| `monitor/src/main.rs` | New export-key logic handles private key material and must not log it | Verify stdout purity in tests; all key writes are stderr only |
 
 ## Deprecated Code
 
@@ -112,6 +128,7 @@
 | Rate limiter state | No metrics on bucket count or token refill rates | Hard to debug rate limiting issues | Consider adding Prometheus metrics |
 | Authentication success rate | No metrics on auth successes vs failures | Can't detect brute force attempts | Would require counter instrumentation |
 | WebSocket health | No metrics on connection duration or message throughput | Hard to diagnose subscription issues | Consider adding connection metrics |
+| Export-key usage | No audit trail of key exports | Can't track which systems have exported keys | Consider adding telemetry or structured logging |
 
 ## Improvement Opportunities
 
@@ -123,6 +140,7 @@
 | Rate limiting | Per-source only | Support per-IP and per-endpoint limits | Finer-grained DoS protection |
 | Event filtering | Client-side by query params | Server-side filtering with ACLs | Reduced bandwidth, better security |
 | Private key rotation | Manual process | Automated rotation with versioning | Reduced risk of key compromise |
+| Export-key defaults | Explicit --path flag required | Auto-discovery of ~/.vibetea or env var | Smoother UX for end users |
 
 ## Security Debt Items
 
@@ -132,6 +150,7 @@
 | DEBT-002 | Key registration | Public keys hardcoded in environment variable | Implement key management API with dynamic updates | Open |
 | DEBT-003 | Audit trail | Minimal logging of auth events | Add structured audit logging to database/file | Open |
 | DEBT-004 | Client identity | WebSocket clients are anonymous beyond token | Add optional client ID/name for audit purposes | Open |
+| DEBT-005 | Key export audit | No record of when/where keys are exported | Implement export logging with timestamp/system info | Open |
 
 ## Potential Attack Vectors
 
@@ -147,6 +166,8 @@
 | Source ID spoofing | Must provide valid signature for registered source | Mitigated |
 | Base64 decoding errors | Handled with explicit error cases | Mitigated |
 | Whitespace in env var key | Trimmed before base64 decoding | Mitigated (Phase 3) |
+| Export-key output leakage | Diagnostic messages sent to stderr only | Mitigated (Phase 4) |
+| Key export in cleartext | Keys exported as base64; assumes secure transport (HTTPS/CI secrets) | Requires operator discipline |
 
 ---
 
