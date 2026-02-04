@@ -236,11 +236,11 @@
 **Independent Test**: Enable persistence, generate events over multiple days, view heatmap showing both historic and real-time data
 
 ### Phase Start
-- [ ] T122 [GIT] Verify working tree is clean before starting Phase 6
-- [ ] T123 [GIT] Pull and rebase on origin/main if needed
+- [x] T122 [GIT] Verify working tree is clean before starting Phase 6
+- [x] T123 [GIT] Pull and rebase on origin/main if needed
 
 ### Implementation
-- [ ] T124 [US1] Create retro/P6.md for this phase
+- [x] T124 [US1] Create retro/P6.md for this phase
 - [ ] T125 [GIT] Commit: initialize phase 6 retro
 - [ ] T126 [US1] Create persistence feature detection helper in client/src/utils/persistence.ts (check VITE_SUPABASE_URL) (use devs:typescript-dev agent)
 - [ ] T127 [GIT] Commit: add persistence feature detection
