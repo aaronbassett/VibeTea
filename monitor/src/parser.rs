@@ -45,6 +45,8 @@ use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::trackers::agent_tracker;
+
 /// Errors that can occur during parsing.
 #[derive(Error, Debug)]
 pub enum ParseError {
@@ -108,6 +110,14 @@ pub enum ParsedEventKind {
     SessionStarted {
         /// The project name extracted from the file path.
         project: String,
+    },
+
+    /// A subagent was spawned via the Task tool.
+    AgentSpawned {
+        /// The type of agent (e.g., "devs:rust-dev", "task").
+        agent_type: String,
+        /// Description of the task delegated to the agent.
+        description: String,
     },
 }
 
@@ -380,6 +390,11 @@ impl SessionParser {
             events.push(event);
         }
 
+        // Check for agent spawn events from Task tool usage
+        if let Some(agent_event) = self.parse_agent_spawn(&raw_event, timestamp) {
+            events.push(agent_event);
+        }
+
         events
     }
 
@@ -455,6 +470,42 @@ impl SessionParser {
             },
             timestamp,
         })
+    }
+
+    /// Parses an assistant event for Task tool usage, emitting `AgentSpawned` events.
+    ///
+    /// This is separate from `parse_assistant_event` because we want to emit BOTH
+    /// a `ToolStarted` event (for the Task tool itself) AND an `AgentSpawned` event
+    /// (for the semantic meaning of spawning a subagent).
+    fn parse_agent_spawn(
+        &self,
+        raw: &RawClaudeEvent,
+        timestamp: DateTime<Utc>,
+    ) -> Option<ParsedEvent> {
+        // Only process assistant events
+        if raw.event_type != "assistant" {
+            return None;
+        }
+
+        let message = raw.message.as_ref()?;
+
+        // Look for Task tool_use blocks
+        for block in &message.content {
+            if let ContentBlock::ToolUse { name, input } = block {
+                // Use the agent_tracker module to parse Task tool input
+                if let Some(task_input) = agent_tracker::parse_task_tool_use(name, input) {
+                    return Some(ParsedEvent {
+                        kind: ParsedEventKind::AgentSpawned {
+                            agent_type: task_input.subagent_type,
+                            description: task_input.description,
+                        },
+                        timestamp,
+                    });
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -1053,6 +1104,149 @@ mod tests {
             }
             _ => panic!("Expected ToolCompleted event"),
         }
+    }
+
+    // ==================== Agent Spawn Tests ====================
+
+    #[test]
+    fn session_parser_emits_agent_spawned_for_task_tool() {
+        let mut parser = SessionParser::new(Uuid::new_v4(), "my-project".to_string());
+
+        // Skip the first event handling
+        let _ = parser.parse_line(r#"{"type": "user"}"#);
+
+        // Task tool use should emit BOTH ToolStarted AND AgentSpawned
+        let line = r#"{
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:00:00Z",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Task",
+                        "input": {
+                            "description": "Create unit tests",
+                            "subagent_type": "devs:rust-dev"
+                        }
+                    }
+                ]
+            }
+        }"#;
+
+        let events = parser.parse_line(line);
+
+        assert_eq!(events.len(), 2);
+
+        // First event should be ToolStarted
+        match &events[0].kind {
+            ParsedEventKind::ToolStarted { name, .. } => {
+                assert_eq!(name, "Task");
+            }
+            _ => panic!("Expected ToolStarted as first event"),
+        }
+
+        // Second event should be AgentSpawned
+        match &events[1].kind {
+            ParsedEventKind::AgentSpawned {
+                agent_type,
+                description,
+            } => {
+                assert_eq!(agent_type, "devs:rust-dev");
+                assert_eq!(description, "Create unit tests");
+            }
+            _ => panic!("Expected AgentSpawned as second event"),
+        }
+    }
+
+    #[test]
+    fn session_parser_uses_defaults_for_missing_task_fields() {
+        let mut parser = SessionParser::new(Uuid::new_v4(), "my-project".to_string());
+
+        // Skip the first event handling
+        let _ = parser.parse_line(r#"{"type": "user"}"#);
+
+        // Task tool with missing optional fields
+        let line = r#"{
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:00:00Z",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Task", "input": {}}
+                ]
+            }
+        }"#;
+
+        let events = parser.parse_line(line);
+
+        assert_eq!(events.len(), 2);
+
+        // Second event should be AgentSpawned with defaults
+        match &events[1].kind {
+            ParsedEventKind::AgentSpawned {
+                agent_type,
+                description,
+            } => {
+                assert_eq!(agent_type, "task"); // default
+                assert_eq!(description, ""); // default
+            }
+            _ => panic!("Expected AgentSpawned event"),
+        }
+    }
+
+    #[test]
+    fn session_parser_no_agent_spawned_for_non_task_tools() {
+        let mut parser = SessionParser::new(Uuid::new_v4(), "my-project".to_string());
+
+        // Skip the first event handling
+        let _ = parser.parse_line(r#"{"type": "user"}"#);
+
+        // Regular tool use should NOT emit AgentSpawned
+        let line = r#"{
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:00:00Z",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Read", "input": {"file_path": "/some/file.rs"}}
+                ]
+            }
+        }"#;
+
+        let events = parser.parse_line(line);
+
+        // Should only have ToolStarted, no AgentSpawned
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            events[0].kind,
+            ParsedEventKind::ToolStarted { .. }
+        ));
+    }
+
+    #[test]
+    fn agent_spawned_preserves_timestamp() {
+        let mut parser = SessionParser::new(Uuid::new_v4(), "my-project".to_string());
+
+        // Skip the first event handling
+        let _ = parser.parse_line(r#"{"type": "user"}"#);
+
+        let line = r#"{
+            "type": "assistant",
+            "timestamp": "2026-01-15T10:30:00Z",
+            "message": {
+                "content": [
+                    {"type": "tool_use", "name": "Task", "input": {"description": "Test"}}
+                ]
+            }
+        }"#;
+
+        let events = parser.parse_line(line);
+
+        let expected = DateTime::parse_from_rfc3339("2026-01-15T10:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        // Both events should have the same timestamp
+        assert_eq!(events[0].timestamp, expected);
+        assert_eq!(events[1].timestamp, expected);
     }
 
     // ==================== Integration-style Tests ====================

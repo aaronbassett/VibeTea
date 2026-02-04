@@ -99,6 +99,17 @@ jobs:
             echo "::warning::Bundle size exceeds 200KB target"
           fi
 
+      - name: Build Storybook
+        run: pnpm build-storybook
+
+      - name: Check reduced-motion compliance
+        run: node scripts/check-reduced-motion.mjs
+
+      - name: Run Lighthouse CI
+        run: |
+          pnpm add -D @lhci/cli
+          npx lhci autorun
+
   build-binaries:
     name: Build Binaries
     needs: [rust]

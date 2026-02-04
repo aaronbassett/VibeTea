@@ -467,9 +467,18 @@ impl SubscriberFilter {
             EventPayload::Session { project, .. } => Some(project.as_str()),
             EventPayload::Tool { project, .. } => project.as_deref(),
             EventPayload::Activity { project, .. } => project.as_deref(),
+            EventPayload::SkillInvocation(event) => Some(event.project.as_str()),
             EventPayload::Agent { .. }
             | EventPayload::Summary { .. }
-            | EventPayload::Error { .. } => None,
+            | EventPayload::Error { .. }
+            | EventPayload::FileChange(_)
+            | EventPayload::AgentSpawn(_)
+            | EventPayload::TokenUsage(_)
+            | EventPayload::SessionMetrics(_)
+            | EventPayload::ModelDistribution(_)
+            | EventPayload::TodoProgress(_)
+            | EventPayload::ActivityPattern(_)
+            | EventPayload::ProjectActivity(_) => None,
         }
     }
 

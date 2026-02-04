@@ -144,6 +144,22 @@ const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Maximum payload size per request (slightly under 1MB to leave room for headers/overhead).
 const MAX_CHUNK_SIZE: usize = 900 * 1024;
 
+/// Metrics for the sender component.
+///
+/// This struct provides a snapshot of the sender's current statistics,
+/// useful for monitoring and displaying in a TUI.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SenderMetrics {
+    /// Number of events currently queued in the buffer.
+    pub queued: usize,
+    /// Total events successfully sent to the server.
+    pub sent: u64,
+    /// Total events that failed to send (after all retries exhausted).
+    pub failed: u64,
+    /// Total events evicted from buffer due to overflow.
+    pub evicted: u64,
+}
+
 /// Errors that can occur during event sending.
 #[derive(Error, Debug)]
 pub enum SenderError {
@@ -232,6 +248,12 @@ pub struct Sender {
     client: Client,
     buffer: VecDeque<Event>,
     current_retry_delay_ms: u64,
+    /// Total events successfully sent to the server.
+    total_sent: u64,
+    /// Total events that failed to send (after all retries exhausted).
+    total_failed: u64,
+    /// Total events evicted from buffer due to overflow.
+    total_evicted: u64,
 }
 
 impl Sender {
@@ -256,6 +278,9 @@ impl Sender {
             crypto,
             client,
             current_retry_delay_ms: initial_delay_ms,
+            total_sent: 0,
+            total_failed: 0,
+            total_evicted: 0,
         }
     }
 
@@ -283,6 +308,7 @@ impl Sender {
 
         if evicted > 0 {
             warn!(evicted_count = evicted, "Buffer overflow, events evicted");
+            self.total_evicted += evicted as u64;
         }
 
         evicted
@@ -298,6 +324,30 @@ impl Sender {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.buffer.is_empty()
+    }
+
+    /// Returns current sender metrics.
+    ///
+    /// This provides a snapshot of the sender's statistics, including
+    /// the current buffer size and cumulative counters for sent, failed,
+    /// and evicted events.
+    #[must_use]
+    pub fn metrics(&self) -> SenderMetrics {
+        SenderMetrics {
+            queued: self.buffer.len(),
+            sent: self.total_sent,
+            failed: self.total_failed,
+            evicted: self.total_evicted,
+        }
+    }
+
+    /// Resets all metrics counters to zero.
+    ///
+    /// This is primarily useful for testing. The buffer is not cleared.
+    pub fn reset_metrics(&mut self) {
+        self.total_sent = 0;
+        self.total_failed = 0;
+        self.total_evicted = 0;
     }
 
     /// Sends a single event immediately without buffering.
@@ -447,6 +497,7 @@ impl Sender {
                     match status {
                         StatusCode::OK | StatusCode::CREATED | StatusCode::ACCEPTED => {
                             info!(events = events.len(), "Events sent successfully");
+                            self.total_sent += events.len() as u64;
                             self.reset_retry_delay();
                             return Ok(());
                         }
@@ -459,6 +510,7 @@ impl Sender {
                             warn!(retry_after_ms = retry_after_ms, "Rate limited by server");
 
                             if attempts >= self.config.retry_policy.max_attempts {
+                                self.total_failed += events.len() as u64;
                                 return Err(SenderError::MaxRetriesExceeded { attempts });
                             }
 
@@ -507,6 +559,7 @@ impl Sender {
                         warn!(error = %e, "Connection error, will retry");
 
                         if attempts >= self.config.retry_policy.max_attempts {
+                            self.total_failed += events.len() as u64;
                             return Err(SenderError::MaxRetriesExceeded { attempts });
                         }
 
@@ -1014,5 +1067,155 @@ mod tests {
         assert_eq!(config.retry_policy.max_delay_ms, 1);
         assert_eq!(config.retry_policy.max_attempts, 1);
         assert_eq!(config.retry_policy.jitter_factor, 0.0);
+    }
+
+    #[test]
+    fn test_sender_metrics_default() {
+        let metrics = SenderMetrics::default();
+        assert_eq!(metrics.queued, 0);
+        assert_eq!(metrics.sent, 0);
+        assert_eq!(metrics.failed, 0);
+        assert_eq!(metrics.evicted, 0);
+    }
+
+    #[test]
+    fn test_sender_metrics_initial_state() {
+        let sender = create_test_sender();
+        let metrics = sender.metrics();
+
+        assert_eq!(metrics.queued, 0);
+        assert_eq!(metrics.sent, 0);
+        assert_eq!(metrics.failed, 0);
+        assert_eq!(metrics.evicted, 0);
+    }
+
+    #[test]
+    fn test_sender_metrics_tracks_queued() {
+        let mut sender = create_test_sender();
+
+        sender.queue(create_test_event());
+        assert_eq!(sender.metrics().queued, 1);
+
+        sender.queue(create_test_event());
+        sender.queue(create_test_event());
+        assert_eq!(sender.metrics().queued, 3);
+    }
+
+    #[test]
+    fn test_sender_metrics_tracks_evicted() {
+        let mut sender = create_test_sender();
+
+        // Fill buffer to capacity (10 events)
+        for _ in 0..10 {
+            sender.queue(create_test_event());
+        }
+        assert_eq!(sender.metrics().evicted, 0);
+
+        // Add 3 more - should evict 3 oldest
+        sender.queue(create_test_event());
+        sender.queue(create_test_event());
+        sender.queue(create_test_event());
+
+        let metrics = sender.metrics();
+        assert_eq!(metrics.evicted, 3);
+        assert_eq!(metrics.queued, 10); // Buffer stays at capacity
+    }
+
+    #[test]
+    fn test_sender_metrics_cumulative_eviction() {
+        let mut sender = create_test_sender();
+
+        // Fill buffer
+        for _ in 0..10 {
+            sender.queue(create_test_event());
+        }
+
+        // First eviction
+        sender.queue(create_test_event());
+        assert_eq!(sender.metrics().evicted, 1);
+
+        // Second eviction
+        sender.queue(create_test_event());
+        assert_eq!(sender.metrics().evicted, 2);
+
+        // Third eviction
+        sender.queue(create_test_event());
+        assert_eq!(sender.metrics().evicted, 3);
+    }
+
+    #[test]
+    fn test_reset_metrics() {
+        let mut sender = create_test_sender();
+
+        // Fill buffer and cause eviction
+        for _ in 0..15 {
+            sender.queue(create_test_event());
+        }
+        assert_eq!(sender.metrics().evicted, 5);
+        assert_eq!(sender.metrics().queued, 10);
+
+        // Reset metrics
+        sender.reset_metrics();
+
+        let metrics = sender.metrics();
+        assert_eq!(metrics.sent, 0);
+        assert_eq!(metrics.failed, 0);
+        assert_eq!(metrics.evicted, 0);
+        // Buffer is not cleared by reset_metrics
+        assert_eq!(metrics.queued, 10);
+    }
+
+    #[test]
+    fn test_sender_metrics_equality() {
+        let m1 = SenderMetrics {
+            queued: 5,
+            sent: 100,
+            failed: 2,
+            evicted: 10,
+        };
+        let m2 = SenderMetrics {
+            queued: 5,
+            sent: 100,
+            failed: 2,
+            evicted: 10,
+        };
+        let m3 = SenderMetrics {
+            queued: 5,
+            sent: 101,
+            failed: 2,
+            evicted: 10,
+        };
+
+        assert_eq!(m1, m2);
+        assert_ne!(m1, m3);
+    }
+
+    #[test]
+    fn test_sender_metrics_clone() {
+        let m1 = SenderMetrics {
+            queued: 5,
+            sent: 100,
+            failed: 2,
+            evicted: 10,
+        };
+        let m2 = m1;
+
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn test_sender_metrics_debug() {
+        let metrics = SenderMetrics {
+            queued: 5,
+            sent: 100,
+            failed: 2,
+            evicted: 10,
+        };
+        let debug_str = format!("{:?}", metrics);
+
+        assert!(debug_str.contains("queued: 5"));
+        assert!(debug_str.contains("sent: 100"));
+        assert!(debug_str.contains("failed: 2"));
+        assert!(debug_str.contains("evicted: 10"));
     }
 }

@@ -1,0 +1,113 @@
+# Example workflow demonstrating VibeTea monitor deployment in GitHub Actions
+#
+# This workflow shows how to track Claude Code events during CI runs.
+# Copy and adapt this for your own workflows.
+#
+# Prerequisites:
+# 1. Export your private key: vibetea-monitor export-key
+# 2. Add VIBETEA_PRIVATE_KEY secret in repository settings
+# 3. Add VIBETEA_SERVER_URL secret with your server URL
+# 4. Register your public key with the VibeTea server
+#
+# The monitor runs in the background and captures Claude Code events
+# during the workflow. It is non-blocking: network failures won't fail
+# your workflow.
+
+name: CI with VibeTea Monitoring
+
+on:
+  workflow_dispatch:  # Manual trigger for testing
+  # Uncomment these for production use:
+  # pull_request:
+  # push:
+  #   branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-with-monitoring:
+    name: Build with VibeTea Monitoring
+    runs-on: ubuntu-latest
+
+    # Set VibeTea environment variables from secrets
+    env:
+      VIBETEA_PRIVATE_KEY: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+      VIBETEA_SERVER_URL: ${{ secrets.VIBETEA_SERVER_URL }}
+      # Custom source ID using GitHub context for traceability
+      # Format: github-<owner>/<repo>-<run_id>
+      VIBETEA_SOURCE_ID: "github-${{ github.repository }}-${{ github.run_id }}"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Download pre-built monitor binary from releases
+      # Alternative: Build from source with cargo build --release
+      - name: Download VibeTea Monitor
+        run: |
+          # Download latest release binary
+          curl -fsSL -o vibetea-monitor \
+            "https://github.com/aaronbassett/VibeTea/releases/latest/download/vibetea-monitor-x86_64-unknown-linux-gnu" \
+            || echo "::warning::Failed to download monitor binary"
+
+          # Make executable if download succeeded
+          if [ -f vibetea-monitor ]; then
+            chmod +x vibetea-monitor
+            echo "VibeTea monitor downloaded successfully"
+          fi
+
+      # Start monitor in background before any Claude Code operations
+      - name: Start VibeTea Monitor
+        run: |
+          if [ -f vibetea-monitor ] && [ -n "$VIBETEA_PRIVATE_KEY" ]; then
+            ./vibetea-monitor run &
+            MONITOR_PID=$!
+            echo "MONITOR_PID=$MONITOR_PID" >> $GITHUB_ENV
+            echo "VibeTea monitor started (PID: $MONITOR_PID)"
+            echo "Source ID: $VIBETEA_SOURCE_ID"
+          else
+            echo "::warning::VibeTea monitor not started (missing binary or credentials)"
+          fi
+
+      # Install Rust toolchain
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Cache cargo dependencies
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Your CI steps here - Claude Code events during these will be tracked
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --workspace -- --test-threads=1
+
+      - name: Build release
+        run: cargo build --workspace --release
+
+      # Graceful shutdown - send SIGTERM to monitor
+      # The monitor will flush any buffered events before exiting
+      - name: Stop VibeTea Monitor
+        if: always()  # Run even if previous steps failed
+        run: |
+          if [ -n "$MONITOR_PID" ]; then
+            echo "Stopping VibeTea monitor (PID: $MONITOR_PID)"
+            kill -TERM $MONITOR_PID 2>/dev/null || true
+            # Give it a moment to flush events
+            sleep 2
+          fi

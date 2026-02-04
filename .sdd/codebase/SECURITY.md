@@ -1,7 +1,7 @@
 # Security
 
 > **Purpose**: Document authentication, authorization, security controls, and vulnerability status.
-> **Generated**: 2026-02-04
+> **Generated**: 2026-02-03
 > **Last Updated**: 2026-02-04
 
 ## Authentication
@@ -10,27 +10,56 @@
 
 | Method | Implementation | Configuration |
 |--------|----------------|---------------|
-| Ed25519 Signatures | ed25519-dalek with verify_strict() for RFC 8032 compliance | `server/src/auth.rs` |
-| Bearer Token (WebSocket) | Constant-time string comparison using `subtle::ConstantTimeEq` | `server/src/auth.rs` (lines 269-295) |
+| Ed25519 Signatures | ed25519_dalek | `server/src/auth.rs` |
+| Bearer Token (WebSocket) | Token validation | `server/src/auth.rs` |
+| Environment Variables | Public key registration | `VIBETEA_PUBLIC_KEYS`, `VIBETEA_SUBSCRIBER_TOKEN` |
 
 ### Token Configuration
 
 | Setting | Value | Location |
 |---------|-------|----------|
-| Monitor auth | Ed25519 signatures on request body | `X-Source-ID` and `X-Signature` headers |
-| Signature algorithm | Ed25519 with strict RFC 8032 verification | `server/src/auth.rs` (line 231) |
-| Client auth token type | Bearer token string (any format) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Client token transmission | Query parameter in WebSocket URL | `client/src/hooks/useWebSocket.ts` (line 77) |
-| Client token storage | Browser localStorage with password input masking | `client/src/hooks/useWebSocket.ts` (line 18) |
+| Monitor authentication | Ed25519 digital signatures | X-Source-ID, X-Signature headers |
+| WebSocket authentication | Bearer token (static string) | ?token query parameter |
+| Signing algorithm | Ed25519 (RFC 8032 strict) | Uses `verify_strict()` |
+| Key storage (monitor) | Ed25519 raw seed (32 bytes) | `~/.vibetea/key.priv` (mode 0600) |
+| Public key encoding | Base64 standard (RFC 4648) | Registered via `VIBETEA_PUBLIC_KEYS` |
+| Private key format (env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
+
+### Key Loading Strategy
+
+| Source | Priority | Behavior | Location |
+|--------|----------|----------|----------|
+| Environment variable | First (takes precedence) | `VIBETEA_PRIVATE_KEY` must be valid base64-encoded 32 bytes | `monitor/src/crypto.rs:149-176` |
+| File fallback | Second | `{VIBETEA_KEY_PATH}/key.priv` (defaults to `~/.vibetea`) | `monitor/src/crypto.rs:272-292` |
+| Auto-generation | N/A | Can generate new keypair if neither exists | `monitor/src/crypto.rs:114-122` |
+
+### Key Material Security
+
+| Aspect | Implementation | Location |
+|--------|----------------|----------|
+| Private key seed (32 bytes) | Zeroed after SigningKey creation (zeroize crate) | `monitor/src/crypto.rs:120,173,235,289` |
+| Decoded key buffer | Zeroed on error and success paths | `monitor/src/crypto.rs:163,225,281` |
+| Environment variable trimming | Whitespace/newlines removed before decoding | `monitor/src/crypto.rs:153` |
+| Key length validation | Exactly 32 bytes required, errors on mismatch | `monitor/src/crypto.rs:161,222,279` |
+| File permissions | Unix mode 0600 (owner read/write only) | `monitor/src/crypto.rs:334-338` |
+
+### Signature Verification
+
+| Component | Detail |
+|-----------|--------|
+| Public key bytes | 32 bytes Ed25519 |
+| Signature bytes | 64 bytes Ed25519 |
+| Constant-time comparison | Used with `subtle::ConstantTimeEq` |
+| Message content | Full HTTP request body (prevents tampering) |
 
 ### Session Management
 
 | Setting | Value |
 |---------|-------|
-| Session storage | In-memory event broadcaster; no persistent user sessions |
-| WebSocket persistence | Automatic exponential backoff reconnection (1s-60s with jitter) |
-| Idle timeout | Browser manages timeout; server-side connection can be long-lived |
-| Token TTL | No expiration implemented; static bearer token |
+| Session type | Stateless per-request authentication |
+| Token type | Non-expiring static bearer token (WebSocket only) |
+| Storage | Environment variables + in-memory configuration |
+| Timeout | No timeout (continuous WebSocket connection) |
 
 ## Authorization
 
@@ -38,43 +67,51 @@
 
 | Model | Description |
 |-------|-------------|
-| Source-based signature verification | Each monitor has unique source_id and Ed25519 public key pair |
-| Bearer token validation | WebSocket clients share single subscriber token for read-only access |
+| Source-based | Event sources are identified by source_id and must match registered public keys |
+| Token-based | WebSocket clients authenticate with a single shared token |
+| No granular roles | All sources have same permissions; all WebSocket clients have same permissions |
 
-### Roles & Permissions
+### Permissions
 
-| Entity | Permissions | Scope |
-|--------|-------------|-------|
-| Monitor (Authenticated via signature) | Submit events via POST /events | Event publication only |
-| WebSocket Client (Authenticated via token) | Subscribe to events via /ws with optional filtering | Event consumption only |
+| Actor | Permissions | Scope |
+|-------|------------|-------|
+| Registered monitor (source_id) | Submit events to POST /events | Events matching authenticated source_id |
+| WebSocket client (valid token) | Subscribe to event stream | All events (with optional filtering by source/type/project) |
+| Unknown monitor | Rejected at authentication stage | N/A |
+| Invalid token | Rejected at authentication stage | N/A |
 
 ### Permission Checks
 
 | Location | Pattern | Example |
 |----------|---------|---------|
-| Event submission | Header validation + Ed25519 signature verification | `server/src/routes.rs:261-290` |
-| WebSocket upgrade | Bearer token validation before upgrade | `server/src/routes.rs:452-501` |
-| Rate limiting | Per-source-id token bucket algorithm | `server/src/rate_limit.rs` |
+| API events endpoint | Signature verification | `server/src/routes.rs:293` |
+| WebSocket endpoint | Token validation | `server/src/routes.rs:483` |
+| Event validation | Source ID matching | `server/src/routes.rs:348` - Events must match authenticated source |
 
 ## Input Validation
 
 ### Validation Strategy
 
-| Layer | Method | Library |
-|-------|--------|---------|
-| API headers | Required header presence and non-empty validation | Custom validation in `server/src/routes.rs` |
-| Event payload | JSON deserialization with typed Event struct | `serde_json` with `types::Event` schema |
-| Config parsing | Format validation for environment variables | Custom parser in `server/src/config.rs` (lines 154-200) |
-| Token validation | Whitespace trim + empty string rejection + constant-time comparison | `server/src/auth.rs` (lines 269-295) |
+| Layer | Method | Implementation |
+|-------|--------|-----------------|
+| Event payload (API) | JSON deserialization | serde with custom Event types |
+| Private key (env var) | Base64 + length validation | Standard RFC 4648 base64, exactly 32 bytes |
+| Private key (file) | File size validation | Exactly 32 bytes required |
+| Session name | Alphanumeric + hyphens/underscores | `monitor/src/tui/widgets/setup_form.rs:90-114` |
+| Headers | String length and format checks | Empty string rejection |
+| Request body | Size limit | 1 MB maximum (DefaultBodyLimit) |
+| Event fields | Type validation | Timestamp, UUID, enum types enforced by serde |
 
 ### Sanitization
 
 | Data Type | Sanitization | Location |
 |-----------|--------------|----------|
-| Base64 encoded signatures | Decode and validate 64-byte length | `server/src/auth.rs:218-225` |
-| Base64 encoded public keys | Decode and validate 32-byte Ed25519 format | `server/src/auth.rs:204-215` |
-| Source identifiers | Non-empty string validation during config parse | `server/src/config.rs:179-187` |
-| WebSocket messages (client) | Structural JSON validation of required fields | `client/src/hooks/useWebSocket.ts:110-118` |
+| Event JSON | Deserialization validates structure | `server/src/routes.rs:329` |
+| Headers | Whitespace trimming + empty check | `server/src/auth.rs:270-276` |
+| Source ID | Must not be empty | `server/src/config.rs:182-187` |
+| Public key | Must not be empty, must be valid base64 | `server/src/config.rs:189-193` |
+| Private key (env var) | Whitespace trimmed before base64 decode | `monitor/src/crypto.rs:153` |
+| Session name | 64 char max, alphanumeric + `-_` only | `monitor/src/tui/widgets/setup_form.rs:99-107` |
 
 ## Data Protection
 
@@ -82,163 +119,230 @@
 
 | Data Type | Protection Method | Storage |
 |-----------|-------------------|---------|
-| Ed25519 public keys | Base64 encoded in trusted configuration | Environment variable `VIBETEA_PUBLIC_KEYS` |
-| Bearer token (server) | Environment variable, no logging | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` |
-| Bearer token (client) | Password input type; localStorage storage | Browser localStorage (accessed via `TOKEN_STORAGE_KEY`) |
-| Event payloads | No persistence; in-memory broadcast only | Ephemeral in-memory distribution |
-| Signatures | Base64 encoded, verified but not stored | Transient; used only for verification |
+| Private keys (monitor file) | Raw 32-byte seed | `~/.vibetea/key.priv` (mode 0600, owner-only) |
+| Private keys (monitor env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
+| Public keys (server) | Base64-encoded format | Environment variable `VIBETEA_PUBLIC_KEYS` |
+| Subscriber token | Plain string comparison (constant-time) | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` |
+| Event payload | No encryption at rest | In-memory broadcast channel |
 
 ### Encryption
 
-| Type | Algorithm | Key Management |
-|------|-----------|----------------|
-| Signature verification | Ed25519 with RFC 8032 strict mode | Public keys from configuration |
-| Token comparison | Constant-time comparison (no encryption) | Timing attack resistance |
-| Transport security | TLS 1.3 (enforced by client via wss://) | Managed by deployment reverse proxy |
-| At-rest encryption | None (events not persisted) | N/A |
+| Type | Algorithm | Implementation |
+|------|-----------|-----------------|
+| In transit | TLS 1.3+ | Requires HTTPS/WSS in production |
+| At rest | None | Events are in-memory only, not persisted |
+| Signing | Ed25519 deterministic | Uses standard RFC 8032 implementation |
 
-## Security Headers
+### Private Key Security
 
-These headers are NOT configured in the application itself. They must be configured at reverse proxy/deployment level:
+| Aspect | Implementation |
+|--------|-----------------|
+| Generation | Uses OS cryptographically secure RNG (`rand::rng()`) |
+| File permissions | Unix mode 0600 (owner read/write only) |
+| Format | Raw 32-byte seed, not PKCS#8 or other wrapper |
+| File validation | Fails if file size != 32 bytes |
+| Environment variable | Alternative loading via `VIBETEA_PRIVATE_KEY` (base64-encoded) |
+| Memory zeroing | All intermediate buffers zeroed after use (zeroize crate) |
+| Seed array | Explicitly zeroed after SigningKey construction |
+| Error paths | Key material zeroed on decode failures |
 
-| Header | Recommended Value | Purpose |
-|--------|-------------------|---------|
-| Content-Security-Policy | `default-src 'self'; script-src 'self' 'wasm-unsafe-eval'` | XSS protection for React client |
-| X-Frame-Options | `DENY` | Clickjacking protection |
-| X-Content-Type-Options | `nosniff` | MIME sniffing protection |
-| Strict-Transport-Security | `max-age=31536000; includeSubDomains` | HTTPS enforcement |
+### Logging and Secrets
 
-**Implementation note**: Axum has `tower-http` CORS feature available but not actively configured in `server/src/routes.rs`. Configuration should be added or done at reverse proxy.
+| Practice | Implementation | Location |
+|----------|-----------------|----------|
+| Private key logging | Never logged (no string conversion of seed) | Throughout `monitor/src/crypto.rs` |
+| Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:551-553` |
+| Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:44-49` |
 
-## CORS Configuration
+## Key Management
 
-| Setting | Current Value |
-|---------|---------------|
-| CORS headers | Not configured in application |
-| Allowed origins | Browser enforces same-origin for WebSocket |
-| Methods | GET (health, /ws), POST (/events) |
-| Credentials | Query parameter token (not HTTP credentials) |
+### Key Generation
 
-**Note**: CORS should be explicitly configured at reverse proxy level.
+- **Method**: `Crypto::generate()` using OS RNG via `rand::rng()`
+- **Location**: `monitor/src/crypto.rs:114-122`
+- **Seed**: 32 random bytes, zeroized after key construction
 
-## Rate Limiting
+### Key Backup Functionality (Phase 9 - NEW)
 
-Rate limiting implemented per source-id using token bucket algorithm:
+| Feature | Implementation | Location |
+|---------|----------------|----------|
+| Backup existing keys | `backup_existing_keys()` method | `monitor/src/crypto.rs:404-440` |
+| Backup format | Timestamp suffix: `key.priv.backup.YYYYMMDD_HHMMSS` | Line 414 |
+| Idempotent backup | Returns `Ok(None)` if no keys exist | Line 410 |
+| Atomic operations | Private key backed up first; restores on public key failure | Lines 417-436 |
+| Generate with backup | `generate_with_backup()` high-level API | Lines 480-489 |
+| Tests | Comprehensive backup test suite (14 tests) | Lines 954-1177 |
+| Timestamp validation | Format YYYYMMDD_HHMMSS (15 chars), parseable | Line 980-981 |
+| Permission preservation | Backup files retain original Unix permissions | Line 1152-1176 |
 
-| Endpoint | Limit | Window | Tracked By |
-|----------|-------|--------|-----------|
-| POST /events | 100 requests | Per second | Source-ID header |
-| GET /ws | No limit | N/A | No per-connection limiting |
-| GET /health | No limit | N/A | No limiting |
+### Key Loading
 
-### Configuration
+| Method | Source | Priority | Location |
+|--------|--------|----------|----------|
+| `load_from_env()` | `VIBETEA_PRIVATE_KEY` env var | - | Lines 149-176 |
+| `load()` | File at `{dir}/key.priv` | - | Lines 272-292 |
+| `load_with_fallback()` | Env var first, file fallback | Env takes precedence | Lines 210-247 |
 
-| Parameter | Value | Location |
-|-----------|-------|----------|
-| Rate | 100.0 tokens/second | `server/src/rate_limit.rs:43` |
-| Burst capacity | 100 tokens | `server/src/rate_limit.rs:46` |
-| Stale cleanup | 60 seconds | `server/src/rate_limit.rs:49` |
-| Storage | In-memory RwLock HashMap | `server/src/rate_limit.rs` |
+### Key Export
+
+| Feature | Implementation | Location |
+|---------|-----------------|----------|
+| CLI subcommand | `vibetea-monitor export-key` | `monitor/src/main.rs` |
+| Output target | stdout only | Stdout contains base64 key + newline |
+| Output format | Base64-encoded seed + single newline | FR-003 compliant |
+| Diagnostic messages | All go to stderr | FR-023 compliant |
+| Exit code success | 0 | - |
+| Exit code failure | 1 (configuration error) | - |
+| Path argument | Optional --path flag for key directory | - |
+| Error handling | Missing key returns error message to stderr | - |
+| Test Coverage | `monitor/tests/key_export_test.rs` (integration tests) | Comprehensive roundtrip validation |
+
+### Setup Form Key Option (Phase 9)
+
+| Feature | Behavior | Location |
+|---------|----------|----------|
+| Key option display | Conditional based on `existing_keys_found` | `monitor/src/tui/widgets/setup_form.rs:309-353` |
+| No keys found | Only "Generate new key" shown (no radio toggle) | Lines 345-352 |
+| Keys found | Both options shown with radio button indicators | Lines 310-343 |
+| User selection | Toggle between "Use existing" and "Generate new" | Enforces choice during setup |
+
+## Privacy Controls
+
+### Sensitive Tool Filtering
+
+| Tool | Context Handling | Purpose |
+|------|------------------|---------|
+| Bash | Always stripped | Prevent shell command exposure |
+| Grep | Always stripped | Prevent search pattern exposure |
+| Glob | Always stripped | Prevent path pattern exposure |
+| WebSearch | Always stripped | Prevent query exposure |
+| WebFetch | Always stripped | Prevent URL exposure |
+
+### Path Sanitization
+
+- Full paths reduced to basenames before transmission
+- Example: `/home/user/project/src/auth.ts` → `auth.ts`
+- Implementation: `monitor/src/privacy.rs:433-442`
+
+### Extension Allowlist
+
+- Environment variable: `VIBETEA_BASENAME_ALLOWLIST` (comma-separated)
+- Example: `.rs,.ts,.md` - only these files transmitted
+- Files with disallowed extensions: context stripped
+- Default: Allow all extensions
+
+### Privacy Pipeline
+
+- **Location**: `monitor/src/privacy.rs`
+- **Processing**: All event payloads filtered before transmission
+- **Session events**: Passed through (project sanitized at parse time)
+- **Summary events**: Text stripped to "Session ended"
+- **Error events**: Passed through (category pre-sanitized)
+
+## Cryptographic Best Practices
+
+### Signature Algorithm
+
+- **Algorithm**: Ed25519 (RFC 8032 compliant)
+- **Library**: `ed25519_dalek` with `verify_strict()`
+- **Benefit**: Deterministic, pre-hashing protection, strong curve
+
+### Constant-Time Operations
+
+- **Token comparison**: `subtle::ConstantTimeEq` for bearer tokens
+- **Location**: `server/src/auth.rs:290`
+- **Purpose**: Prevent timing attacks on token validation
+
+### Error Handling
+
+- **No detailed errors on invalid signature**: Returns generic `InvalidSignature`
+- **Unknown source**: Returns specific `UnknownSource` (source discovery risk accepted)
+- **Implementation**: `server/src/auth.rs:49-145`
 
 ## Secrets Management
 
 ### Environment Variables
 
-| Category | Variable | Required | Format | Example |
-|----------|----------|----------|--------|---------|
-| Auth bypass | `VIBETEA_UNSAFE_NO_AUTH` | No | "true" to disable auth | (dev only) |
-| Public keys | `VIBETEA_PUBLIC_KEYS` | Yes if auth enabled | `source:base64key,source2:base64key2` | See config.rs |
-| Subscriber token | `VIBETEA_SUBSCRIBER_TOKEN` | Yes if auth enabled | Any string | Any 32+ char string recommended |
-| Server port | `PORT` | No | Numeric | 8080 (default) |
-| Logging level | `RUST_LOG` | No | Log filter | info (default) |
+| Category | Naming | Example | Purpose |
+|----------|--------|---------|---------|
+| Private Key | `VIBETEA_PRIVATE_KEY` | Base64-encoded 32-byte seed | Monitor signing key |
+| Public Keys | `VIBETEA_PUBLIC_KEYS` | Space/comma-separated base64 keys | Server key registry |
+| WebSocket Token | `VIBETEA_SUBSCRIBER_TOKEN` | Bearer token string | Client authentication |
 
-### Secrets Storage by Environment
+### Secrets Storage
 
-| Environment | Method | Notes |
-|-------------|--------|-------|
-| Development | Environment variable or shell export | `VIBETEA_UNSAFE_NO_AUTH=true` bypasses auth entirely |
-| CI/CD | GitHub Actions secrets | Never commit secrets to repository |
-| Production | Fly.io environment secrets | Runtime variable injection |
+| Environment | Method | Security Notes |
+|-------------|--------|-----------------|
+| Development | `.env` files (gitignored) or export statements | File-based, cleartext |
+| GitHub Actions | GitHub Secrets | AES-128 encrypted at rest, rotatable |
+| Production | Environment variables via container orchestration | Depends on orchestration platform |
+| Private keys (file) | File-based (~/.vibetea/key.priv with mode 0600) | Owner-only readable |
+| Private keys (env var) | Environment variable (base64-encoded) | Visible in process listing; GitHub Secrets encrypted |
+
+### No Hardcoded Secrets
+
+- All sensitive values loaded from environment variables
+- No default credentials in code
+- Key files stored with restrictive permissions (0600 for private, 0644 for public)
+
+## Rate Limiting
+
+| Endpoint | Default Limit | Configuration |
+|----------|---------------|---------------|
+| POST /events | 100 requests/sec | 100 token capacity per source |
+| GET /ws | No per-connection limit | WebSocket is persistent subscription |
+| Rate limiter cleanup | Every 30 seconds | Removes inactive sources after 60 seconds |
+
+### Rate Limit Algorithm
+
+| Aspect | Detail |
+|--------|--------|
+| Type | Token bucket algorithm |
+| Granularity | Per source_id |
+| Rate | 100 tokens/second (default) |
+| Capacity | 100 tokens (allows bursts) |
+| Response | 429 Too Many Requests with Retry-After header |
 
 ## Audit Logging
 
-| Event | Logged Data | Location | Level |
-|-------|-------------|----------|-------|
-| Server startup | Port, auth mode, public_key_count | `server/src/main.rs:74-79` | info |
-| Auth failures | Source-ID, error type | `server/src/routes.rs` | debug/warn |
-| Rate limit exceeded | Source-ID, retry_after_secs | `server/src/routes.rs` | info |
-| WebSocket connection | Filter configuration | `server/src/routes.rs:494-497` | info |
-| WebSocket disconnection | (minimal) | `server/src/routes.rs:578` | info |
+| Event | Logged Data | Implementation |
+|-------|-------------|-----------------|
+| Signature Verification | Success/failure, source_id | `server/src/auth.rs` (error types) |
+| Token Validation | Success/failure | `server/src/auth.rs:269-295` |
+| Key Load | Source (file or env var) + fingerprint | `KeySource` enum + startup logging |
+| Key Generation | Fingerprint (first 8 chars of pubkey) | `monitor/src/crypto.rs:551-553` |
+| Rate limit exceeded | source_id, retry_after | info level |
+| WebSocket connect | filter params | info level |
 
-**Logging framework**: Structured JSON output via `tracing` crate; controllable via `RUST_LOG` env var.
+## Security Headers
 
----
+| Header | Status | Note |
+|--------|--------|------|
+| X-Source-ID | Required | Must be non-empty string |
+| X-Signature | Required (when auth enabled) | Base64-encoded Ed25519 signature |
+| Content-Type | Assumed application/json | Not validated, accepted from client |
+| Retry-After | Conditional | Only set on 429 responses |
 
-## Critical Security Patterns
+## CORS Configuration
 
-### Ed25519 Signature Verification (RFC 8032 Compliant)
-
-The implementation uses cryptographic best practices:
-
-- **Strict RFC 8032 verification**: Uses `VerifyingKey::verify_strict()` instead of lenient mode
-- **Comprehensive error handling**: Distinct errors for unknown source, invalid signature, malformed keys
-- **Test coverage**: 20+ test cases covering invalid inputs, edge cases, multiple sources
-
-**Code location**: `server/src/auth.rs:192-233`
-
-**Key test cases**:
-- Valid signature verification
-- Tampered message detection
-- Wrong key rejection
-- Invalid base64 handling
-- Identity point rejection
-
-### Constant-Time Token Comparison
-
-Bearer token validation uses timing-attack-resistant comparison:
-
-```rust
-// server/src/auth.rs:290
-if provided_bytes.ct_eq(expected_bytes).into() {
-    Ok(())
-} else {
-    Err(AuthError::InvalidToken)
-}
-```
-
-This prevents attackers from guessing tokens byte-by-byte based on response timing.
-
-### Test Parallelism Safety
-
-Environment variable tests use RAII pattern to prevent interference:
-
-- Tests marked with `#[serial]` attribute
-- `EnvGuard` struct saves/restores environment state
-- CI runs with `--test-threads=1` to prevent race conditions
-
-**Location**: `server/src/config.rs:209-240`
+| Setting | Value |
+|---------|-------|
+| Allowed origins | All (no CORS policy enforced in codebase) |
+| Allowed methods | POST (events), GET (ws, health) |
+| Credentials | WebSocket token via query param |
 
 ---
 
-## Known Security Controls
+## Development Mode Security
 
-### Implemented Defenses
+### VIBETEA_UNSAFE_NO_AUTH Mode
 
-1. **Input validation**: Non-empty headers, base64 validation, JSON type checking
-2. **Cryptographic verification**: RFC 8032 compliant Ed25519 with strict verification
-3. **Rate limiting**: Per-source token bucket (100 req/sec capacity)
-4. **Constant-time comparison**: Token validation resists timing attacks
-5. **Request size limits**: 1 MB maximum body size
-6. **Configuration validation**: Public key format and presence checks
-
-### Missing/Incomplete Controls
-
-See CONCERNS.md for:
-- Token expiration mechanism
-- HTTPS enforcement (must be at reverse proxy)
-- Security headers configuration
-- Per-connection WebSocket rate limiting
-- Distributed rate limiting across multiple instances
+When `VIBETEA_UNSAFE_NO_AUTH=true`:
+- All signature verification is skipped
+- WebSocket token validation is skipped
+- WARNING logged at startup
+- Intended for local development only
+- Located in `server/src/config.rs:94-99`
 
 ---
 
@@ -250,4 +354,4 @@ See CONCERNS.md for:
 
 ---
 
-*This document defines security controls. Update when security posture changes.*
+*This document defines active security controls. Review when adding authentication methods or cryptographic operations.*

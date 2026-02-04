@@ -1,15 +1,16 @@
 # Technology Stack
 
-**Status**: Phase 10 Implementation - Session overview cards with activity indicators and timeout management
-**Last Updated**: 2026-02-02
+**Status**: Phase 11 - Monitor TUI with default launch, terminal size validation, NO_COLOR support, and signal handling
+**Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, CLI with TUI, export-key |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
+| GitHub Actions | YAML/Bash | - | Composite action for monitor integration and workflow orchestration |
 
 ## Frameworks & Runtime Libraries
 
@@ -37,8 +38,12 @@
 | directories        | 6.0     | Standard directory paths | Monitor |
 | gethostname        | 1.0     | System hostname retrieval | Monitor |
 | subtle             | 2.6     | Constant-time comparison for cryptography | Server (auth) |
+| zeroize            | 1.8     | Secure memory wiping for cryptographic material | Monitor (Phase 3) |
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
+| clap               | 4.5     | CLI argument parsing with derive macros | Monitor (clap Subcommand/Parser for export-key, Phase 4) |
+| ratatui            | 0.29    | Terminal UI framework (Phase 11) | Monitor (TUI rendering) |
+| crossterm          | 0.29    | Terminal backend for ratatui (Phase 11) | Monitor (terminal control, input handling) |
 
 ### TypeScript/JavaScript (Client)
 
@@ -73,6 +78,8 @@
 |--------------|---------|---------|
 | tokio-test   | 0.4     | Tokio testing utilities |
 | tempfile     | 3.15    | Temporary file/directory management for tests |
+| serial_test  | 3.2     | Serial test execution for environment variable tests |
+| wiremock     | 0.6     | HTTP mocking for integration tests |
 
 ### TypeScript Testing
 | Package                | Version  | Purpose |
@@ -92,6 +99,7 @@
 | `Cargo.toml` (workspace) | Cargo | Rust workspace configuration and shared dependencies |
 | `server/Cargo.toml` | Cargo | Server package configuration |
 | `monitor/Cargo.toml` | Cargo | Monitor package configuration |
+| `.github/actions/vibetea-monitor/action.yml` | GitHub Actions | Composite action for monitor deployment (Phase 6) |
 
 ## Runtime Environment
 
@@ -99,13 +107,15 @@
 |--------|---------|
 | Server Runtime | Rust binary (tokio async) |
 | Client Runtime | Browser (ES2020+) |
-| Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI |
+| Monitor Runtime | Native binary (Linux/macOS/Windows) with CLI and TUI (Phase 11) |
 | Node.js | Required for development and client build only |
 | Async Model | Tokio (Rust), Promises (TypeScript) |
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
-| CLI Support | Manual command parsing in monitor main.rs (init, run, help, version) |
+| CLI Support | clap Subcommand enum for command parsing (init, run, export-key, tui via clap derive macros, Phase 11) |
+| TUI Mode | ratatui terminal UI with crossterm backend (Phase 11, default launch mode) |
+| CI/CD Integration | GitHub Actions workflow with monitor deployment and background execution (Phase 5), composite action wrapper (Phase 6) |
 
 ## Communication Protocols & Formats
 
@@ -115,6 +125,7 @@
 | Server → Client | WebSocket | JSON | Bearer token |
 | Client → Server | WebSocket | JSON | Bearer token |
 | Monitor → File System | Native | JSONL | N/A (local file access) |
+| GitHub Actions | SSH/HTTPS | Binary download + env var injection | GitHub Actions secrets |
 
 ## Data Serialization
 
@@ -131,7 +142,7 @@
 | Component | Output | Format | Deployment |
 |-----------|--------|--------|-----------|
 | Server | Binary | ELF (Linux) | Docker container on Fly.io |
-| Monitor | Binary | ELF/Mach-O/PE | Standalone executable for users |
+| Monitor | Binary | ELF/Mach-O/PE | Standalone executable for users or GitHub Actions |
 | Client | Static files | JS + CSS (Brotli compressed) | CDN (Netlify/Vercel/Cloudflare) |
 
 ## Module Organization
@@ -173,10 +184,33 @@
 - `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction)
 - `watcher.rs` - File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
 - `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
-- `crypto.rs` - **Phase 6**: Ed25519 keypair generation, loading, saving, and event signing
+- `crypto.rs` - **Phase 3-6**: Ed25519 keypair generation, loading, saving, and event signing with memory safety
 - `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
-- `main.rs` - **Phase 6**: CLI entry point with init and run commands
+- `main.rs` - **Phase 4/11**: CLI entry point with init, run, export-key commands, and TUI mode (clap Subcommand enum)
 - `lib.rs` - Public interface
+- `tui/` - **Phase 11**: Terminal user interface module
+  - `mod.rs` - Module exports and documentation
+  - `terminal.rs` - Terminal setup, raw mode management, panic hook installation
+  - `app.rs` - Application state, event loop, theme management, NO_COLOR support
+  - `ui.rs` - Frame rendering and layout composition
+  - `input.rs` - Keyboard event handling (Escape, Ctrl+C, 'q' quit handlers)
+  - `widgets/` - Reusable TUI components
+    - `mod.rs` - Widget module exports
+    - `logo.rs` - VibeTea logo display
+    - `setup_form.rs` - Setup configuration form UI
+    - `credentials.rs` - Credentials input widget
+    - `event_stream.rs` - Event stream display
+    - `stats_footer.rs` - Statistics footer
+    - `header.rs` - Header widget
+    - `size_warning.rs` - **Phase 11**: Terminal size validation (80x24 minimum)
+
+### GitHub Actions (Phase 6)
+- `.github/actions/vibetea-monitor/action.yml` - **Phase 6**: Composite action for monitor integration
+  - Downloads monitor binary from releases
+  - Configures environment variables
+  - Starts monitor in background
+  - Manages process lifecycle
+  - Outputs monitor PID and status for downstream cleanup
 
 ## Deployment Targets
 
@@ -184,39 +218,217 @@
 |-----------|--------|-----------|-------|
 | Server | Fly.io | Docker | Single Rust binary, minimal base image |
 | Client | CDN | Static files | Optimized builds with compression |
-| Monitor | Local | Native binary | Users download and run locally |
+| Monitor | Local + GitHub Actions | Native binary + workflow | Users download locally or use in CI workflows (Phase 5); TUI available locally (Phase 11) |
+
+## GitHub Actions Integration (Phase 6)
+
+### Composite Action File
+**Location**: `.github/actions/vibetea-monitor/action.yml` (167 lines)
+
+### Features
+- **Composite action**: Simplified reusable workflow action for monitor integration
+- **Binary download**: Fetches pre-built monitor from releases with version control
+- **Background execution**: Starts monitor daemon with process tracking
+- **Environment setup**: Accepts private key, server URL, and source ID as inputs
+- **Process management**: Outputs monitor PID and status for lifecycle management
+- **Graceful shutdown**: Documented pattern for cleanup step
+- **Non-blocking**: Network failures don't fail workflows
+
+### Action Inputs
+- `server-url` (required): VibeTea server URL
+- `private-key` (required): Base64-encoded Ed25519 private key
+- `source-id` (optional): Custom source identifier (defaults to `github-<repo>-<run_id>`)
+- `version` (optional): Monitor version to download (default: `latest`)
+- `shutdown-timeout` (optional): Seconds to wait for graceful shutdown (default: `5`)
+
+### Action Outputs
+- `monitor-pid`: Process ID of running monitor
+- `monitor-started`: Boolean indicating successful startup
+
+### Workflow Integration
+- Simplifies monitor setup from multi-step manual process to single reusable action
+- Handles binary download with fallback warnings
+- Validates required environment variables before starting monitor
+- Enables version pinning for reproducible CI/CD pipelines
+
+## GitHub Actions Workflow File
+
+### Workflow File
+**Location**: `.github/workflows/ci-with-monitor.yml` (114 lines)
+
+### Features:
+- **Monitor Binary Download**: Fetches pre-built monitor from releases (x86_64-unknown-linux-gnu)
+- **Background Execution**: Starts monitor daemon in background with `./vibetea-monitor run &`
+- **Environment Setup**: Sets VIBETEA_PRIVATE_KEY and VIBETEA_SERVER_URL from GitHub secrets
+- **Source ID Tracking**: Uses `github-{owner}/{repo}-{run_id}` format for workflow traceability
+- **Graceful Shutdown**: Sends SIGTERM to monitor at workflow end with 2-second flush window
+- **Non-Blocking**: Network failures don't fail workflow (monitor exits gracefully)
+- **CI Integration**: Runs alongside existing Rust/TypeScript tests and builds
+- **Binary Caching**: Uses standard GitHub Actions cache for cargo dependencies
+
+### Configuration:
+- Private key from `secrets.VIBETEA_PRIVATE_KEY` (base64-encoded via export-key)
+- Server URL from `secrets.VIBETEA_SERVER_URL`
+- Custom source ID format enables filtering events by workflow run
+- Monitor captures Claude Code events during PR reviews, linting, testing, builds
+
+### Workflow Steps:
+1. Checkout code
+2. Download monitor binary from releases (with graceful fallback)
+3. Start monitor in background before CI steps
+4. Run standard CI jobs (formatting, linting, tests, builds)
+5. Stop monitor gracefully on workflow completion (always runs)
+
+---
+
+## Phase 2 Enhancements
+
+**Monitor Crypto Module Enhancements** (`monitor/src/crypto.rs`):
+- **KeySource enum**: Tracks where private key was loaded from
+  - `EnvironmentVariable` - Key from VIBETEA_PRIVATE_KEY env var
+  - `File(PathBuf)` - Key loaded from file at specific path
+- **public_key_fingerprint()**: Returns first 8 characters of base64-encoded public key
+  - Used for key verification in logs without exposing full key
+  - Allows users to verify correct keypair with server registration
+  - Always 8 characters long, prefix of full public key base64
+- **Enhanced logging**: Can now report KeySource at startup (INFO level)
+- **Backward compatible**: KeySource is for tracking only, doesn't affect signing/verification
+
+## Phase 3 Enhancements
+
+**Memory Safety & Key Loading Improvements** (`monitor/src/crypto.rs`):
+- **zeroize crate integration** (v1.8):
+  - Securely wipes sensitive memory (seed bytes, decoded buffers) after use
+  - Applied in key generation: seed zeroized after SigningKey construction
+  - Applied in load_from_env(): decoded buffer zeroized on both success and error paths
+  - Applied in load_with_fallback(): decoded buffer zeroized on error paths
+  - Prevents sensitive key material from remaining in memory dumps
+  - Complies with FR-020: Zero intermediate key material after key operations
+
+- **load_from_env() method**:
+  - Loads Ed25519 private key from `VIBETEA_PRIVATE_KEY` environment variable
+  - Expects base64-encoded 32-byte seed (RFC 4648 standard)
+  - Trims whitespace (including newlines) before decoding
+  - Returns tuple: (Crypto instance, KeySource::EnvironmentVariable)
+  - Validates decoded length is exactly 32 bytes
+  - Error on missing/empty/invalid base64/wrong length
+  - Uses zeroize on both success and error paths
+
+- **load_with_fallback() method**:
+  - Implements key precedence: environment variable first, then file
+  - If `VIBETEA_PRIVATE_KEY` is set, loads from it with NO fallback on error
+  - If env var not set, loads from `{dir}/key.priv` file
+  - Returns tuple: (Crypto instance, KeySource indicating source)
+  - Enables flexible key management without code changes
+  - Error handling: env var errors are terminal (no fallback)
+
+- **seed_base64() method**:
+  - Exports private key as base64-encoded string
+  - Inverse of load_from_env() for key migration workflows
+  - Suitable for storing in `VIBETEA_PRIVATE_KEY` environment variable
+  - Marked sensitive: handle with care, avoid logging
+  - Used for user-friendly key export workflows
+
+- **CryptoError::EnvVar variant**:
+  - New error variant for environment variable issues
+  - Returned when `VIBETEA_PRIVATE_KEY` is missing or empty
+  - Distinct from file-based key loading errors
+  - Enables precise error handling and logging
 
 ## Phase 4 Additions
 
-**Monitor Parser Module** (`monitor/src/parser.rs`):
-- Claude Code JSONL parsing with privacy-first approach
-- Extracts only metadata: tool names, timestamps, file basenames
-- Never processes code content, prompts, or assistant responses
-- Event mapping: assistant tool_use → ToolStarted, progress PostToolUse → ToolCompleted
-- SessionParser state tracking for multi-line file processing
-- ParsedEvent and ParsedEventKind types for normalized event representation
-- Support for session detection from file paths (slugified project names)
-- Comprehensive ParseError enum for error handling
+**Monitor CLI Enhancement** (`monitor/src/main.rs` - 566 lines):
+- **Clap Subcommand enum**: Structured command parsing with derive macros (Phase 4)
+  - Replaces manual argument parsing with type-safe clap framework
+  - Command variants: Init, ExportKey, Run
+  - Automatic help generation and version output
 
-**Monitor File Watcher Module** (`monitor/src/watcher.rs`):
-- Watches `~/.claude/projects/**/*.jsonl` for changes using notify crate
-- Position tracking map to efficiently tail files (no re-reading previous content)
-- WatchEvent enum: FileCreated, LinesAdded, FileRemoved
-- BufReader-based line reading with seek position management
-- Automatic cleanup of removed files from position tracking
-- WatcherError enum for I/O and initialization failures
-- Thread-safe Arc<RwLock<>> position map for async operation
+- **ExportKey subcommand** (lines 101-109):
+  - Command: `vibetea-monitor export-key [--path <PATH>]`
+  - Loads private key from disk (not environment variable)
+  - Outputs base64-encoded seed to stdout (only the key + single newline)
+  - All diagnostic messages go to stderr
+  - Exit code 0 on success, 1 on missing key/invalid path
+  - Suitable for piping to clipboard tools or secret management systems
+  - Enables GitHub Actions workflow integration (FR-003, FR-023)
 
-**New Dependencies**:
-- `futures` 0.3 - Futures trait and utilities for async coordination
-- `tempfile` 3.15 - Temporary file/directory management for testing
+- **run_export_key() function** (lines 180-202):
+  - Accepts optional `--path` argument for custom key directory
+  - Defaults to `get_key_directory()` if path not provided
+  - Calls `Crypto::load()` to read from disk (not env var precedence)
+  - Prints only the base64 seed followed by newline to stdout
+  - Errors written to stderr with helpful message
+  - Exit with code 1 if key not found or unreadable
 
-**Enhanced Module Exports** (`monitor/src/lib.rs`):
-- Public exports: FileWatcher, WatchEvent, WatcherError
-- Public exports: SessionParser, ParsedEvent, ParsedEventKind
-- Documentation expanded with overview, privacy statement, and module descriptions
+- **Init command enhancement**:
+  - Existing `vibetea-monitor init [--force]` still works
+  - Uses clap derive for flags (--force/-f)
+  - Displays instructions for exporting key
+
+- **Run command**:
+  - Existing functionality preserved
+  - Uses tokio runtime builder for async execution
+
+- **CLI help text**:
+  - Updated with export-key example
+  - Lists all environment variables
+  - Shows example workflows
+
+**Integration Test Suite** (`monitor/tests/key_export_test.rs` - 699 lines):
+- **Framework**: Uses `serial_test` crate to run tests with `--test-threads=1` (prevents env var interference)
+- **EnvGuard RAII pattern**: Saves/restores environment variables on drop for test isolation
+
+- **Test Coverage** (13 tests total):
+
+1. **Round-trip Tests** (FR-027, FR-028):
+   - `roundtrip_generate_export_command_import_sign_verify` - Full round-trip: generate → save → export → load env → sign → verify
+   - `roundtrip_export_command_signatures_are_identical` - Ed25519 determinism verification
+
+2. **Output Format Tests** (FR-003):
+   - `export_key_output_format_base64_with_single_newline` - Validates exact output format (base64 + \n)
+   - `export_key_output_is_valid_base64_32_bytes` - Verifies base64 decodes to 32 bytes
+
+3. **Diagnostic Output Tests** (FR-023):
+   - `export_key_diagnostics_go_to_stderr` - Confirms stdout contains only base64 (no prose/labels)
+   - `export_key_error_messages_go_to_stderr` - Error messages on stderr, stdout empty on failure
+
+4. **Exit Code Tests** (FR-026):
+   - `export_key_exit_code_success` - Returns 0 on success
+   - `export_key_exit_code_missing_key_file` - Returns 1 for missing key.priv
+   - `export_key_exit_code_nonexistent_path` - Returns 1 for non-existent directory
+
+5. **Edge Case Tests**:
+   - `export_key_handles_path_with_spaces` - Paths with spaces handled correctly
+   - `export_key_suitable_for_piping` - No ANSI codes, no carriage returns
+   - `export_key_reads_from_key_priv_file` - Reads from correct file with known seed
+
+**Test Infrastructure**:
+- Uses tempfile crate for isolated test directories
+- Uses Command::new() to invoke vibetea-monitor binary
+- Tests use get_monitor_binary_path() to find compiled binary
+- All tests marked with `#[serial]` and `#[test]` attributes
+- Tests verify both success and failure paths
+- Base64 validation using base64 crate
+- Ed25519 signature verification with ed25519_dalek::Verifier
+
+**Requirements Addressed**:
+- FR-003: Export-key command outputs base64 key with single newline
+- FR-023: Diagnostics on stderr, key on stdout
+- FR-026: Exit codes 0 (success), 1 (config error)
+- FR-027: Exported key can be loaded via VIBETEA_PRIVATE_KEY
+- FR-028: Round-trip verified with signature validation
 
 ## Phase 5 Additions
+
+**GitHub Actions Workflow Example** (`.github/workflows/ci-with-monitor.yml` - 114 lines):
+- **Purpose**: Demonstrates monitor deployment in GitHub Actions for tracking Claude Code events during CI
+- **Binary Download**: Fetches pre-built monitor from releases with graceful fallback
+- **Background Execution**: Starts monitor daemon before CI jobs run
+- **Environment Setup**: Uses GitHub Actions secrets for VIBETEA_PRIVATE_KEY and VIBETEA_SERVER_URL
+- **Source ID Format**: `github-{owner}/{repo}-{run_id}` for workflow traceability and filtering
+- **Non-Blocking**: Network/monitor failures don't affect workflow success
+- **Graceful Shutdown**: Sends SIGTERM at workflow completion with event flush window
+- **Integration**: Works alongside existing Rust and TypeScript CI jobs
 
 **Monitor Privacy Module** (`monitor/src/privacy.rs` - 1039 lines):
 - **PrivacyConfig**: Configuration for privacy filtering with optional extension allowlist
@@ -254,6 +466,25 @@
 
 ## Phase 6 Additions
 
+**GitHub Actions Composite Action** (`.github/actions/vibetea-monitor/action.yml` - 167 lines):
+- **Type**: GitHub Actions composite action for reusable monitor integration
+- **Binary Management**: Downloads monitor from releases with version control
+- **Input Parameters**:
+  - `server-url` (required): VibeTea server URL
+  - `private-key` (required): Base64-encoded Ed25519 private key
+  - `source-id` (optional): Custom source identifier (defaults to `github-<repo>-<run_id>`)
+  - `version` (optional): Monitor version (default: `latest`)
+  - `shutdown-timeout` (optional): Grace period for shutdown (default: `5` seconds)
+- **Output Values**:
+  - `monitor-pid`: Process ID of running monitor
+  - `monitor-started`: Boolean indicating startup success
+- **Features**:
+  - Validates required environment variables before start
+  - Graceful fallback on download failure
+  - Process health check after startup
+  - Documentation for manual cleanup step
+  - Non-blocking: Warnings instead of errors on network issues
+
 **Monitor Crypto Module** (`monitor/src/crypto.rs` - 438 lines):
 - **Crypto struct**: Manages Ed25519 signing key and operations
 - **Key generation**: `Crypto::generate()` using OS cryptographically secure RNG
@@ -278,8 +509,9 @@
 - **SenderError enum**: Http, ServerError, AuthFailed, RateLimited, BufferOverflow, MaxRetriesExceeded, Json
 - **Event signing**: Signs JSON payload with X-Signature header using Crypto
 
-**Monitor CLI Module** (`monitor/src/main.rs` - 301 lines):
-- **Command enum**: Init, Run, Help, Version variants
+**Monitor CLI Module** (`monitor/src/main.rs` - 301-566 lines):
+- **Command enum**: Init, Run, Help, Version variants (Phase 6: before clap)
+- **ExportKey variant** (Phase 4): Subcommand for GitHub Actions integration
 - **init command**: `vibetea-monitor init [--force]`
   - Generates new Ed25519 keypair
   - Saves to ~/.vibetea or VIBETEA_KEY_PATH
@@ -291,7 +523,11 @@
   - Creates sender with buffering and retry
   - Waits for shutdown signal (SIGINT/SIGTERM)
   - Graceful shutdown with timeout
-- **CLI parsing**: Manual argument parsing with support for flags
+- **export-key command** (Phase 4): `vibetea-monitor export-key [--path]`
+  - Outputs base64-encoded private key to stdout
+  - All diagnostics to stderr
+  - Exit code 0 on success, 1 on error
+- **CLI parsing**: Manual argument parsing with support for flags (Phase 6), clap Subcommand (Phase 4)
 - **Logging initialization**: Environment-based filtering via RUST_LOG
 - **Signal handling**: Unix SIGTERM + SIGINT support (cross-platform)
 - **Help/Version**: Built-in documentation
@@ -307,6 +543,7 @@
 - Graceful shutdown with event flushing
 - Structured error handling throughout
 - Constant-time signature operations via ed25519-dalek
+- Reusable GitHub Actions composite action for simplified CI integration
 
 ## Phase 7 Additions
 
@@ -558,6 +795,62 @@
 - SessionOverview calculates recent event counts for activity indicators
 - Pulse animations defined in index.css applied via ActivityIndicator component
 - Session click handler allows filtering events by session (future feature)
+
+## Phase 11 Additions
+
+**Monitor TUI Default Launch** (`monitor/src/main.rs`):
+- **Default mode**: Running `vibetea-monitor` with no arguments launches TUI instead of requiring explicit `tui` subcommand
+- **Clap default**: `Command::Tui` is default when no subcommand provided (`unwrap_or(Command::Tui)`)
+- **Updated help text**: Documents that default behavior is TUI launch
+- **All commands available**: init, run, export-key still work with explicit naming
+
+**Terminal Size Validation** (`monitor/src/tui/widgets/size_warning.rs`):
+- **Minimum requirements**: Terminal must be at least 80 columns by 24 rows
+- **Constants**: `MIN_TERMINAL_WIDTH = 80`, `MIN_TERMINAL_HEIGHT = 24`
+- **Size warning widget**: Displays when terminal below minimums showing current/required dimensions
+- **check_terminal_size() function**: Validates width and height against minimums
+- **SizeWarningWidget**: Renders error message with helpful instructions
+- **Integration**: Checked in TUI main loop before rendering normal UI
+
+**NO_COLOR Environment Variable Support** (`monitor/src/tui/app.rs`):
+- **Standard compliance**: Implements https://no-color.org/ standard
+- **is_no_color_set() function**: Checks if `NO_COLOR` env var is set (even if empty)
+- **theme_from_env() function**: Returns monochrome Theme if NO_COLOR set, colorful otherwise
+- **Monochrome theme**: All colors disabled, text-only styling when NO_COLOR active
+- **Documentation**: Marked with "NO_COLOR Support" section in app.rs
+- **Application integration**: Called at startup to select theme based on environment
+
+**Signal Handling for TUI** (`monitor/src/tui/input.rs`):
+- **Escape key**: Always quits application from any screen
+- **Ctrl+C**: Keyboard combination detected as KeyCode::Char('c') with KeyModifiers::CONTROL, quits anywhere
+- **'q' key**: Quick quit when not typing in text fields (setup forms, credentials)
+- **Handler structure**: Global quit handlers in SetupAction and DashboardAction enums
+- **SetupAction::Quit**: Returned by Escape, Ctrl+C, or 'q' on non-text fields
+- **Documentation**: Signal handling strategy documented in main.rs lines 239-255
+
+**TUI Module Structure** (`monitor/src/tui/`):
+- **Complete TUI subsystem**: Terminal management, input handling, rendering, widgets
+- **Core files**:
+  - `terminal.rs` - Terminal setup with RAII cleanup, panic hook
+  - `app.rs` - State machine, event loop, theme/NO_COLOR logic
+  - `input.rs` - Keyboard event processing with quit handlers
+  - `ui.rs` - Frame rendering and layout
+  - `widgets/` - Reusable UI components (logo, form, event stream, stats, etc.)
+- **Panic safety**: install_panic_hook() restores terminal before panic message
+- **Raw mode & alternate screen**: Automatic entry/exit via Tui struct Drop impl
+
+## Environment Variables
+
+| Variable | Required | Default | Purpose | Phase |
+|----------|----------|---------|---------|-------|
+| `VIBETEA_SERVER_URL` | Yes (run mode) | - | Server URL (e.g., `https://vibetea.fly.dev`) | All |
+| `VIBETEA_SOURCE_ID` | No | hostname | Monitor identifier (must match key registration) | All |
+| `VIBETEA_KEY_PATH` | No | `~/.vibetea` | Directory containing `key.priv` and `key.pub` | All |
+| `VIBETEA_CLAUDE_DIR` | No | `~/.claude` | Claude Code directory | All |
+| `VIBETEA_BUFFER_SIZE` | No | 1000 | Event buffer capacity | All |
+| `VIBETEA_BASENAME_ALLOWLIST` | No | (all) | Comma-separated extensions to allow | Phase 5+ |
+| `NO_COLOR` | No | (not set) | Disable colors in TUI output (any value, even empty) | Phase 11 |
+| `RUST_LOG` | No | info | Structured logging filter (debug, info, warn, error) | All |
 
 ## Not Yet Implemented
 

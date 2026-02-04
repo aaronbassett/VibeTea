@@ -26,12 +26,27 @@
 
 use std::fs::{self, File};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use chrono::Local;
 
 use base64::prelude::*;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use rand::Rng;
 use thiserror::Error;
+use zeroize::Zeroize;
+
+/// Indicates where the private key was loaded from.
+///
+/// Used for logging at startup (INFO level) to help users verify
+/// which key source is active.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeySource {
+    /// Key loaded from `VIBETEA_PRIVATE_KEY` environment variable.
+    EnvironmentVariable,
+    /// Key loaded from file at the given path.
+    File(PathBuf),
+}
 
 /// Private key filename.
 const PRIVATE_KEY_FILE: &str = "key.priv";
@@ -41,6 +56,9 @@ const PUBLIC_KEY_FILE: &str = "key.pub";
 
 /// Length of Ed25519 seed (private key material).
 const SEED_LENGTH: usize = 32;
+
+/// Environment variable name for the private key.
+const ENV_PRIVATE_KEY: &str = "VIBETEA_PRIVATE_KEY";
 
 /// Errors that can occur during cryptographic operations.
 #[derive(Error, Debug)]
@@ -60,6 +78,14 @@ pub enum CryptoError {
     /// Key file already exists.
     #[error("key file already exists: {0}")]
     KeyExists(String),
+
+    /// Environment variable not set or empty.
+    #[error("environment variable not set: {0}")]
+    EnvVar(String),
+
+    /// Backup operation failed.
+    #[error("backup failed: {0}")]
+    BackupFailed(String),
 }
 
 /// Handles Ed25519 cryptographic operations.
@@ -90,7 +116,134 @@ impl Crypto {
         let mut seed = [0u8; SEED_LENGTH];
         rand::rng().fill(&mut seed);
         let signing_key = SigningKey::from_bytes(&seed);
+        // FR-020: Zero intermediate key material after signing key construction
+        seed.zeroize();
         Self { signing_key }
+    }
+
+    /// Loads a keypair from the `VIBETEA_PRIVATE_KEY` environment variable.
+    ///
+    /// The environment variable should contain a base64-encoded 32-byte
+    /// Ed25519 seed (RFC 4648 standard base64). Whitespace (including newlines)
+    /// is trimmed before decoding.
+    ///
+    /// Returns a tuple of the `Crypto` instance and `KeySource::EnvironmentVariable`
+    /// to indicate where the key was loaded from.
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError` if:
+    /// - The environment variable is not set or is empty
+    /// - The value is not valid base64
+    /// - The decoded key is not exactly 32 bytes
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::{Crypto, KeySource};
+    ///
+    /// // Assuming VIBETEA_PRIVATE_KEY is set with a valid base64 seed
+    /// let (crypto, source) = Crypto::load_from_env().unwrap();
+    /// assert_eq!(source, KeySource::EnvironmentVariable);
+    /// ```
+    pub fn load_from_env() -> Result<(Self, KeySource), CryptoError> {
+        let value = std::env::var(ENV_PRIVATE_KEY)
+            .map_err(|_| CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()))?;
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return Err(CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()));
+        }
+
+        let mut decoded = BASE64_STANDARD.decode(trimmed)?;
+        let decoded_len = decoded.len();
+
+        if decoded_len != SEED_LENGTH {
+            // FR-020: Zero decoded buffer even on error path
+            decoded.zeroize();
+            return Err(CryptoError::InvalidKey(format!(
+                "expected {} bytes, got {}",
+                SEED_LENGTH, decoded_len
+            )));
+        }
+
+        let mut seed: [u8; SEED_LENGTH] = decoded.try_into().expect("length already validated");
+        let signing_key = SigningKey::from_bytes(&seed);
+        // FR-020: Zero intermediate key material after signing key construction
+        seed.zeroize();
+
+        Ok((Self { signing_key }, KeySource::EnvironmentVariable))
+    }
+
+    /// Loads a keypair, trying the environment variable first, then the file.
+    ///
+    /// This method implements the key precedence rule:
+    /// 1. If `VIBETEA_PRIVATE_KEY` is set, it is used (env var takes precedence)
+    /// 2. If the env var is set but invalid, an error is returned (no fallback)
+    /// 3. If the env var is not set, the key is loaded from `{dir}/key.priv`
+    ///
+    /// Returns a tuple of the `Crypto` instance and `KeySource` indicating
+    /// where the key was loaded from.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory containing the fallback key file
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError` if:
+    /// - The env var is set but invalid (base64 or length error)
+    /// - The env var is not set and the file doesn't exist or is invalid
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::{Crypto, KeySource};
+    /// use std::path::Path;
+    ///
+    /// let (crypto, source) = Crypto::load_with_fallback(Path::new("/home/user/.vibetea")).unwrap();
+    /// match source {
+    ///     KeySource::EnvironmentVariable => println!("Loaded from env var"),
+    ///     KeySource::File(path) => println!("Loaded from file: {:?}", path),
+    /// }
+    /// ```
+    pub fn load_with_fallback(dir: &Path) -> Result<(Self, KeySource), CryptoError> {
+        // Check if the environment variable is set
+        match std::env::var(ENV_PRIVATE_KEY) {
+            Ok(value) => {
+                // Env var is set - try to load from it (no fallback on error)
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(CryptoError::EnvVar(ENV_PRIVATE_KEY.to_string()));
+                }
+
+                let mut decoded = BASE64_STANDARD.decode(trimmed)?;
+                let decoded_len = decoded.len();
+
+                if decoded_len != SEED_LENGTH {
+                    // FR-020: Zero decoded buffer even on error path
+                    decoded.zeroize();
+                    return Err(CryptoError::InvalidKey(format!(
+                        "expected {} bytes, got {}",
+                        SEED_LENGTH, decoded_len
+                    )));
+                }
+
+                let mut seed: [u8; SEED_LENGTH] =
+                    decoded.try_into().expect("length already validated");
+                let signing_key = SigningKey::from_bytes(&seed);
+                // FR-020: Zero intermediate key material after signing key construction
+                seed.zeroize();
+
+                Ok((Self { signing_key }, KeySource::EnvironmentVariable))
+            }
+            Err(_) => {
+                // Env var not set - load from file
+                let priv_path = dir.join(PRIVATE_KEY_FILE);
+                let crypto = Self::load(dir)?;
+                Ok((crypto, KeySource::File(priv_path)))
+            }
+        }
     }
 
     /// Loads an existing keypair from a directory.
@@ -124,6 +277,8 @@ impl Crypto {
         let bytes_read = file.read(&mut seed)?;
 
         if bytes_read != SEED_LENGTH {
+            // FR-020: Zero seed buffer even on error path
+            seed.zeroize();
             return Err(CryptoError::InvalidKey(format!(
                 "expected {} bytes, got {}",
                 SEED_LENGTH, bytes_read
@@ -131,6 +286,8 @@ impl Crypto {
         }
 
         let signing_key = SigningKey::from_bytes(&seed);
+        // FR-020: Zero intermediate key material after signing key construction
+        seed.zeroize();
         Ok(Self { signing_key })
     }
 
@@ -212,6 +369,125 @@ impl Crypto {
         dir.join(PRIVATE_KEY_FILE).exists()
     }
 
+    /// Backs up existing keys by renaming them with a timestamp suffix.
+    ///
+    /// If keys exist at the configured path, they are renamed with a timestamp
+    /// suffix in the format `YYYYMMDD_HHMMSS`. For example:
+    /// - `key.priv` -> `key.priv.backup.20260204_143022`
+    /// - `key.pub` -> `key.pub.backup.20260204_143022`
+    ///
+    /// This method is idempotent: if no keys exist, it returns `Ok(None)`.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory containing the key files
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(timestamp))` if backup was performed, with the timestamp used
+    /// - `Ok(None)` if no keys existed (nothing to backup)
+    /// - `Err(CryptoError)` if backup failed due to permission or I/O errors
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::Crypto;
+    /// use std::path::Path;
+    ///
+    /// let dir = Path::new("/home/user/.vibetea");
+    /// match Crypto::backup_existing_keys(dir) {
+    ///     Ok(Some(timestamp)) => println!("Keys backed up with timestamp: {}", timestamp),
+    ///     Ok(None) => println!("No keys to backup"),
+    ///     Err(e) => eprintln!("Backup failed: {}", e),
+    /// }
+    /// ```
+    pub fn backup_existing_keys(dir: &Path) -> Result<Option<String>, CryptoError> {
+        let priv_path = dir.join(PRIVATE_KEY_FILE);
+        let pub_path = dir.join(PUBLIC_KEY_FILE);
+
+        // Check if private key exists (primary indicator)
+        if !priv_path.exists() {
+            return Ok(None);
+        }
+
+        // Generate timestamp for backup files
+        let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+
+        // Backup private key
+        let priv_backup = dir.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, timestamp));
+        fs::rename(&priv_path, &priv_backup).map_err(|e| {
+            CryptoError::BackupFailed(format!(
+                "failed to backup private key to {:?}: {}",
+                priv_backup, e
+            ))
+        })?;
+
+        // Backup public key if it exists
+        if pub_path.exists() {
+            let pub_backup = dir.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, timestamp));
+            if let Err(e) = fs::rename(&pub_path, &pub_backup) {
+                // Try to restore private key backup on public key backup failure
+                // to maintain atomicity (best effort)
+                let _ = fs::rename(&priv_backup, &priv_path);
+                return Err(CryptoError::BackupFailed(format!(
+                    "failed to backup public key to {:?}: {}",
+                    pub_backup, e
+                )));
+            }
+        }
+
+        Ok(Some(timestamp))
+    }
+
+    /// Generates a new keypair, backing up existing keys if present.
+    ///
+    /// This is the recommended method for key generation when existing keys
+    /// may be present. It ensures that:
+    /// 1. Existing keys are backed up with a timestamp suffix (FR-015)
+    /// 2. New keys are generated and saved
+    /// 3. The operation is as atomic as possible
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - Directory to save the key files
+    ///
+    /// # Returns
+    ///
+    /// A tuple of:
+    /// - The new `Crypto` instance
+    /// - `Option<String>` containing the backup timestamp if backup was performed
+    ///
+    /// # Errors
+    ///
+    /// Returns `CryptoError` if:
+    /// - Backup of existing keys fails (permission errors)
+    /// - New keys cannot be saved
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use vibetea_monitor::crypto::Crypto;
+    /// use std::path::Path;
+    ///
+    /// let dir = Path::new("/home/user/.vibetea");
+    /// let (crypto, backup_timestamp) = Crypto::generate_with_backup(dir).unwrap();
+    ///
+    /// if let Some(ts) = backup_timestamp {
+    ///     println!("Old keys backed up with timestamp: {}", ts);
+    /// }
+    /// println!("New public key: {}", crypto.public_key_base64());
+    /// ```
+    pub fn generate_with_backup(dir: &Path) -> Result<(Self, Option<String>), CryptoError> {
+        // Backup existing keys if they exist
+        let backup_timestamp = Self::backup_existing_keys(dir)?;
+
+        // Generate and save new keys
+        let crypto = Self::generate();
+        crypto.save(dir)?;
+
+        Ok((crypto, backup_timestamp))
+    }
+
     /// Returns the public key as a base64-encoded string.
     ///
     /// This format is suitable for registration with the VibeTea server
@@ -229,6 +505,51 @@ impl Crypto {
     #[must_use]
     pub fn public_key_base64(&self) -> String {
         BASE64_STANDARD.encode(self.signing_key.verifying_key().as_bytes())
+    }
+
+    /// Returns the private key seed as a base64-encoded string.
+    ///
+    /// This is the inverse of `load_from_env()` - the returned string can be
+    /// stored in the `VIBETEA_PRIVATE_KEY` environment variable.
+    ///
+    /// # Security
+    ///
+    /// The seed is sensitive key material. Handle the returned string with care
+    /// and avoid logging it or storing it in insecure locations.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::crypto::Crypto;
+    ///
+    /// let crypto = Crypto::generate();
+    /// let seed = crypto.seed_base64();
+    /// // Can be used with: VIBETEA_PRIVATE_KEY=<seed>
+    /// ```
+    #[must_use]
+    pub fn seed_base64(&self) -> String {
+        BASE64_STANDARD.encode(self.signing_key.to_bytes())
+    }
+
+    /// Returns the first 8 characters of the base64-encoded public key.
+    ///
+    /// This fingerprint is used for key verification in logs without exposing
+    /// the full key. Users can compare this with the server's registered key
+    /// to verify they are using the correct keypair.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::crypto::Crypto;
+    ///
+    /// let crypto = Crypto::generate();
+    /// let fingerprint = crypto.public_key_fingerprint();
+    /// assert_eq!(fingerprint.len(), 8);
+    /// println!("Key fingerprint: {}", fingerprint);
+    /// ```
+    #[must_use]
+    pub fn public_key_fingerprint(&self) -> String {
+        self.public_key_base64().chars().take(8).collect()
     }
 
     /// Returns the verifying (public) key.
@@ -289,6 +610,19 @@ mod tests {
         // Public key should be base64-encoded 32 bytes (44 chars with padding)
         assert!(!pubkey.is_empty());
         assert!(pubkey.len() >= 43); // Base64 of 32 bytes
+    }
+
+    #[test]
+    fn test_public_key_fingerprint_is_8_chars() {
+        let crypto = Crypto::generate();
+        let fingerprint = crypto.public_key_fingerprint();
+
+        // Fingerprint should be exactly 8 characters
+        assert_eq!(fingerprint.len(), 8);
+
+        // Should be prefix of full public key
+        let pubkey = crypto.public_key_base64();
+        assert!(pubkey.starts_with(&fingerprint));
     }
 
     #[test]
@@ -434,5 +768,411 @@ mod tests {
         // Should be valid base64 and decode to 32 bytes
         let decoded = BASE64_STANDARD.decode(pubkey).unwrap();
         assert_eq!(decoded.len(), 32);
+    }
+
+    #[test]
+    fn test_seed_base64_returns_valid_base64() {
+        let crypto = Crypto::generate();
+        let seed_b64 = crypto.seed_base64();
+
+        // Should decode to exactly 32 bytes
+        let decoded = BASE64_STANDARD.decode(&seed_b64).unwrap();
+        assert_eq!(decoded.len(), SEED_LENGTH);
+    }
+
+    #[test]
+    fn test_seed_base64_roundtrip() {
+        // Generate a key and get its seed
+        let original = Crypto::generate();
+        let seed_b64 = original.seed_base64();
+        let original_pubkey = original.public_key_base64();
+
+        // Decode and recreate
+        let decoded = BASE64_STANDARD.decode(&seed_b64).unwrap();
+        let seed: [u8; SEED_LENGTH] = decoded.try_into().unwrap();
+        let signing_key = SigningKey::from_bytes(&seed);
+        let recreated = Crypto { signing_key };
+
+        // Should have the same public key
+        assert_eq!(original_pubkey, recreated.public_key_base64());
+    }
+
+    mod env_tests {
+        use super::*;
+        use serial_test::serial;
+
+        /// RAII guard for environment variable manipulation in tests.
+        struct EnvGuard {
+            key: String,
+            original: Option<String>,
+        }
+
+        impl EnvGuard {
+            fn new(key: &str) -> Self {
+                let original = std::env::var(key).ok();
+                Self {
+                    key: key.to_string(),
+                    original,
+                }
+            }
+
+            fn set(&self, value: &str) {
+                std::env::set_var(&self.key, value);
+            }
+
+            fn remove(&self) {
+                std::env::remove_var(&self.key);
+            }
+        }
+
+        impl Drop for EnvGuard {
+            fn drop(&mut self) {
+                match &self.original {
+                    Some(val) => std::env::set_var(&self.key, val),
+                    None => std::env::remove_var(&self.key),
+                }
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_success() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+
+            // Generate a key and export its seed
+            let original = Crypto::generate();
+            let seed_b64 = original.seed_base64();
+            let original_pubkey = original.public_key_base64();
+
+            // Set the env var and load
+            guard.set(&seed_b64);
+            let (loaded, source) = Crypto::load_from_env().unwrap();
+
+            // Should have the same public key
+            assert_eq!(original_pubkey, loaded.public_key_base64());
+            assert_eq!(source, KeySource::EnvironmentVariable);
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_trims_whitespace() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+
+            let original = Crypto::generate();
+            let seed_b64 = original.seed_base64();
+            let original_pubkey = original.public_key_base64();
+
+            // Add whitespace around the value
+            let with_whitespace = format!("  \n{}\n  ", seed_b64);
+            guard.set(&with_whitespace);
+
+            let (loaded, _) = Crypto::load_from_env().unwrap();
+            assert_eq!(original_pubkey, loaded.public_key_base64());
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_missing_var() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.remove();
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::EnvVar(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_empty_var() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.set("");
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::EnvVar(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_whitespace_only() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.set("   \n\t  ");
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::EnvVar(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_invalid_base64() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            guard.set("not-valid-base64!!!");
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), CryptoError::Base64(_)));
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_wrong_length() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            // 16 bytes instead of 32
+            let short_seed = BASE64_STANDARD.encode([0u8; 16]);
+            guard.set(&short_seed);
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(matches!(err, CryptoError::InvalidKey(_)));
+            if let CryptoError::InvalidKey(msg) = err {
+                assert!(msg.contains("expected 32 bytes"));
+                assert!(msg.contains("got 16"));
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn test_load_from_env_too_long() {
+            let guard = EnvGuard::new(ENV_PRIVATE_KEY);
+            // 64 bytes instead of 32
+            let long_seed = BASE64_STANDARD.encode([0u8; 64]);
+            guard.set(&long_seed);
+
+            let result = Crypto::load_from_env();
+            assert!(result.is_err());
+            let err = result.unwrap_err();
+            assert!(matches!(err, CryptoError::InvalidKey(_)));
+            if let CryptoError::InvalidKey(msg) = err {
+                assert!(msg.contains("expected 32 bytes"));
+                assert!(msg.contains("got 64"));
+            }
+        }
+    }
+
+    mod backup_tests {
+        use super::*;
+
+        #[test]
+        fn test_backup_existing_keys_when_keys_exist() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate and save initial keys
+            let original = Crypto::generate();
+            let original_pubkey = original.public_key_base64();
+            original.save(dir_path).unwrap();
+
+            // Verify original files exist
+            assert!(dir_path.join(PRIVATE_KEY_FILE).exists());
+            assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path);
+            assert!(result.is_ok());
+            let timestamp = result.unwrap();
+            assert!(timestamp.is_some());
+
+            let ts = timestamp.unwrap();
+
+            // Verify timestamp format: YYYYMMDD_HHMMSS (15 characters)
+            assert_eq!(ts.len(), 15);
+            assert!(ts.chars().nth(8) == Some('_'));
+            // All other characters should be digits
+            assert!(ts
+                .chars()
+                .enumerate()
+                .all(|(i, c)| i == 8 || c.is_ascii_digit()));
+
+            // Verify original files no longer exist
+            assert!(!dir_path.join(PRIVATE_KEY_FILE).exists());
+            assert!(!dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Verify backup files exist
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
+            assert!(priv_backup.exists());
+            assert!(pub_backup.exists());
+
+            // Verify backup private key content is correct (can load it)
+            // Copy backup back to original location to test loading
+            fs::copy(&priv_backup, dir_path.join(PRIVATE_KEY_FILE)).unwrap();
+            let loaded = Crypto::load(dir_path).unwrap();
+            assert_eq!(original_pubkey, loaded.public_key_base64());
+        }
+
+        #[test]
+        fn test_backup_returns_none_when_no_keys_exist() {
+            let temp_dir = TempDir::new().unwrap();
+
+            // Perform backup on empty directory
+            let result = Crypto::backup_existing_keys(temp_dir.path());
+            assert!(result.is_ok());
+            assert!(result.unwrap().is_none());
+        }
+
+        #[test]
+        fn test_backup_handles_only_private_key() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Create only private key file (32 bytes)
+            let priv_path = dir_path.join(PRIVATE_KEY_FILE);
+            let mut file = File::create(&priv_path).unwrap();
+            file.write_all(&[42u8; 32]).unwrap();
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path);
+            assert!(result.is_ok());
+            let timestamp = result.unwrap();
+            assert!(timestamp.is_some());
+
+            let ts = timestamp.unwrap();
+
+            // Verify private key backup exists
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            assert!(priv_backup.exists());
+
+            // Verify original no longer exists
+            assert!(!priv_path.exists());
+
+            // No public key backup should exist (there was none)
+            let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
+            assert!(!pub_backup.exists());
+        }
+
+        #[test]
+        fn test_generate_with_backup_creates_new_keys_after_backup() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate initial keys
+            let original = Crypto::generate();
+            let original_pubkey = original.public_key_base64();
+            original.save(dir_path).unwrap();
+
+            // Generate new keys with backup
+            let (new_crypto, backup_timestamp) = Crypto::generate_with_backup(dir_path).unwrap();
+
+            // Backup should have been performed
+            assert!(backup_timestamp.is_some());
+            let ts = backup_timestamp.unwrap();
+
+            // New keys should be different
+            let new_pubkey = new_crypto.public_key_base64();
+            assert_ne!(original_pubkey, new_pubkey);
+
+            // New key files should exist
+            assert!(dir_path.join(PRIVATE_KEY_FILE).exists());
+            assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Backup files should exist
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
+            assert!(priv_backup.exists());
+            assert!(pub_backup.exists());
+
+            // Verify new keys can be loaded
+            let loaded = Crypto::load(dir_path).unwrap();
+            assert_eq!(new_pubkey, loaded.public_key_base64());
+
+            // Verify backup keys are the original ones
+            fs::copy(&priv_backup, dir_path.join("key.priv.test")).unwrap();
+            fs::rename(
+                dir_path.join("key.priv.test"),
+                dir_path.join(PRIVATE_KEY_FILE),
+            )
+            .unwrap();
+            let loaded_original = Crypto::load(dir_path).unwrap();
+            assert_eq!(original_pubkey, loaded_original.public_key_base64());
+        }
+
+        #[test]
+        fn test_generate_with_backup_no_backup_when_no_keys_exist() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // No existing keys
+            assert!(!Crypto::exists(dir_path));
+
+            // Generate with backup
+            let (crypto, backup_timestamp) = Crypto::generate_with_backup(dir_path).unwrap();
+
+            // No backup should have been performed
+            assert!(backup_timestamp.is_none());
+
+            // New keys should exist
+            assert!(Crypto::exists(dir_path));
+            assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
+
+            // Verify keys can be loaded
+            let loaded = Crypto::load(dir_path).unwrap();
+            assert_eq!(crypto.public_key_base64(), loaded.public_key_base64());
+        }
+
+        #[test]
+        fn test_timestamp_format_is_correct() {
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate and save keys
+            let crypto = Crypto::generate();
+            crypto.save(dir_path).unwrap();
+
+            // Get timestamp before backup
+            let before = chrono::Local::now();
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path).unwrap();
+            let ts = result.unwrap();
+
+            // Get timestamp after backup
+            let after = chrono::Local::now();
+
+            // Parse the timestamp
+            let parsed = chrono::NaiveDateTime::parse_from_str(&ts, "%Y%m%d_%H%M%S").unwrap();
+
+            // The parsed timestamp should be between before and after
+            let before_naive = before.naive_local();
+            let after_naive = after.naive_local();
+
+            // Allow 1 second tolerance for timing
+            assert!(
+                parsed >= before_naive - chrono::Duration::seconds(1)
+                    && parsed <= after_naive + chrono::Duration::seconds(1),
+                "Timestamp {} should be between {:?} and {:?}",
+                ts,
+                before_naive,
+                after_naive
+            );
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn test_backup_preserves_permissions() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp_dir = TempDir::new().unwrap();
+            let dir_path = temp_dir.path();
+
+            // Generate and save keys (this sets permissions)
+            let crypto = Crypto::generate();
+            crypto.save(dir_path).unwrap();
+
+            // Verify original permissions
+            let priv_path = dir_path.join(PRIVATE_KEY_FILE);
+            let original_perms = fs::metadata(&priv_path).unwrap().permissions();
+            assert_eq!(original_perms.mode() & 0o777, 0o600);
+
+            // Perform backup
+            let result = Crypto::backup_existing_keys(dir_path).unwrap();
+            let ts = result.unwrap();
+
+            // Check backup file permissions (should be preserved by rename)
+            let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
+            let backup_perms = fs::metadata(&priv_backup).unwrap().permissions();
+            assert_eq!(backup_perms.mode() & 0o777, 0o600);
+        }
     }
 }

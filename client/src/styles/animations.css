@@ -1,0 +1,289 @@
+/**
+ * VibeTea Animation System
+ *
+ * GPU-optimized CSS animations for the client frontend.
+ * All animations respect user preferences for reduced motion.
+ */
+
+/* =============================================================================
+   KEYFRAME DEFINITIONS
+   ============================================================================= */
+
+/**
+ * Flicker Animation
+ *
+ * Creates an organic flickering effect for grid cells.
+ * Opacity varies between 0.05-0.15 across 4 stops for natural variation.
+ * Duration: ~1.5s for subtle, non-distracting effect.
+ */
+@keyframes flicker {
+  0%,
+  100% {
+    opacity: 0.05;
+  }
+  25% {
+    opacity: 0.12;
+  }
+  50% {
+    opacity: 0.08;
+  }
+  75% {
+    opacity: 0.15;
+  }
+}
+
+/**
+ * Pulse Animation
+ *
+ * Gentle pulsing effect for connected status indicators.
+ * Uses GPU-accelerated transform and opacity properties.
+ * Subtle scale change (1.0 -> 1.05) for non-intrusive feedback.
+ */
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 0.85;
+  }
+}
+
+/**
+ * Glow Animation
+ *
+ * Box-shadow based glow effect for heatmap cells.
+ * Uses the orange accent color (#d97757) for visual consistency.
+ * Creates a breathing glow effect that draws attention without distraction.
+ */
+@keyframes glow {
+  0%,
+  100% {
+    box-shadow: 0 0 4px rgba(217, 119, 87, 0.3);
+  }
+  50% {
+    box-shadow:
+      0 0 12px rgba(217, 119, 87, 0.6),
+      0 0 20px rgba(217, 119, 87, 0.3);
+  }
+}
+
+/**
+ * Session Glow Pulse Animation
+ *
+ * Subtle pulsing glow effect for active session cards.
+ * Uses the orange accent color (#d97757) for visual consistency.
+ * Pulses between 0.3 and 0.6 opacity over 2 seconds for a non-distracting effect.
+ */
+@keyframes session-glow-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 8px 2px rgba(217, 119, 87, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 12px 4px rgba(217, 119, 87, 0.6);
+  }
+}
+
+/* =============================================================================
+   ANIMATION UTILITY CLASSES
+   ============================================================================= */
+
+/**
+ * Grid Cell with Flicker Effect
+ *
+ * Apply to grid cells for organic flickering animation.
+ * Use CSS custom property --cell-index for staggered animation delays.
+ *
+ * Usage:
+ *   <div class="grid-cell" style="--cell-index: 0;">...</div>
+ */
+.grid-cell {
+  animation: flicker 1.5s ease-in-out infinite;
+  animation-delay: calc(var(--cell-index, 0) * 0.1s);
+  will-change: opacity;
+}
+
+/**
+ * Connected Status Indicator
+ *
+ * Apply to connection status elements for subtle pulse feedback.
+ * GPU-accelerated via transform property.
+ */
+.status-pulse {
+  animation: pulse 2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+/**
+ * Heatmap Cell Glow
+ *
+ * Apply to heatmap cells for attention-drawing glow effect.
+ * Uses orange accent color for visual hierarchy.
+ */
+.heatmap-glow {
+  animation: glow 2s ease-in-out infinite;
+  will-change: box-shadow;
+}
+
+/**
+ * Active Session Card Glow
+ *
+ * Apply to session cards when session.status === 'active'.
+ * Provides subtle visual feedback for active sessions.
+ * Uses orange accent color for consistency with heatmap glow.
+ */
+.session-card-glow-active {
+  animation: session-glow-pulse 2s ease-in-out infinite;
+  will-change: box-shadow;
+}
+
+/* =============================================================================
+   ANIMATION STATE MODIFIERS
+   ============================================================================= */
+
+/**
+ * Paused Animation State
+ *
+ * Apply to pause animations when:
+ * - Page is not visible (Page Visibility API)
+ * - User has scrolled element out of viewport
+ * - Performance optimization needed
+ *
+ * Usage:
+ *   element.classList.add('animation-paused');
+ */
+.animation-paused,
+.animation-paused .grid-cell,
+.animation-paused .status-pulse,
+.animation-paused .heatmap-glow,
+.animation-paused .session-card-glow-active {
+  animation-play-state: paused !important;
+}
+
+/**
+ * Running Animation State
+ *
+ * Explicitly set animations to running state.
+ * Useful for resuming after pause.
+ */
+.animation-running,
+.animation-running .grid-cell,
+.animation-running .status-pulse,
+.animation-running .heatmap-glow,
+.animation-running .session-card-glow-active {
+  animation-play-state: running;
+}
+
+/* =============================================================================
+   GPU OPTIMIZATION HINTS
+   ============================================================================= */
+
+/**
+ * GPU Accelerated Container
+ *
+ * Apply to parent containers that hold animated elements.
+ * Promotes element to its own compositing layer.
+ */
+.gpu-accelerated {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+/**
+ * Layout Containment
+ *
+ * Apply to animated elements to improve rendering performance.
+ * Prevents layout thrashing from animated content.
+ */
+.contain-layout {
+  contain: layout;
+}
+
+/**
+ * Paint Containment
+ *
+ * Apply to elements with visual animations (opacity, box-shadow).
+ * Isolates paint operations to the element boundary.
+ */
+.contain-paint {
+  contain: paint;
+}
+
+/**
+ * Strict Containment
+ *
+ * Maximum containment for best performance.
+ * Use when element size is known and content doesn't overflow.
+ */
+.contain-strict {
+  contain: strict;
+}
+
+/**
+ * Content Containment
+ *
+ * General-purpose containment for animated content.
+ * Balances performance with flexibility.
+ */
+.contain-content {
+  contain: content;
+}
+
+/* =============================================================================
+   REDUCED MOTION ACCESSIBILITY
+   ============================================================================= */
+
+/**
+ * Reduced Motion Override
+ *
+ * Respects user preference for reduced motion (prefers-reduced-motion).
+ * Disables all animations and transitions for users who:
+ * - Have vestibular disorders
+ * - Experience motion sickness
+ * - Prefer less visual movement
+ *
+ * All animated elements will display their final/static state.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .grid-cell {
+    opacity: 0.1;
+  }
+
+  .status-pulse {
+    transform: scale(1);
+    opacity: 1;
+  }
+
+  .heatmap-glow {
+    box-shadow: 0 0 8px rgba(217, 119, 87, 0.45);
+  }
+
+  .session-card-glow-active {
+    box-shadow: 0 0 8px 2px rgba(217, 119, 87, 0.45);
+  }
+}
+
+/**
+ * Force Animations Override
+ *
+ * Use sparingly to override reduced motion for critical UI feedback.
+ * Only apply to essential animations that convey important state changes.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .animation-essential {
+    animation-duration: 0.3s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
