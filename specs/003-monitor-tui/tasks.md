@@ -531,10 +531,10 @@
 - [x] T262 [GIT] Commit: verify quickstart validation passes
 
 ### Codebase Mapping and Retro
-- [ ] T263 Run /sdd:map incremental for Phase 11 changes
-- [ ] T264 [GIT] Commit: update codebase documents for phase 11
-- [ ] T265 Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T266 [GIT] Commit: finalize phase 11 retro
+- [x] T263 Run /sdd:map incremental for Phase 11 changes
+- [x] T264 [GIT] Commit: update codebase documents for phase 11
+- [x] T265 Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T266 [GIT] Commit: finalize phase 11 retro
 
 ### Phase Completion
 - [ ] T267 [GIT] Push branch to origin (ensure pre-push hooks pass)
