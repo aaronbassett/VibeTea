@@ -1,8 +1,9 @@
 /**
- * Token input form for WebSocket authentication.
+ * Token management form for WebSocket authentication.
  *
- * Allows users to enter, save, and clear their authentication token
- * which is stored in localStorage for WebSocket connection.
+ * Shows Supabase session status and allows manual token entry for WebSocket
+ * connection. The session token exchange (automatic token acquisition) will
+ * be implemented in Phase 4.
  */
 
 import type { ChangeEvent, FormEvent } from 'react';
@@ -10,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { LazyMotion, domAnimation, m } from 'framer-motion';
 
 import { SPRING_CONFIGS } from '../constants/design-tokens';
+import { useAuth } from '../hooks/useAuth';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 
 // -----------------------------------------------------------------------------
@@ -56,10 +58,14 @@ function hasStoredToken(): boolean {
 // -----------------------------------------------------------------------------
 
 /**
- * Form for managing the authentication token.
+ * Form for managing the WebSocket authentication token.
  *
- * Provides a password input for entering the token, with save and clear buttons.
- * Token is persisted to localStorage for use by the WebSocket connection.
+ * Displays Supabase session status and provides token management.
+ * When authenticated via Supabase, shows session info. Token management
+ * allows saving/clearing the WebSocket connection token.
+ *
+ * Note: Automatic session token exchange will be added in Phase 4.
+ * For now, manual token entry is required for WebSocket connections.
  *
  * @example
  * ```tsx
@@ -78,6 +84,7 @@ function hasStoredToken(): boolean {
  * ```
  */
 export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
+  const { user, session } = useAuth();
   const [tokenInput, setTokenInput] = useState<string>('');
   const [status, setStatus] = useState<TokenStatus>(() =>
     hasStoredToken() ? 'saved' : 'not-saved'
@@ -156,17 +163,50 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
   const getButtonTapProps = (isDisabled: boolean) =>
     prefersReducedMotion || isDisabled ? undefined : { scale: 0.98 };
 
+  // Extract user display info
+  const userDisplayName =
+    user?.user_metadata?.full_name ??
+    user?.user_metadata?.name ??
+    user?.email ??
+    null;
+
   return (
     <LazyMotion features={domAnimation}>
       <div className={`w-full max-w-md ${className}`}>
+        {/* Supabase session info */}
+        {session && (
+          <div className="mb-4 p-3 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg">
+            <div className="flex items-center gap-2 mb-2">
+              <span
+                className="h-2 w-2 rounded-full bg-[#4ade80]"
+                aria-hidden="true"
+              />
+              <span className="text-sm font-medium text-[#f5f5f5]">
+                Authenticated via GitHub
+              </span>
+            </div>
+            {userDisplayName && (
+              <p className="text-xs text-[#a0a0a0]">
+                Signed in as {userDisplayName}
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Manual token form */}
         <form onSubmit={handleSave} className="space-y-4">
           <div>
             <label
               htmlFor="token-input"
               className="block text-sm font-medium text-[#f5f5f5] mb-2"
             >
-              Authentication Token
+              WebSocket Token
             </label>
+            <p className="text-xs text-[#6b6b6b] mb-2">
+              {session
+                ? 'Token will be auto-managed in a future update. For now, enter manually.'
+                : 'Enter your server-issued token for WebSocket connection.'}
+            </p>
             <input
               id="token-input"
               type="password"
@@ -194,7 +234,7 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
               aria-hidden="true"
             />
             <span className="text-sm text-[#a0a0a0]">
-              {isSaved ? 'Token saved' : 'No token saved'}
+              {isSaved ? 'WebSocket token saved' : 'No WebSocket token saved'}
             </span>
           </div>
 
