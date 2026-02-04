@@ -48,7 +48,9 @@ VibeTea/
 │   │   ├── rate_limit.rs      # Per-source rate limiting
 │   │   ├── config.rs          # Environment configuration loading
 │   │   ├── types.rs           # Event type definitions (shared with monitor)
-│   │   └── error.rs           # Error types
+│   │   ├── error.rs           # Error types
+│   │   ├── session.rs         # Session token store for user authentication (Phase 2)
+│   │   └── supabase.rs        # Supabase client for JWT validation + key distribution (Phase 2)
 │   ├── tests/
 │   │   └── unsafe_mode_test.rs # Auth bypass mode tests
 │   └── Cargo.toml
@@ -80,6 +82,14 @@ VibeTea/
 │   ├── vite.config.ts
 │   ├── package.json
 │   └── tsconfig.json
+│
+├── supabase/                   # Supabase backend infrastructure (Phase 2)
+│   ├── functions/
+│   │   └── public-keys/        # Edge function for public key distribution
+│   │       └── index.ts        # Deno function: GET /functions/v1/public-keys
+│   ├── migrations/
+│   │   └── 001_public_keys.sql # Database migration: monitor_public_keys table
+│   └── (supabase.json config would be here)
 │
 ├── .github/
 │   ├── actions/
@@ -224,6 +234,52 @@ The crypto module provides Ed25519 key management with flexible loading strategi
 | `config.rs` | Load from env: `VIBETEA_PUBLIC_KEYS`, `VIBETEA_SUBSCRIBER_TOKEN` | `Config` |
 | `types.rs` | Event schema (shared with monitor) | `Event`, `EventPayload`, `EventType` |
 | `error.rs` | Server error types | `ServerError`, `ApiError` |
+| `session.rs` (Phase 2) | Session token store for user authentication | `SessionStore`, `Session`, `SessionStoreConfig`, `SessionError` |
+| `supabase.rs` (Phase 2) | Supabase client for JWT validation + key distribution | `SupabaseClient`, `SupabaseError`, `PublicKey` |
+
+### Phase 2 Server Components
+
+#### `server/src/session.rs`
+
+In-memory session token store for managing authenticated user sessions:
+
+| Type | Purpose | Key Methods |
+|------|---------|------------|
+| `SessionStore` | Token store with TTL management | `new()`, `create_session()`, `validate_session()`, `extend_session()` |
+| `SessionStoreConfig` | Configuration (capacity, TTL, grace period) | default(), custom fields |
+| `Session` | Session metadata (user_id, email, expires_at) | struct fields |
+| `SessionError` | Error types for session operations | `AtCapacity`, `NotFound`, `InvalidToken` |
+
+**Configuration**:
+- `max_capacity`: 10,000 sessions (configurable, FR-022)
+- `default_ttl`: 5 minutes (FR-008)
+- `grace_period`: 30 seconds (FR-024)
+
+**Token Format**:
+- 32 bytes random (FR-021)
+- Base64-url encoded without padding (43 characters, FR-021)
+- 5-minute expiration (FR-008)
+
+#### `server/src/supabase.rs`
+
+HTTP client for Supabase services (JWT validation + public key distribution):
+
+| Type | Purpose | Key Methods |
+|------|---------|------------|
+| `SupabaseClient` | HTTP client for Supabase APIs | `new()`, `validate_jwt()`, `fetch_public_keys()` |
+| `SupabaseError` | Error types for Supabase operations | `Unauthorized`, `Timeout`, `Unavailable`, `InvalidResponse`, `InvalidConfig` |
+| `PublicKey` | Database public key record | `source_id: String`, `public_key: String` |
+
+**Configuration**:
+- `REQUEST_TIMEOUT`: 5 seconds (FR-010)
+- `MAX_RETRY_ATTEMPTS`: 5 (with exponential backoff)
+- `BASE_BACKOFF_MS`: 100ms
+- `MAX_BACKOFF_MS`: 10 seconds
+- `MAX_JITTER_MS`: ±100ms random jitter
+
+**Key Methods**:
+- `validate_jwt()`: Remote validation via `GET /auth/v1/user` (FR-002)
+- `fetch_public_keys()`: Get keys from edge function (30-second refresh, FR-016)
 
 ### `client/src/` - Client Component
 
@@ -242,6 +298,42 @@ The crypto module provides Ed25519 key management with flexible loading strategi
 | `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session` |
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
+
+### `supabase/` - Supabase Backend Infrastructure (Phase 2)
+
+| Location | Purpose | Key Content |
+|----------|---------|-----------|
+| `supabase/functions/public-keys/index.ts` | Edge function for public key distribution | Deno function, GET endpoint, JSON response |
+| `supabase/migrations/001_public_keys.sql` | Database schema for monitor public keys | `monitor_public_keys` table, constraints, triggers, permissions |
+
+#### Supabase Functions
+
+**`supabase/functions/public-keys/index.ts`**:
+- **Endpoint**: `GET /functions/v1/public-keys`
+- **Language**: Deno/TypeScript
+- **Purpose**: Returns all monitor public keys from database
+- **Response Format**: JSON with `{ keys: [{ source_id, public_key }] }`
+- **Features**:
+  - CORS support for cross-origin requests
+  - 10-second cache control header (reduces database load)
+  - No authentication required (FR-015)
+  - Error handling for database failures
+- **Integration**: Called by server every 30 seconds (FR-016)
+
+#### Supabase Migrations
+
+**`supabase/migrations/001_public_keys.sql`**:
+- **Table Name**: `monitor_public_keys`
+- **Columns**:
+  - `source_id` (TEXT PRIMARY KEY): Unique monitor identifier
+  - `public_key` (TEXT NOT NULL): Base64-encoded Ed25519 public key (44 characters)
+  - `description` (TEXT): Optional monitor description
+  - `created_at` (TIMESTAMPTZ): Record creation timestamp
+  - `updated_at` (TIMESTAMPTZ): Last update timestamp (auto-maintained)
+- **Constraints**: Non-empty source_id and public_key
+- **Index**: On source_id for fast lookups
+- **Permissions**: SELECT granted to anon role (for edge function access)
+- **Trigger**: Auto-updates `updated_at` on modifications
 
 ### `.github/actions/vibetea-monitor/` - GitHub Actions Composite Action (Phase 6)
 
@@ -346,6 +438,8 @@ Central hub with these responsibilities:
 3. **Validate** tokens for WebSocket clients
 4. **Broadcast** events to subscribers
 5. **Rate limit** per-source
+6. **(Phase 2) Manage** session tokens for authenticated clients
+7. **(Phase 2) Integrate** with Supabase for JWT validation and key distribution
 
 No direct dependencies on Monitor or Client implementation.
 
@@ -355,7 +449,9 @@ server/src/main.rs
 ├── routes.rs (HTTP handlers)
 │   ├── auth.rs (verify signatures, validate tokens)
 │   ├── broadcast.rs (WebSocket distribution)
-│   └── rate_limit.rs (per-source rate limiting)
+│   ├── rate_limit.rs (per-source rate limiting)
+│   ├── session.rs (Phase 2, session token management)
+│   └── supabase.rs (Phase 2, JWT validation + key distribution)
 └── types.rs (Event schema)
 ```
 
@@ -383,6 +479,24 @@ client/src/App.tsx (root)
 │   ├── SessionOverview.tsx (table)
 │   └── Heatmap.tsx (visualization)
 └── types/events.ts (TypeScript interfaces)
+```
+
+### Supabase Backend Module (Phase 2)
+
+Provides backend services for authentication, session management, and key distribution:
+
+```
+supabase/
+├── functions/
+│   └── public-keys/
+│       └── index.ts (Deno edge function)
+│           ├── GET /functions/v1/public-keys
+│           └── Query monitor_public_keys table
+└── migrations/
+    └── 001_public_keys.sql
+        ├── CREATE TABLE monitor_public_keys
+        ├── Constraints, indexes, triggers
+        └── Grant SELECT to anon role
 ```
 
 ### GitHub Actions Composite Action Module (Phase 6)
@@ -415,6 +529,8 @@ No dependencies on source code (binary-only).
 | **New TUI feature** | `monitor/src/tui/mod.rs` or new module | Event handlers, state management |
 | **New Server endpoint** | `server/src/routes.rs` (add route handler) | `POST /events/:id/ack` |
 | **New Server middleware** | `server/src/routes.rs` or `server/src/` (new module) | `server/src/middleware.rs` |
+| **New Supabase function** (Phase 2) | `supabase/functions/<function-name>/` (new directory) | `supabase/functions/webhooks/index.ts` |
+| **New database migration** (Phase 2) | `supabase/migrations/<number>_<name>.sql` (new file) | `supabase/migrations/002_sessions.sql` |
 | **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
@@ -447,6 +563,10 @@ use vibetea_server::auth::verify_signature;
 use vibetea_server::broadcast::EventBroadcaster;
 use vibetea_server::config::Config;
 use vibetea_server::types::Event;
+
+// Phase 2: In server/src/routes.rs
+use vibetea_server::session::SessionStore;
+use vibetea_server::supabase::SupabaseClient;
 ```
 
 **Modules**:
@@ -528,12 +648,12 @@ Files that are auto-generated or should not be manually edited:
 
 | Category | Pattern | Example |
 |----------|---------|---------|
-| Module names | `snake_case` | `parser.rs`, `privacy.rs`, `size_warning.rs` |
-| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `SizeWarningWidget` |
-| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()`, `check_terminal_size()` |
-| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX`, `MIN_TERMINAL_WIDTH` |
-| Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs` |
-| Enum variants | `PascalCase` | `KeySource::EnvironmentVariable`, `KeySource::File` |
+| Module names | `snake_case` | `parser.rs`, `privacy.rs`, `size_warning.rs`, `session.rs`, `supabase.rs` |
+| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `SizeWarningWidget`, `SessionStore`, `SupabaseClient` |
+| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()`, `check_terminal_size()`, `validate_jwt()` |
+| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX`, `MIN_TERMINAL_WIDTH`, `REQUEST_TIMEOUT` |
+| Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs`, `env_key_test.rs` |
+| Enum variants | `PascalCase` | `KeySource::EnvironmentVariable`, `KeySource::File`, `SessionError::AtCapacity` |
 
 ### TypeScript Components and Functions
 
@@ -557,6 +677,16 @@ Files that are auto-generated or should not be manually edited:
 | Input names | `kebab-case` | `server-url`, `private-key` |
 | Output names | `kebab-case` | `monitor-pid`, `monitor-started` |
 
+### SQL (Supabase Migrations)
+
+| Category | Pattern | Example |
+|----------|---------|---------|
+| Table names | `snake_case` | `monitor_public_keys` |
+| Column names | `snake_case` | `source_id`, `public_key`, `created_at` |
+| Function names | `snake_case` | `update_updated_at_column()` |
+| Index names | `idx_{table}_{columns}` | `idx_monitor_public_keys_source_id` |
+| Constraint names | `{table}_{constraint_type}` | `public_key_not_empty` |
+
 ## Dependency Boundaries (Import Rules)
 
 ### Monitor
@@ -570,8 +700,8 @@ Files that are auto-generated or should not be manually edited:
 ### Server
 
 ```
-✓ CAN import:     types, config, auth, broadcast, rate_limit, error, routes
-✓ CAN import:     std, tokio, axum, serde, ed25519-dalek, subtle
+✓ CAN import:     types, config, auth, broadcast, rate_limit, error, routes, session, supabase
+✓ CAN import:     std, tokio, axum, serde, ed25519-dalek, subtle, reqwest
 ✗ CANNOT import:  monitor modules, client code
 ```
 
@@ -580,6 +710,14 @@ Files that are auto-generated or should not be manually edited:
 ```
 ✓ CAN import:     components, hooks, types, utils, React, Zustand, third-party UI libs
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
+```
+
+### Supabase
+
+```
+✓ CAN import:     @supabase/supabase-js (in edge functions)
+✓ CAN access:     PostgreSQL database, environment variables
+✗ CANNOT import:  monitor code, server code, client code
 ```
 
 ### GitHub Actions Composite Action

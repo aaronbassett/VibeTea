@@ -1,487 +1,466 @@
 # Testing Strategy
 
-**Purpose**: Document test frameworks, patterns, organization, and coverage requirements.
-**Generated**: 2026-02-03
-**Last Updated**: 2026-02-04 (Phase 9 update)
+> **Purpose**: Document test frameworks, patterns, organization, and coverage requirements.
+> **Generated**: 2026-02-04
+> **Last Updated**: 2026-02-04
 
-## Test Framework
+## Test Frameworks
 
-### Rust/Monitor (Phase 9)
+### Server (Rust)
 
-| Type | Framework | Configuration | Status |
-|------|-----------|---------------|--------|
-| Unit | Rust built-in | `#[cfg(test)]` inline | In use |
-| Unit (Crypto backup) | Rust built-in | `crypto.rs` backup_tests module | Phase 9 |
-| Integration | Rust built-in | `tests/` directory with `serial_test` | In use |
-| CLI | Subprocess-based binary execution | `tests/` with `std::process::Command` | Phase 12 |
+| Type | Framework | Configuration |
+|------|-----------|---------------|
+| Unit | Rust built-in (`#[test]`) | Inline in source modules |
+| Integration | Rust built-in + wiremock | `server/tests/*.rs` |
+| Async | Tokio test runtime | `#[tokio::test]` |
 
-### Running Tests
+**Dev Dependencies**:
+- `tokio-test` - Tokio testing utilities
+- `serial_test` - Serial test execution
+- `wiremock` - HTTP mocking for Supabase API tests
 
-#### Rust/Monitor - Phase 9
+### Client (TypeScript)
 
-| Command | Purpose |
-|---------|---------|
-| `cargo test -p vibetea-monitor` | Run all monitor tests |
-| `cargo test -p vibetea-monitor crypto` | Run crypto module tests including backups |
-| `cargo test -p vibetea-monitor crypto backup` | Run only backup pattern tests |
-| `cargo test -- --test-threads=1` | Run sequentially (env var safety) |
+| Type | Framework | Configuration |
+|------|-----------|---------------|
+| Unit | Vitest | `client/src/__tests__/**/*.test.ts` |
+| Component | Vitest + React Testing Library | `client/src/__tests__/**/*.test.tsx` |
+| Visual | Storybook | `client/src/**/*.stories.ts` |
+
+**Dev Dependencies**:
+- `vitest` - Unit testing framework
+- `@testing-library/react` - React component testing
+- `@storybook/react` - Visual component development and documentation
+
+## Running Tests
+
+### Server
+
+```bash
+# Run all tests (required: --test-threads=1 for env-dependent tests)
+cd server && cargo test --test-threads=1
+
+# Run specific test module
+cargo test session:: --test-threads=1
+
+# Run with output (don't suppress println!)
+cargo test -- --nocapture
+
+# Run tests in release mode (faster)
+cargo test --release --test-threads=1
+
+# Watch mode (requires cargo-watch)
+cargo watch -x 'test --test-threads=1'
+```
+
+### Client
+
+```bash
+# Run all tests
+cd client && npm test
+
+# Run tests in watch mode
+npm run test:watch
+
+# Run with coverage
+npm test -- --coverage
+
+# Run specific test file
+npm test events.test.ts
+```
 
 ## Test Organization
 
-### Rust/Monitor - Phase 9 Structure
+### Server Structure
 
 ```
-monitor/src/crypto.rs
-├── Unit tests
-│   ├── test_generate_creates_valid_keypair
-│   ├── test_public_key_fingerprint_is_8_chars
-│   ├── test_save_and_load_roundtrip
-│   ├── test_exists_returns_false_for_empty_dir
-│   ├── test_exists_returns_true_after_save
-│   ├── test_sign_produces_verifiable_signature
-│   └── ... (14 public tests)
-│
-├── Unit tests - Env var handling (serial)
-│   ├── test_load_from_env_success
-│   ├── test_load_from_env_trims_whitespace
-│   ├── test_load_from_env_missing_var
-│   └── ... (7 env tests)
-│
-└── Unit tests - Backup patterns (Phase 9)
-    ├── test_backup_existing_keys_when_keys_exist
-    ├── test_backup_returns_none_when_no_keys_exist
-    ├── test_backup_handles_only_private_key
-    ├── test_generate_with_backup_creates_new_keys_after_backup
-    ├── test_generate_with_backup_no_backup_when_no_keys_exist
-    ├── test_timestamp_format_is_correct
-    ├── test_backup_preserves_permissions
-    └── ... (total 8 backup tests)
+server/
+├── src/
+│   ├── error.rs              # ~30 unit tests
+│   ├── session.rs            # ~30 unit tests
+│   ├── supabase.rs           # ~40 unit tests
+│   └── [other modules]
+└── tests/
+    ├── auth_privacy_test.rs  # Privacy compliance tests (11 tests)
+    └── [integration tests]
+```
 
-monitor/tests/
-├── env_key_test.rs              # 21 tests for env var key loading
-├── privacy_test.rs              # 17 tests for privacy compliance
-├── sender_recovery_test.rs       # Error recovery tests
-└── key_export_test.rs            # 12 tests for export-key subcommand
+### Client Structure
+
+```
+client/
+├── src/
+│   ├── __tests__/
+│   │   ├── events.test.ts
+│   │   ├── formatting.test.ts
+│   │   └── App.test.tsx
+│   ├── components/
+│   │   └── [components].tsx
+│   ├── hooks/
+│   │   └── [hooks].ts
+│   └── [other modules]
+└── vitest.config.ts
 ```
 
 ## Test Patterns
 
-### Backup Pattern Tests (Phase 9)
+### Rust Unit Tests (Arrange-Act-Assert)
 
-File: `monitor/src/crypto.rs` - `backup_tests` module (8 tests)
-
+**Basic Pattern**:
 ```rust
-mod backup_tests {
+#[cfg(test)]
+mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
-    fn test_backup_existing_keys_when_keys_exist() {
-        // Test setup with real keys
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path();
+    fn test_creates_session() {
+        // Arrange
+        let store = SessionStore::new(SessionStoreConfig::default());
+        let user_id = "user-123".to_string();
 
-        // Generate and save initial keys
-        let original = Crypto::generate();
-        let original_pubkey = original.public_key_base64();
-        original.save(dir_path).unwrap();
+        // Act
+        let result = store.create_session(user_id, None);
 
-        // Verify original files exist
-        assert!(dir_path.join(PRIVATE_KEY_FILE).exists());
-        assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
-
-        // Perform backup
-        let result = Crypto::backup_existing_keys(dir_path);
+        // Assert
         assert!(result.is_ok());
-        let timestamp = result.unwrap();
-        assert!(timestamp.is_some());
-
-        let ts = timestamp.unwrap();
-
-        // Verify timestamp format: YYYYMMDD_HHMMSS (15 characters)
-        assert_eq!(ts.len(), 15);
-        assert!(ts.chars().nth(8) == Some('_'));
-        // All other characters should be digits
-        assert!(ts
-            .chars()
-            .enumerate()
-            .all(|(i, c)| i == 8 || c.is_ascii_digit()));
-
-        // Verify original files no longer exist
-        assert!(!dir_path.join(PRIVATE_KEY_FILE).exists());
-        assert!(!dir_path.join(PUBLIC_KEY_FILE).exists());
-
-        // Verify backup files exist with timestamp suffix
-        let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
-        let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
-        assert!(priv_backup.exists());
-        assert!(pub_backup.exists());
-
-        // Verify backup private key content is correct
-        fs::copy(&priv_backup, dir_path.join(PRIVATE_KEY_FILE)).unwrap();
-        let loaded = Crypto::load(dir_path).unwrap();
-        assert_eq!(original_pubkey, loaded.public_key_base64());
-    }
-
-    #[test]
-    fn test_backup_returns_none_when_no_keys_exist() {
-        let temp_dir = TempDir::new().unwrap();
-
-        // Perform backup on empty directory
-        let result = Crypto::backup_existing_keys(temp_dir.path());
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[test]
-    fn test_backup_handles_only_private_key() {
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path();
-
-        // Create only private key file (32 bytes)
-        let priv_path = dir_path.join(PRIVATE_KEY_FILE);
-        let mut file = File::create(&priv_path).unwrap();
-        file.write_all(&[42u8; 32]).unwrap();
-
-        // Perform backup
-        let result = Crypto::backup_existing_keys(dir_path);
-        assert!(result.is_ok());
-        let timestamp = result.unwrap();
-        assert!(timestamp.is_some());
-
-        let ts = timestamp.unwrap();
-
-        // Verify private key backup exists
-        let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
-        assert!(priv_backup.exists());
-
-        // Verify original no longer exists
-        assert!(!priv_path.exists());
-
-        // Verify no public key backup (none existed)
-        let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
-        assert!(!pub_backup.exists());
-    }
-
-    #[test]
-    fn test_generate_with_backup_creates_new_keys_after_backup() {
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path();
-
-        // Generate initial keys
-        let original = Crypto::generate();
-        let original_pubkey = original.public_key_base64();
-        original.save(dir_path).unwrap();
-
-        // Generate new keys with backup
-        let (new_crypto, backup_timestamp) = Crypto::generate_with_backup(dir_path).unwrap();
-
-        // Backup should have been performed
-        assert!(backup_timestamp.is_some());
-        let ts = backup_timestamp.unwrap();
-
-        // New keys should be different
-        let new_pubkey = new_crypto.public_key_base64();
-        assert_ne!(original_pubkey, new_pubkey);
-
-        // New key files should exist
-        assert!(dir_path.join(PRIVATE_KEY_FILE).exists());
-        assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
-
-        // Backup files should exist with timestamp
-        let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
-        let pub_backup = dir_path.join(format!("{}.backup.{}", PUBLIC_KEY_FILE, ts));
-        assert!(priv_backup.exists());
-        assert!(pub_backup.exists());
-
-        // Verify new keys can be loaded
-        let loaded = Crypto::load(dir_path).unwrap();
-        assert_eq!(new_pubkey, loaded.public_key_base64());
-
-        // Verify backup keys are the original ones
-        fs::copy(&priv_backup, dir_path.join("key.priv.test")).unwrap();
-        fs::rename(dir_path.join("key.priv.test"), dir_path.join(PRIVATE_KEY_FILE)).unwrap();
-        let loaded_original = Crypto::load(dir_path).unwrap();
-        assert_eq!(original_pubkey, loaded_original.public_key_base64());
-    }
-
-    #[test]
-    fn test_generate_with_backup_no_backup_when_no_keys_exist() {
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path();
-
-        // No existing keys
-        assert!(!Crypto::exists(dir_path));
-
-        // Generate with backup
-        let (crypto, backup_timestamp) = Crypto::generate_with_backup(dir_path).unwrap();
-
-        // No backup should have been performed
-        assert!(backup_timestamp.is_none());
-
-        // New keys should exist
-        assert!(Crypto::exists(dir_path));
-        assert!(dir_path.join(PUBLIC_KEY_FILE).exists());
-
-        // Verify keys can be loaded
-        let loaded = Crypto::load(dir_path).unwrap();
-        assert_eq!(crypto.public_key_base64(), loaded.public_key_base64());
-    }
-
-    #[test]
-    fn test_timestamp_format_is_correct() {
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path();
-
-        // Generate and save keys
-        let crypto = Crypto::generate();
-        crypto.save(dir_path).unwrap();
-
-        // Get timestamp before backup
-        let before = chrono::Local::now();
-
-        // Perform backup
-        let result = Crypto::backup_existing_keys(dir_path).unwrap();
-        let ts = result.unwrap();
-
-        // Get timestamp after backup
-        let after = chrono::Local::now();
-
-        // Parse the timestamp
-        let parsed = chrono::NaiveDateTime::parse_from_str(&ts, "%Y%m%d_%H%M%S").unwrap();
-
-        // The parsed timestamp should be between before and after
-        let before_naive = before.naive_local();
-        let after_naive = after.naive_local();
-
-        // Allow 1 second tolerance for timing
-        assert!(
-            parsed >= before_naive - chrono::Duration::seconds(1)
-                && parsed <= after_naive + chrono::Duration::seconds(1),
-            "Timestamp {} should be between {:?} and {:?}",
-            ts,
-            before_naive,
-            after_naive
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_backup_preserves_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path();
-
-        // Generate and save keys (this sets permissions)
-        let crypto = Crypto::generate();
-        crypto.save(dir_path).unwrap();
-
-        // Verify original permissions
-        let priv_path = dir_path.join(PRIVATE_KEY_FILE);
-        let original_perms = fs::metadata(&priv_path).unwrap().permissions();
-        assert_eq!(original_perms.mode() & 0o777, 0o600);
-
-        // Perform backup
-        let result = Crypto::backup_existing_keys(dir_path).unwrap();
-        let ts = result.unwrap();
-
-        // Check backup file permissions (should be preserved by rename)
-        let priv_backup = dir_path.join(format!("{}.backup.{}", PRIVATE_KEY_FILE, ts));
-        let backup_perms = fs::metadata(&priv_backup).unwrap().permissions();
-        assert_eq!(backup_perms.mode() & 0o777, 0o600);
+        let token = result.unwrap();
+        assert_eq!(token.len(), 43);
     }
 }
 ```
 
-**Key test patterns:**
+**Async Tests**:
+```rust
+#[tokio::test]
+async fn test_validates_jwt() {
+    let mock_server = MockServer::start().await;
+    
+    Mock::given(method("GET"))
+        .and(path("/auth/v1/user"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&mock_server)
+        .await;
 
-1. **Idempotency test**: Verifies backup returns `Ok(None)` when no keys exist (not an error)
-2. **Atomic operations**: Restores private key if public key backup fails
-3. **File handling**: Verifies files are renamed (not copied), permissions preserved
-4. **Timestamp format**: Validates `YYYYMMDD_HHMMSS` format (15 chars, sortable)
-5. **State transitions**: Verifies old keys backed up, new keys created and loadable
-6. **Permission preservation**: Unix-specific test for file mode preservation
+    let client = SupabaseClient::new(mock_server.uri(), "test-key")
+        .expect("should create client");
+    
+    let result = client.validate_jwt("test-jwt").await;
+    assert!(result.is_ok());
+}
+```
 
-### Widget Rendering Tests (Phase 9)
-
-File: `monitor/src/tui/widgets/setup_form.rs` - `tests` module
-
+**Environment-Dependent Tests**:
 ```rust
 #[test]
-fn setup_form_widget_no_keys_shows_only_generate_new() {
-    // When existing_keys_found is false, only "Generate new key" should be shown
-    // without radio toggle indicators (FR-004, T205)
-    let state = SetupFormState {
-        session_name: "test".to_string(),
-        session_name_error: None,
-        key_option: KeyOption::GenerateNew,
-        focused_field: SetupField::KeyOption,
-        existing_keys_found: false,  // Phase 9: Controls rendering
-    };
-
-    let theme = Theme::default();
-    let symbols = Symbols::default();
-
-    let widget = SetupFormWidget::new(&state, &theme, &symbols);
-
-    let area = Rect::new(0, 0, 80, 24);
-    let mut buf = Buffer::empty(area);
-    widget.render(area, &mut buf);
-
-    let content: String = buf
-        .content
-        .iter()
-        .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-        .collect();
-
-    // Should show "Generate new key" (without radio button brackets)
-    assert!(
-        content.contains("Generate new key"),
-        "Should show 'Generate new key' when no existing keys"
-    );
-    // Should NOT show "Use existing" option at all
-    assert!(
-        !content.contains("Use existing"),
-        "Should not show 'Use existing' when no keys found"
-    );
-}
-
-#[test]
-fn setup_form_widget_with_keys_shows_both_options() {
-    // When existing_keys_found is true, both options should be shown
-    // with radio toggle indicators (FR-004, T207)
-    let state = SetupFormState {
-        session_name: "test".to_string(),
-        session_name_error: None,
-        key_option: KeyOption::UseExisting,
-        focused_field: SetupField::KeyOption,
-        existing_keys_found: true,  // Phase 9: Controls rendering
-    };
-
-    let theme = Theme::default();
-    let symbols = Symbols::default();
-
-    let widget = SetupFormWidget::new(&state, &theme, &symbols);
-
-    let area = Rect::new(0, 0, 80, 24);
-    let mut buf = Buffer::empty(area);
-    widget.render(area, &mut buf);
-
-    let content: String = buf
-        .content
-        .iter()
-        .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-        .collect();
-
-    // Should show both options with toggle capability
-    assert!(
-        content.contains("Use existing"),
-        "Should show 'Use existing' when keys are found"
-    );
-    assert!(
-        content.contains("Generate new"),
-        "Should show 'Generate new' option"
-    );
-}
-
-#[test]
-fn setup_form_widget_with_keys_shows_correct_selection_indicator() {
-    let theme = Theme::default();
-    let symbols = Symbols::default();
-    let area = Rect::new(0, 0, 80, 24);
-
-    // Test with UseExisting selected
-    let state = SetupFormState {
-        session_name: "test".to_string(),
-        session_name_error: None,
-        key_option: KeyOption::UseExisting,
-        focused_field: SetupField::KeyOption,
-        existing_keys_found: true,  // Phase 9: Both options visible
-    };
-
-    let widget = SetupFormWidget::new(&state, &theme, &symbols);
-    let mut buf = Buffer::empty(area);
-    widget.render(area, &mut buf);
-
-    let content: String = buf
-        .content
-        .iter()
-        .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-        .collect();
-
-    // Should contain the connected symbol for selected option
-    assert!(content.contains("Use existing"));
-    assert!(content.contains("Generate new"));
-
-    // Test with GenerateNew selected
-    let state = SetupFormState {
-        key_option: KeyOption::GenerateNew,
-        ..state
-    };
-
-    let widget = SetupFormWidget::new(&state, &theme, &symbols);
-    let mut buf = Buffer::empty(area);
-    widget.render(area, &mut buf);
-
-    let content: String = buf
-        .content
-        .iter()
-        .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-        .collect();
-
-    assert!(content.contains("Use existing"));
-    assert!(content.contains("Generate new"));
+#[serial_test::serial]
+fn test_with_env_var() {
+    std::env::set_var("TEST_VAR", "value");
+    // test code
+    std::env::remove_var("TEST_VAR");
+    // Cleanup happens automatically with serial_test
 }
 ```
 
-**Test coverage:**
-- Single option rendering without radio buttons
-- Both options rendering with radio button indicators
-- Visual selection indicator changes based on `key_option` state
-- Styling consistency with focus state
+### Rust Integration Tests
 
-## CI Integration - Phase 9
+**Location**: `server/tests/auth_privacy_test.rs` (594 lines)
 
-### Test Pipeline Update
+**Pattern**:
+```rust
+// Custom log capture infrastructure
+#[derive(Clone, Default)]
+struct LogCapture {
+    logs: Arc<Mutex<Vec<String>>>,
+}
+
+// Run test code with log capture
+fn with_log_capture<F>(test_fn: F) -> String
+where
+    F: FnOnce(),
+{
+    let capture = LogCapture::new();
+    let layer = CaptureLayer::new(capture.clone());
+    let subscriber = tracing_subscriber::registry()
+        .with(layer.with_filter(LevelFilter::TRACE));
+    tracing::subscriber::with_default(subscriber, test_fn);
+    capture.get_logs()
+}
+
+// Assert sensitive data not in logs
+#[test]
+fn session_token_not_logged_on_creation() {
+    let logs = with_log_capture(|| {
+        let store = SessionStore::new(SessionStoreConfig::default());
+        let token = store.create_session("user-123".into(), None).unwrap();
+        CAPTURED_TOKENS.with(|t| t.borrow_mut().push(token));
+    });
+    
+    CAPTURED_TOKENS.with(|t| {
+        for token in t.borrow().iter() {
+            assert!(!logs.contains(token), "Token leaked in logs!");
+        }
+    });
+}
+```
+
+### TypeScript Unit Tests (Vitest)
+
+**Component Test**:
+```typescript
+import { describe, it, expect } from 'vitest';
+import { render, screen } from '@testing-library/react';
+import { EventStream } from '../components/EventStream';
+
+describe('EventStream', () => {
+  it('renders events list', () => {
+    const events = [
+      {
+        id: 'evt_1',
+        type: 'session',
+        payload: { action: 'started' }
+      }
+    ];
+
+    render(<EventStream events={events} />);
+    
+    expect(screen.getByText(/session/i)).toBeInTheDocument();
+  });
+});
+```
+
+**Type Test**:
+```typescript
+import { describe, it, expect } from 'vitest';
+import type { VibeteaEvent, EventType } from '../types/events';
+
+describe('Event Types', () => {
+  it('should create valid session event', () => {
+    const event: VibeteaEvent<'session'> = {
+      id: 'evt_test123456789012345',
+      source: 'test-source',
+      timestamp: new Date().toISOString(),
+      type: 'session',
+      payload: {
+        sessionId: '123e4567-e89b-12d3-a456-426614174000',
+        action: 'started',
+        project: 'test-project',
+      },
+    };
+
+    expect(event.type).toBe('session');
+    expect(event.payload.action).toBe('started');
+  });
+});
+```
+
+## Test Categories
+
+### Unit Tests
+
+**Purpose**: Test individual functions/methods in isolation
+
+**Scope**:
+- Error handling and edge cases
+- Data transformations
+- Business logic validation
+
+**Examples in codebase**:
+- `server/src/error.rs`: 50+ unit tests for error types
+- `server/src/session.rs`: 40+ unit tests for session store operations
+- `server/src/supabase.rs`: 40+ unit tests for client operations
+- `client/src/__tests__/events.test.ts`: 5+ tests for event types
+
+### Integration Tests
+
+**Purpose**: Test multiple components working together
+
+**Scope**:
+- API endpoint behavior
+- Database interactions
+- External service integration
+
+**Examples in codebase**:
+- `server/tests/auth_privacy_test.rs`: 11 tests for privacy compliance (594 lines)
+- Tests cover JWT validation, session operations, log inspection
+
+### Privacy Compliance Tests
+
+**Purpose**: Verify sensitive data is never logged (Constitution I)
+
+**Location**: `server/tests/auth_privacy_test.rs`
+
+**Coverage**:
+1. Session token creation - token not logged
+2. Session validation - token not logged
+3. Session expiry - tokens not logged
+4. TTL extension - token not logged
+5. Session removal - token not logged
+6. JWT validation (success) - JWT not logged
+7. JWT validation (failure) - JWT not logged
+8. JWT validation (server error) - JWT not logged
+9. Combined auth flow - neither JWT nor token leaked
+10. SessionStore debug output - no tokens revealed
+11. Capacity warnings - existing tokens not logged
+
+**Test Approach**:
+- Custom log capture layer at TRACE level
+- Exercise all code paths that touch tokens
+- Assert tokens/JWTs don't appear in captured logs
+
+## Mocking Strategy
+
+### Rust HTTP Mocking (wiremock)
+
+**Setup**:
+```rust
+use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::matchers::{method, path, header};
+
+#[tokio::test]
+async fn test_with_mock() {
+    let mock_server = MockServer::start().await;
+    
+    // Define mock expectation
+    Mock::given(method("GET"))
+        .and(path("/auth/v1/user"))
+        .and(header("apikey", "test-anon-key"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"id": "user-123", "email": "test@example.com"}))
+        )
+        .mount(&mock_server)
+        .await;
+    
+    // Create client pointing to mock
+    let client = SupabaseClient::new(mock_server.uri(), "test-anon-key")
+        .expect("should create client");
+    
+    // Test code using client
+    let user = client.validate_jwt("valid-jwt").await.unwrap();
+    assert_eq!(user.id, "user-123");
+}
+```
+
+### TypeScript Mocking
+
+**Pattern**: React Testing Library with vitest mocks
+
+```typescript
+import { vi } from 'vitest';
+
+describe('Component with API', () => {
+  it('handles API response', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      json: async () => ({ data: 'test' })
+    });
+    
+    global.fetch = mockFetch;
+    
+    // test component
+    
+    expect(mockFetch).toHaveBeenCalledWith('/api/events');
+  });
+});
+```
+
+## Coverage Goals
+
+### Rust
+
+**Target Coverage**:
+- Core modules (error, session, supabase): 80%+ line coverage
+- Public APIs: 100% tested
+- Error paths: All major error variants tested
+- Privacy: All sensitive operations tested to ensure no logging
+
+**Current Coverage**:
+- `error.rs`: 50+ test cases covering all variants and HTTP mappings
+- `session.rs`: 30+ test cases covering operations, expiration, extension, concurrent access
+- `supabase.rs`: 40+ test cases covering all endpoints and error conditions
+- `auth_privacy_test.rs`: 11 comprehensive integration tests
+
+### TypeScript
+
+**Target Coverage**:
+- Utility functions: 90%+
+- Components: Core user-facing components have tests
+- Types: Type validation tests
+
+**Current Coverage**:
+- `events.test.ts`: Event type validation
+- `formatting.test.ts`: Utility function tests
+- `App.test.tsx`: Main component integration test
+
+## Test Execution Commands
+
+### CI/CD (GitHub Actions)
 
 ```bash
-# Run crypto tests including new backup patterns
-cargo test -p vibetea-monitor crypto -- --test-threads=1
+# Server: Run tests with serialization
+cargo test --workspace --test-threads=1
 
-# Run all monitor tests
-cargo test -p vibetea-monitor -- --test-threads=1
-
-# Run widget tests
-cargo test -p vibetea-monitor tui::widgets::setup_form -- --nocapture
+# Client: Run tests and coverage
+npm test
+npm run format:check
+npm run lint
 ```
 
-### Total Test Coverage (Phase 9)
+### Local Development
 
-- **Rust/Monitor**: 120+ tests
-  - Crypto unit tests: 30+ (includes 8 backup pattern tests)
-  - Integration tests: 50+
-  - Widget tests: 15+
-- **Grand Total**: 190+ tests
+```bash
+# Server: Quick validation
+cargo test --test-threads=1
 
-## Testing Best Practices - Phase 9
+# Server: With output
+cargo test --test-threads=1 -- --nocapture
 
-### Backup Pattern Testing
+# Client: Watch mode
+npm run test:watch
 
-1. **Test idempotency**: Backup with no keys should return `Ok(None)`, not error
-2. **Verify atomicity**: Check both files renamed, or fallback on failure
-3. **Validate timestamps**: Ensure format is sortable (`YYYYMMDD_HHMMSS`)
-4. **Check permissions**: Verify 0600 for private key, 0644 for public key
-5. **Test state transitions**: Verify old keys backed up, new keys created
+# All: Pre-commit check
+cd server && cargo test --test-threads=1 && cd ../client && npm test
+```
 
-### UI Rendering Testing
+## Important Test Requirements
 
-1. **Branch coverage**: Test both `existing_keys_found` true/false paths
-2. **Visual consistency**: Verify focused/unfocused styling applied
-3. **Symbol validation**: Test with both unicode and ASCII symbol sets
-4. **Content verification**: Assert expected strings in rendered output
-5. **State isolation**: Each test creates fresh state without side effects
+### Test Parallelism (Phase 3 Learning)
+
+**Critical**: Environment variable tests must not run in parallel
+
+```bash
+# Wrong (tests interfere with each other)
+cargo test
+
+# Correct (serialized execution)
+cargo test --test-threads=1
+
+# Or use serial_test attribute
+#[test]
+#[serial_test::serial]
+fn test_with_env_var() { ... }
+```
+
+**Why**: Tests that modify `std::env` variables affect the entire process. Without serialization, race conditions occur.
+
+### Privacy Compliance (Phase 2 Learning)
+
+**Requirement**: No authentication tokens should appear in logs
+
+**Test Coverage**:
+- Verify with log capture infrastructure
+- Test at TRACE level (most verbose)
+- Cover all code paths that handle tokens
+- Verify both success and error cases
+
+**Example from codebase**:
+```rust
+// Tests verify:
+// 1. Session tokens not logged during creation
+// 2. JWTs not logged during validation
+// 3. Tokens not visible in Debug output
+// 4. No leakage in error messages
+```
 
 ---
 
-*This document describes HOW to test. Last updated: Phase 9 (2026-02-04)*
+*This document describes HOW to test. Update when testing strategy changes.*

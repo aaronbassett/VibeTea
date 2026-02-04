@@ -2,7 +2,7 @@
 
 > **Purpose**: Document authentication, authorization, security controls, and vulnerability status.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-04
+> **Last Updated**: 2026-02-04 (Phase 2 Supabase auth)
 
 ## Authentication
 
@@ -13,6 +13,8 @@
 | Ed25519 Signatures | ed25519_dalek | `server/src/auth.rs` |
 | Bearer Token (WebSocket) | Token validation | `server/src/auth.rs` |
 | Environment Variables | Public key registration | `VIBETEA_PUBLIC_KEYS`, `VIBETEA_SUBSCRIBER_TOKEN` |
+| Supabase JWT (Phase 2) | Remote validation via `/auth/v1/user` endpoint | `server/src/supabase.rs:244-318` |
+| Session Token (Phase 2) | Cryptographically secure server-side sessions | `server/src/session.rs` |
 
 ### Token Configuration
 
@@ -24,6 +26,23 @@
 | Key storage (monitor) | Ed25519 raw seed (32 bytes) | `~/.vibetea/key.priv` (mode 0600) |
 | Public key encoding | Base64 standard (RFC 4648) | Registered via `VIBETEA_PUBLIC_KEYS` |
 | Private key format (env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
+| Session Token Type (Phase 2) | 32-byte random data, base64-url encoded | `server/src/session.rs:60-63` |
+| Session Token Length (Phase 2) | 43 characters (base64-url encoded) | `server/src/session.rs:63` |
+| Session TTL (Phase 2) | 5 minutes (300 seconds) | `server/src/session.rs:51` |
+| JWT Validation (Phase 2) | Remote validation (simpler, handles revocation) | `server/src/supabase.rs:244-318` |
+| WebSocket Grace Period (Phase 2) | 30 seconds extension on TTL | `server/src/session.rs:54` |
+| Public Key Refresh (Phase 2) | Every 30 seconds with exponential backoff | `server/src/supabase.rs:410-452` |
+
+### Session Management (Phase 2)
+
+| Setting | Value | Implementation |
+|---------|-------|-----------------|
+| Session Storage | In-memory HashMap with RwLock (thread-safe) | `server/src/session.rs:188-194` |
+| Session Capacity | 10,000 concurrent sessions | `server/src/session.rs:57` |
+| Session Duration | 5 minutes default | `server/src/session.rs:51` |
+| TTL Extension | One-time only per session (for WebSocket) | `server/src/session.rs:166-176` |
+| Lazy Cleanup | Expired sessions removed on access | `server/src/session.rs:355-360` |
+| Batch Cleanup | `cleanup_expired()` for background tasks | `server/src/session.rs:514-531` |
 
 ### Key Loading Strategy
 
@@ -52,23 +71,17 @@
 | Constant-time comparison | Used with `subtle::ConstantTimeEq` |
 | Message content | Full HTTP request body (prevents tampering) |
 
-### Session Management
-
-| Setting | Value |
-|---------|-------|
-| Session type | Stateless per-request authentication |
-| Token type | Non-expiring static bearer token (WebSocket only) |
-| Storage | Environment variables + in-memory configuration |
-| Timeout | No timeout (continuous WebSocket connection) |
-
 ## Authorization
 
 ### Authorization Model
 
 | Model | Description |
 |-------|-------------|
-| Source-based | Event sources are identified by source_id and must match registered public keys |
-| Token-based | WebSocket clients authenticate with a single shared token |
+| Source-based | Event sources identified by source_id and registered public keys |
+| Token-based | WebSocket clients authenticate with single shared token |
+| Session-based (Phase 2) | Client provides session token in requests |
+| Session-based Auth (Phase 2) | Server validates session token before processing |
+| Resource ownership (Phase 2) | Users can only access their own events/monitors (foundation) |
 | No granular roles | All sources have same permissions; all WebSocket clients have same permissions |
 
 ### Permissions
@@ -87,6 +100,8 @@
 | API events endpoint | Signature verification | `server/src/routes.rs:293` |
 | WebSocket endpoint | Token validation | `server/src/routes.rs:483` |
 | Event validation | Source ID matching | `server/src/routes.rs:348` - Events must match authenticated source |
+| Session validation (Phase 2) | Session token in store | `server/src/session.rs:324-330` |
+| JWT validation (Phase 2) | Remote check via Supabase | `server/src/supabase.rs:271-318` |
 
 ## Input Validation
 
@@ -101,6 +116,8 @@
 | Headers | String length and format checks | Empty string rejection |
 | Request body | Size limit | 1 MB maximum (DefaultBodyLimit) |
 | Event fields | Type validation | Timestamp, UUID, enum types enforced by serde |
+| Session tokens (Phase 2) | Format check + TTL validation | `server/src/session.rs:324-330` |
+| JWT tokens (Phase 2) | Remote validation | `server/src/supabase.rs:271-318` |
 
 ### Sanitization
 
@@ -117,13 +134,18 @@
 
 ### Sensitive Data Handling
 
-| Data Type | Protection Method | Storage |
-|-----------|-------------------|---------|
-| Private keys (monitor file) | Raw 32-byte seed | `~/.vibetea/key.priv` (mode 0600, owner-only) |
-| Private keys (monitor env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
-| Public keys (server) | Base64-encoded format | Environment variable `VIBETEA_PUBLIC_KEYS` |
-| Subscriber token | Plain string comparison (constant-time) | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` |
-| Event payload | No encryption at rest | In-memory broadcast channel |
+| Data Type | Protection Method | Storage | Location |
+|-----------|-------------------|---------|----------|
+| Private keys (monitor file) | Raw 32-byte seed | `~/.vibetea/key.priv` (mode 0600, owner-only) | `monitor/src/crypto.rs` |
+| Private keys (monitor env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable | `monitor/src/crypto.rs` |
+| Public keys (server) | Base64-encoded format | Environment variable `VIBETEA_PUBLIC_KEYS` | `server/src/config.rs` |
+| Subscriber token | Plain string comparison (constant-time) | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` | `server/src/auth.rs` |
+| Event payload | No encryption at rest | In-memory broadcast channel | `server/src/routes.rs` |
+| Supabase JWT (Phase 2) | Remote validation only (never stored) | Temporary | `server/src/supabase.rs:271-318` |
+| Session tokens (Phase 2) | 32 bytes cryptographically random | In-memory | `server/src/session.rs` |
+| User ID (Phase 2) | Stored in session metadata | In-memory | `server/src/session.rs:128` |
+| User email (Phase 2) | Stored in session metadata (optional) | In-memory | `server/src/session.rs:131` |
+| Anon key (Phase 2) | Loaded from environment | Server memory | `server/src/supabase.rs:200` |
 
 ### Encryption
 
@@ -132,6 +154,8 @@
 | In transit | TLS 1.3+ | Requires HTTPS/WSS in production |
 | At rest | None | Events are in-memory only, not persisted |
 | Signing | Ed25519 deterministic | Uses standard RFC 8032 implementation |
+| Token generation (Phase 2) | Cryptographically secure random (rand crate) | OS entropy via `rand::rng()` |
+| Signature verification (Phase 2) | Ed25519 (RFC 8032) | Via ed25519-dalek with constant-time comparison |
 
 ### Private Key Security
 
@@ -153,6 +177,9 @@
 | Private key logging | Never logged (no string conversion of seed) | Throughout `monitor/src/crypto.rs` |
 | Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:551-553` |
 | Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:44-49` |
+| Session token logging (Phase 2) | No tokens logged at any level | `server/src/session.rs` (verified in tests) |
+| JWT logging (Phase 2) | No JWTs logged, even on failure | `server/src/supabase.rs` (verified in tests) |
+| Privacy compliance (Phase 2) | Comprehensive test suite verifies no leakage | `server/tests/auth_privacy_test.rs` |
 
 ## Key Management
 
@@ -162,7 +189,7 @@
 - **Location**: `monitor/src/crypto.rs:114-122`
 - **Seed**: 32 random bytes, zeroized after key construction
 
-### Key Backup Functionality (Phase 9 - NEW)
+### Key Backup Functionality (Phase 9)
 
 | Feature | Implementation | Location |
 |---------|----------------|----------|
@@ -206,6 +233,45 @@
 | Keys found | Both options shown with radio button indicators | Lines 310-343 |
 | User selection | Toggle between "Use existing" and "Generate new" | Enforces choice during setup |
 
+## Cryptographic Patterns
+
+### Random Token Generation (Phase 2)
+
+```rust
+// Location: server/src/session.rs:564-568
+// 32 bytes of cryptographically secure random data
+let mut bytes = [0u8; 32];
+rand::rng().fill(&mut bytes);  // Uses OS entropy
+let token = URL_SAFE_NO_PAD.encode(bytes);  // base64-url without padding
+```
+
+### Supabase Client Configuration (Phase 2)
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| Request Timeout | 5 seconds | Prevent hanging requests |
+| Retry Attempts | 5 with exponential backoff | Reliable startup |
+| Backoff Formula | min(2^attempt * 100ms + jitter, 10s) | Smart retry delays |
+| Jitter | 0-100ms random addition | Prevent thundering herd |
+
+## Signature Algorithm
+
+- **Algorithm**: Ed25519 (RFC 8032 compliant)
+- **Library**: `ed25519_dalek` with `verify_strict()`
+- **Benefit**: Deterministic, pre-hashing protection, strong curve
+
+## Constant-Time Operations
+
+- **Token comparison**: `subtle::ConstantTimeEq` for bearer tokens
+- **Location**: `server/src/auth.rs:290`
+- **Purpose**: Prevent timing attacks on token validation
+
+## Error Handling
+
+- **No detailed errors on invalid signature**: Returns generic `InvalidSignature`
+- **Unknown source**: Returns specific `UnknownSource` (source discovery risk accepted)
+- **Implementation**: `server/src/auth.rs:49-145`
+
 ## Privacy Controls
 
 ### Sensitive Tool Filtering
@@ -239,25 +305,12 @@
 - **Summary events**: Text stripped to "Session ended"
 - **Error events**: Passed through (category pre-sanitized)
 
-## Cryptographic Best Practices
+### Privacy Compliance (Phase 2)
 
-### Signature Algorithm
-
-- **Algorithm**: Ed25519 (RFC 8032 compliant)
-- **Library**: `ed25519_dalek` with `verify_strict()`
-- **Benefit**: Deterministic, pre-hashing protection, strong curve
-
-### Constant-Time Operations
-
-- **Token comparison**: `subtle::ConstantTimeEq` for bearer tokens
-- **Location**: `server/src/auth.rs:290`
-- **Purpose**: Prevent timing attacks on token validation
-
-### Error Handling
-
-- **No detailed errors on invalid signature**: Returns generic `InvalidSignature`
-- **Unknown source**: Returns specific `UnknownSource` (source discovery risk accepted)
-- **Implementation**: `server/src/auth.rs:49-145`
+- **No token logging**: Session tokens and JWTs excluded from all log levels
+- **Log capture testing**: `server/tests/auth_privacy_test.rs` verifies sensitive data not logged
+- **TRACE level safe**: Even at TRACE level, tokens do not appear in logs
+- **Constitution I compliance**: Privacy by design in authentication flows
 
 ## Secrets Management
 
@@ -268,6 +321,8 @@
 | Private Key | `VIBETEA_PRIVATE_KEY` | Base64-encoded 32-byte seed | Monitor signing key |
 | Public Keys | `VIBETEA_PUBLIC_KEYS` | Space/comma-separated base64 keys | Server key registry |
 | WebSocket Token | `VIBETEA_SUBSCRIBER_TOKEN` | Bearer token string | Client authentication |
+| Supabase URL (Phase 2) | `SUPABASE_URL` | HTTPS URL | Supabase project URL |
+| Supabase Anon Key (Phase 2) | `SUPABASE_ANON_KEY` | JWT format | Supabase authentication |
 
 ### Secrets Storage
 
@@ -313,6 +368,8 @@
 | Key Generation | Fingerprint (first 8 chars of pubkey) | `monitor/src/crypto.rs:551-553` |
 | Rate limit exceeded | source_id, retry_after | info level |
 | WebSocket connect | filter params | info level |
+| JWT validation (Phase 2) | User ID only (no token logged) | `server/src/supabase.rs` |
+| Session creation (Phase 2) | User ID, email (no token logged) | `server/src/session.rs` |
 
 ## Security Headers
 
@@ -322,6 +379,8 @@
 | X-Signature | Required (when auth enabled) | Base64-encoded Ed25519 signature |
 | Content-Type | Assumed application/json | Not validated, accepted from client |
 | Retry-After | Conditional | Only set on 429 responses |
+| Content-Security-Policy | Not yet configured | XSS protection |
+| X-Frame-Options | Not yet configured | Clickjacking protection |
 
 ## CORS Configuration
 
@@ -330,6 +389,32 @@
 | Allowed origins | All (no CORS policy enforced in codebase) |
 | Allowed methods | POST (events), GET (ws, health) |
 | Credentials | WebSocket token via query param |
+| Public endpoint CORS (Phase 2) | `*` (Supabase public-keys endpoint) |
+
+## Security Testing
+
+### Test Coverage
+
+| Test Type | Location | Coverage |
+|-----------|----------|----------|
+| Privacy compliance (Phase 2) | `server/tests/auth_privacy_test.rs` | 11 test cases |
+| Session store (Phase 2) | `server/src/session.rs:571-936` | 20 test cases |
+| Supabase client (Phase 2) | `server/src/supabase.rs:481-948` | 25 test cases |
+| Error handling | `server/src/error.rs:522-911` | 40+ test cases |
+
+### Privacy Test Coverage (Phase 2)
+
+- Session token not logged on creation
+- Session token not logged on validation
+- Session token not logged on expiry/cleanup
+- Session token not logged on TTL extension
+- Session token not logged on removal
+- JWT not logged on validation attempt
+- JWT not logged on validation failure
+- JWT not logged on server error
+- Combined auth flow does not leak secrets
+- Debug output does not leak tokens
+- Capacity warnings do not leak tokens
 
 ---
 
@@ -354,4 +439,4 @@ When `VIBETEA_UNSAFE_NO_AUTH=true`:
 
 ---
 
-*This document defines active security controls. Review when adding authentication methods or cryptographic operations.*
+*This document defines active security controls. Review when adding authentication methods or cryptographic operations. Last updated with Phase 2 Supabase authentication implementation.*
