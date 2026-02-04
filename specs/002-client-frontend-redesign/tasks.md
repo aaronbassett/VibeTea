@@ -355,8 +355,8 @@
 - [x] T195 [US7] Apply warm palette colors to both graph components (stroke, fill using COLORS constant) (use devs:react-dev agent)
 - [x] T196 [GIT] Commit: apply warm palette to graphs
 - [x] T197 [US7] Enable Recharts accessibilityLayer for ARIA labels and keyboard navigation (use devs:react-dev agent)
-- [ ] T198 [GIT] Commit: add accessibility layer to graphs
-- [ ] T199 [US7] Integrate graphs into main dashboard layout in App.tsx (use devs:react-dev agent)
+- [x] T198 [GIT] Commit: add accessibility layer to graphs
+- [x] T199 [US7] Integrate graphs into main dashboard layout in App.tsx (use devs:react-dev agent)
 - [ ] T200 [GIT] Commit: integrate graphs into dashboard
 - [ ] T201 [US7] Run /sdd:map incremental for Phase 9 changes
 - [ ] T202 [GIT] Commit: update codebase documents for phase 9

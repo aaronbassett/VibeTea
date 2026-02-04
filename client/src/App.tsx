@@ -14,10 +14,13 @@ import { AnimationErrorBoundary } from './components/animated/ErrorBoundary';
 import { SpringContainer } from './components/animated/SpringContainer';
 import { ConnectionStatus } from './components/ConnectionStatus';
 import { EventStream } from './components/EventStream';
+import { ActivityGraph } from './components/graphs/ActivityGraph';
+import { EventDistributionChart } from './components/graphs/EventDistributionChart';
 import { Heatmap } from './components/Heatmap';
 import { SessionOverview } from './components/SessionOverview';
 import { TokenForm } from './components/TokenForm';
 import { hasActiveFilters, useEventStore } from './hooks/useEventStore';
+import type { TimeRange } from './types/graphs';
 import { useSessionTimeouts } from './hooks/useSessionTimeouts';
 import { TOKEN_STORAGE_KEY, useWebSocket } from './hooks/useWebSocket';
 
@@ -43,11 +46,17 @@ export default function App() {
   // Track whether user has a token saved
   const [hasToken, setHasToken] = useState<boolean>(() => hasStoredToken());
 
+  // Time range for activity graph
+  const [timeRange, setTimeRange] = useState<TimeRange>('1h');
+
   // WebSocket connection management
   const { connect, disconnect, isConnected } = useWebSocket();
 
   // Connection status from store
   const status = useEventStore((state) => state.status);
+
+  // Events for graphs
+  const events = useEventStore((state) => state.events);
 
   // Filter state and actions
   const filters = useEventStore((state) => state.filters);
@@ -191,6 +200,34 @@ export default function App() {
               {/* Activity Heatmap */}
               <section className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
                 <Heatmap onCellClick={handleHeatmapCellClick} />
+              </section>
+
+              {/* Activity Trends */}
+              <section className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+                <h2 className="text-lg font-semibold text-gray-100 mb-4">
+                  Activity Trends
+                </h2>
+                <AnimationErrorBoundary>
+                  <div style={{ height: 200 }}>
+                    <ActivityGraph
+                      events={events}
+                      timeRange={timeRange}
+                      onTimeRangeChange={setTimeRange}
+                    />
+                  </div>
+                </AnimationErrorBoundary>
+              </section>
+
+              {/* Event Distribution */}
+              <section className="bg-gray-800/50 rounded-lg p-4 border border-gray-700">
+                <h2 className="text-lg font-semibold text-gray-100 mb-4">
+                  Event Distribution
+                </h2>
+                <AnimationErrorBoundary>
+                  <div style={{ height: 200 }}>
+                    <EventDistributionChart events={events} />
+                  </div>
+                </AnimationErrorBoundary>
               </section>
 
               {/* Token Management */}
