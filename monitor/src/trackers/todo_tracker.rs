@@ -73,11 +73,47 @@
 //! assert_eq!(event.completed, 1);
 //! assert!(!event.abandoned);
 //! ```
+//!
+//! # File Watching Example
+//!
+//! ```no_run
+//! use tokio::sync::mpsc;
+//! use vibetea_monitor::trackers::todo_tracker::TodoTracker;
+//! use vibetea_monitor::types::TodoProgressEvent;
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), Box<dyn std::error::Error>> {
+//!     let (tx, mut rx) = mpsc::channel(100);
+//!     let tracker = TodoTracker::new(tx)?;
+//!
+//!     while let Some(event) = rx.recv().await {
+//!         println!(
+//!             "Session {}: {}/{}/{} tasks (abandoned: {})",
+//!             event.session_id,
+//!             event.completed,
+//!             event.in_progress,
+//!             event.pending,
+//!             event.abandoned
+//!         );
+//!     }
+//!
+//!     Ok(())
+//! }
+//! ```
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::Deserialize;
 use thiserror::Error;
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::types::TodoProgressEvent;
+use crate::utils::debounce::Debouncer;
 use crate::utils::session_filename::parse_todo_filename;
 
 /// Errors that can occur when parsing todo files.
@@ -108,8 +144,55 @@ pub enum TodoParseError {
     InvalidFilename,
 }
 
-/// Result type for todo tracker operations.
+/// Result type for todo parsing operations.
 pub type Result<T> = std::result::Result<T, TodoParseError>;
+
+// ============================================================================
+// TodoTracker Types
+// ============================================================================
+
+/// Errors that can occur during todo tracking operations.
+#[derive(Error, Debug)]
+pub enum TodoTrackerError {
+    /// Failed to initialize the file system watcher.
+    #[error("failed to create watcher: {0}")]
+    WatcherInit(#[from] notify::Error),
+
+    /// Failed to read a todo file.
+    #[error("failed to read todo file: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// Failed to parse a todo file.
+    #[error("failed to parse todo file: {0}")]
+    Parse(#[from] TodoParseError),
+
+    /// The todos directory does not exist.
+    #[error("claude todos directory not found: {0}")]
+    ClaudeDirectoryNotFound(PathBuf),
+
+    /// Failed to send event through the channel.
+    #[error("failed to send event: channel closed")]
+    ChannelClosed,
+}
+
+/// Result type for todo tracker operations.
+pub type TrackerResult<T> = std::result::Result<T, TodoTrackerError>;
+
+/// Configuration for the todo tracker.
+#[derive(Debug, Clone)]
+pub struct TodoTrackerConfig {
+    /// Debounce duration in milliseconds. Default: 100ms.
+    ///
+    /// Per research.md, 100ms is the recommended debounce interval for todo files
+    /// to coalesce rapid writes during status updates.
+    pub debounce_ms: u64,
+}
+
+impl Default for TodoTrackerConfig {
+    fn default() -> Self {
+        Self { debounce_ms: 100 }
+    }
+}
 
 /// Status of a todo item.
 ///
@@ -498,6 +581,366 @@ pub fn create_todo_progress_event(
 #[must_use]
 pub fn is_abandoned(counts: &TodoStatusCounts, session_has_ended: bool) -> bool {
     session_has_ended && counts.has_incomplete()
+}
+
+// ============================================================================
+// TodoTracker - File Watching Implementation
+// ============================================================================
+
+/// Tracker for Claude Code's todo files.
+///
+/// Watches `~/.claude/todos/` for changes and emits [`TodoProgressEvent`]s
+/// when todo files are created or modified. Uses debouncing to coalesce
+/// rapid writes during status updates.
+///
+/// # Session Lifecycle
+///
+/// The tracker maintains a set of "ended" sessions to enable abandonment
+/// detection. When a session ends (summary event received), call
+/// [`mark_session_ended`](Self::mark_session_ended) to update the tracker's
+/// state. Subsequent todo file updates for that session will have their
+/// `abandoned` flag set if there are incomplete tasks.
+///
+/// # Thread Safety
+///
+/// The tracker spawns a background task for async processing of file events.
+/// Communication is done via channels for thread safety. The ended sessions
+/// set uses `RwLock` for concurrent access.
+#[derive(Debug)]
+pub struct TodoTracker {
+    /// The underlying file system watcher.
+    ///
+    /// Kept alive to maintain the watch subscription.
+    #[allow(dead_code)]
+    watcher: RecommendedWatcher,
+
+    /// Path to the todos directory being watched.
+    todos_dir: PathBuf,
+
+    /// Channel sender for emitting todo progress events.
+    #[allow(dead_code)]
+    event_sender: mpsc::Sender<TodoProgressEvent>,
+
+    /// Sessions that have ended (summary event received).
+    ///
+    /// Used for abandonment detection: if a session has ended and
+    /// its todo file still has incomplete tasks, the session is
+    /// marked as abandoned.
+    ended_sessions: Arc<RwLock<HashSet<String>>>,
+}
+
+impl TodoTracker {
+    /// Creates a new todo tracker watching the default todos directory.
+    ///
+    /// The default location is `~/.claude/todos/`.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_sender` - Channel for emitting [`TodoProgressEvent`]s
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The home directory cannot be determined
+    /// - The `~/.claude/todos` directory does not exist
+    /// - The file system watcher cannot be initialized
+    pub fn new(event_sender: mpsc::Sender<TodoProgressEvent>) -> TrackerResult<Self> {
+        Self::with_config(event_sender, TodoTrackerConfig::default())
+    }
+
+    /// Creates a new todo tracker with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_sender` - Channel for emitting [`TodoProgressEvent`]s
+    /// * `config` - Configuration options for the tracker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker cannot be initialized.
+    pub fn with_config(
+        event_sender: mpsc::Sender<TodoProgressEvent>,
+        config: TodoTrackerConfig,
+    ) -> TrackerResult<Self> {
+        let claude_dir = directories::BaseDirs::new()
+            .map(|dirs| dirs.home_dir().join(".claude"))
+            .ok_or_else(|| TodoTrackerError::ClaudeDirectoryNotFound(PathBuf::from("~/.claude")))?;
+
+        Self::with_path_and_config(claude_dir.join("todos"), event_sender, config)
+    }
+
+    /// Creates a new todo tracker watching a specific directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `todos_dir` - Path to the todos directory to watch
+    /// * `event_sender` - Channel for emitting [`TodoProgressEvent`]s
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The specified directory does not exist
+    /// - The file system watcher cannot be initialized
+    pub fn with_path(
+        todos_dir: PathBuf,
+        event_sender: mpsc::Sender<TodoProgressEvent>,
+    ) -> TrackerResult<Self> {
+        Self::with_path_and_config(todos_dir, event_sender, TodoTrackerConfig::default())
+    }
+
+    /// Creates a new todo tracker with a specific path and configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `todos_dir` - Path to the todos directory to watch
+    /// * `event_sender` - Channel for emitting [`TodoProgressEvent`]s
+    /// * `config` - Configuration options for the tracker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker cannot be initialized.
+    pub fn with_path_and_config(
+        todos_dir: PathBuf,
+        event_sender: mpsc::Sender<TodoProgressEvent>,
+        config: TodoTrackerConfig,
+    ) -> TrackerResult<Self> {
+        // Verify the directory exists
+        if !todos_dir.exists() {
+            return Err(TodoTrackerError::ClaudeDirectoryNotFound(todos_dir));
+        }
+
+        info!(
+            todos_dir = %todos_dir.display(),
+            debounce_ms = config.debounce_ms,
+            "Initializing todo tracker"
+        );
+
+        // Create the ended sessions set
+        let ended_sessions = Arc::new(RwLock::new(HashSet::new()));
+
+        // Create channel for debounced file change notifications
+        let (debounce_tx, debounce_rx) = mpsc::channel::<(PathBuf, PathBuf)>(1000);
+
+        // Create the debouncer
+        let debouncer = Debouncer::new(Duration::from_millis(config.debounce_ms), debounce_tx);
+
+        // Spawn the async processing task
+        let sender_for_task = event_sender.clone();
+        let ended_for_task = Arc::clone(&ended_sessions);
+        tokio::spawn(async move {
+            process_debounced_changes(debounce_rx, sender_for_task, ended_for_task).await;
+        });
+
+        // Create the file watcher
+        let watcher = create_todos_watcher(todos_dir.clone(), debouncer)?;
+
+        Ok(Self {
+            watcher,
+            todos_dir,
+            event_sender,
+            ended_sessions,
+        })
+    }
+
+    /// Marks a session as ended.
+    ///
+    /// Call this method when a summary event is detected for a session.
+    /// Subsequent todo file updates for this session will have their
+    /// `abandoned` flag set if there are incomplete tasks.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The session UUID to mark as ended
+    pub async fn mark_session_ended(&self, session_id: &str) {
+        let mut sessions = self.ended_sessions.write().await;
+        sessions.insert(session_id.to_string());
+        debug!(session_id = %session_id, "Marked session as ended");
+    }
+
+    /// Checks if a session has ended.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The session UUID to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the session has been marked as ended, `false` otherwise.
+    pub async fn is_session_ended(&self, session_id: &str) -> bool {
+        let sessions = self.ended_sessions.read().await;
+        sessions.contains(session_id)
+    }
+
+    /// Clears the ended status for a session.
+    ///
+    /// This can be called if a session is restarted or the ended status
+    /// was set in error.
+    ///
+    /// # Arguments
+    ///
+    /// * `session_id` - The session UUID to clear
+    pub async fn clear_session_ended(&self, session_id: &str) {
+        let mut sessions = self.ended_sessions.write().await;
+        sessions.remove(session_id);
+        trace!(session_id = %session_id, "Cleared session ended status");
+    }
+
+    /// Returns the path to the todos directory being watched.
+    #[must_use]
+    pub fn todos_dir(&self) -> &Path {
+        &self.todos_dir
+    }
+
+    /// Returns the number of sessions marked as ended.
+    pub async fn ended_sessions_count(&self) -> usize {
+        let sessions = self.ended_sessions.read().await;
+        sessions.len()
+    }
+}
+
+/// Creates the file system watcher for the todos directory.
+fn create_todos_watcher(
+    todos_dir: PathBuf,
+    debouncer: Debouncer<PathBuf, PathBuf>,
+) -> TrackerResult<RecommendedWatcher> {
+    let watch_dir = todos_dir.clone();
+
+    let mut watcher = RecommendedWatcher::new(
+        move |res: std::result::Result<Event, notify::Error>| {
+            handle_notify_event(res, &todos_dir, &debouncer);
+        },
+        Config::default(),
+    )?;
+
+    // Watch the todos directory (non-recursive)
+    watcher.watch(&watch_dir, RecursiveMode::NonRecursive)?;
+
+    debug!(
+        watch_dir = %watch_dir.display(),
+        "Started watching for todo file changes"
+    );
+
+    Ok(watcher)
+}
+
+/// Handles raw notify events and sends them to the debouncer.
+fn handle_notify_event(
+    res: std::result::Result<Event, notify::Error>,
+    todos_dir: &Path,
+    debouncer: &Debouncer<PathBuf, PathBuf>,
+) {
+    let event = match res {
+        Ok(event) => event,
+        Err(e) => {
+            error!(error = %e, "File watcher error");
+            return;
+        }
+    };
+
+    trace!(kind = ?event.kind, paths = ?event.paths, "Received notify event");
+
+    // Only process create and modify events
+    let should_process = matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_));
+
+    if !should_process {
+        trace!(kind = ?event.kind, "Ignoring event kind");
+        return;
+    }
+
+    // Process each path in the event
+    for path in &event.paths {
+        // Only process .json files
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+
+        // Verify the path is in the todos directory
+        if path.parent() != Some(todos_dir) {
+            continue;
+        }
+
+        // Try to extract session ID to validate filename format
+        if parse_todo_filename(path).is_none() {
+            trace!(path = %path.display(), "Ignoring non-todo file");
+            continue;
+        }
+
+        debug!(
+            path = %path.display(),
+            kind = ?event.kind,
+            "Todo file changed, sending to debouncer"
+        );
+
+        // Send to debouncer (key is the path, value is also the path)
+        if !debouncer.try_send(path.clone(), path.clone()) {
+            warn!(path = %path.display(), "Failed to send to debouncer: channel full or closed");
+        }
+    }
+}
+
+/// Processes debounced file change events, parsing todo files and emitting events.
+async fn process_debounced_changes(
+    mut rx: mpsc::Receiver<(PathBuf, PathBuf)>,
+    sender: mpsc::Sender<TodoProgressEvent>,
+    ended_sessions: Arc<RwLock<HashSet<String>>>,
+) {
+    debug!("Starting todo file change processor");
+
+    while let Some((path, _)) = rx.recv().await {
+        debug!(path = %path.display(), "Processing debounced todo file change");
+
+        // Extract session ID from filename
+        let session_id = match parse_todo_filename(&path) {
+            Some(id) => id,
+            None => {
+                warn!(path = %path.display(), "Could not extract session ID from filename");
+                continue;
+            }
+        };
+
+        // Read and parse the todo file
+        let content = match tokio::fs::read_to_string(&path).await {
+            Ok(content) => content,
+            Err(e) => {
+                // File might have been deleted between event and processing
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    trace!(path = %path.display(), "Todo file was deleted");
+                } else {
+                    warn!(path = %path.display(), error = %e, "Failed to read todo file");
+                }
+                continue;
+            }
+        };
+
+        // Parse using lenient parsing to handle partially written files
+        let entries = parse_todo_file_lenient(&content);
+        let counts = count_todo_statuses(&entries);
+
+        // Check if session has ended (for abandonment detection)
+        let session_ended = {
+            let sessions = ended_sessions.read().await;
+            sessions.contains(&session_id)
+        };
+
+        let abandoned = is_abandoned(&counts, session_ended);
+        let event = create_todo_progress_event(&session_id, &counts, abandoned);
+
+        trace!(
+            session_id = %session_id,
+            completed = counts.completed,
+            in_progress = counts.in_progress,
+            pending = counts.pending,
+            abandoned = abandoned,
+            "Emitting todo progress event"
+        );
+
+        if let Err(e) = sender.send(event).await {
+            error!(error = %e, "Failed to send todo progress event: channel closed");
+            break;
+        }
+    }
+
+    debug!("Todo file change processor shutting down");
 }
 
 #[cfg(test)]
@@ -1418,5 +1861,484 @@ mod tests {
 
         let entries = parse_todo_file(&json).unwrap();
         assert_eq!(entries[0].content.len(), 10000);
+    }
+
+    // =========================================================================
+    // TodoTrackerError Tests
+    // =========================================================================
+
+    #[test]
+    fn todo_tracker_error_display() {
+        let err = TodoTrackerError::ChannelClosed;
+        assert_eq!(err.to_string(), "failed to send event: channel closed");
+
+        let err = TodoTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test/todos"));
+        assert_eq!(
+            err.to_string(),
+            "claude todos directory not found: /test/todos"
+        );
+    }
+
+    #[test]
+    fn todo_tracker_error_is_debug() {
+        let err = TodoTrackerError::ChannelClosed;
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ChannelClosed"));
+
+        let err = TodoTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test"));
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ClaudeDirectoryNotFound"));
+    }
+
+    // =========================================================================
+    // TodoTrackerConfig Tests
+    // =========================================================================
+
+    #[test]
+    fn todo_tracker_config_default() {
+        let config = TodoTrackerConfig::default();
+        assert_eq!(config.debounce_ms, 100);
+    }
+
+    #[test]
+    fn todo_tracker_config_clone() {
+        let config = TodoTrackerConfig { debounce_ms: 200 };
+        let cloned = config.clone();
+        assert_eq!(cloned.debounce_ms, 200);
+    }
+
+    // =========================================================================
+    // TodoTracker File Operations Tests
+    // =========================================================================
+
+    use std::io::Write;
+    use tempfile::TempDir;
+    use tokio::time::{sleep, timeout, Duration as TokioDuration};
+
+    /// Sample todo file content for testing.
+    const SAMPLE_TODO: &str = r#"[
+        {"content": "Task 1", "status": "completed", "activeForm": null},
+        {"content": "Task 2", "status": "in_progress", "activeForm": "Working on task 2..."},
+        {"content": "Task 3", "status": "pending", "activeForm": null}
+    ]"#;
+
+    /// Creates a temporary directory with a todo file.
+    fn create_test_todo_file(dir: &TempDir, session_id: &str, content: &str) -> PathBuf {
+        let filename = format!("{}-agent-{}.json", session_id, session_id);
+        let todo_path = dir.path().join(&filename);
+
+        let mut file = std::fs::File::create(&todo_path).expect("Failed to create todo file");
+        file.write_all(content.as_bytes())
+            .expect("Failed to write todo content");
+        file.flush().expect("Failed to flush");
+
+        todo_path
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_missing_directory() {
+        let (tx, _rx) = mpsc::channel(100);
+        let result = TodoTracker::with_path(PathBuf::from("/nonexistent/todos"), tx);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            TodoTrackerError::ClaudeDirectoryNotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_with_valid_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let result = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx);
+
+        assert!(result.is_ok(), "Should create tracker for valid directory");
+        assert_eq!(result.unwrap().todos_dir(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_mark_session_ended() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Initially, session should not be ended
+        assert!(!tracker.is_session_ended("sess-123").await);
+        assert_eq!(tracker.ended_sessions_count().await, 0);
+
+        // Mark session as ended
+        tracker.mark_session_ended("sess-123").await;
+
+        // Now it should be ended
+        assert!(tracker.is_session_ended("sess-123").await);
+        assert_eq!(tracker.ended_sessions_count().await, 1);
+
+        // Other sessions should not be affected
+        assert!(!tracker.is_session_ended("sess-456").await);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_clear_session_ended() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Mark session as ended
+        tracker.mark_session_ended("sess-123").await;
+        assert!(tracker.is_session_ended("sess-123").await);
+
+        // Clear the ended status
+        tracker.clear_session_ended("sess-123").await;
+        assert!(!tracker.is_session_ended("sess-123").await);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_multiple_ended_sessions() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Mark multiple sessions as ended
+        tracker.mark_session_ended("sess-1").await;
+        tracker.mark_session_ended("sess-2").await;
+        tracker.mark_session_ended("sess-3").await;
+
+        assert_eq!(tracker.ended_sessions_count().await, 3);
+        assert!(tracker.is_session_ended("sess-1").await);
+        assert!(tracker.is_session_ended("sess-2").await);
+        assert!(tracker.is_session_ended("sess-3").await);
+        assert!(!tracker.is_session_ended("sess-4").await);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_detects_new_todo_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a new todo file
+        let session_id = "6e45a55c-3124-4cc8-ad85-040a5c316009";
+        create_test_todo_file(&temp_dir, session_id, SAMPLE_TODO);
+
+        // Should receive a todo progress event
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for new todo file");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert_eq!(event.completed, 1);
+        assert_eq!(event.in_progress, 1);
+        assert_eq!(event.pending, 1);
+        assert!(!event.abandoned);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_detects_modified_todo_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+
+        // Create initial todo file
+        let todo_path = create_test_todo_file(&temp_dir, session_id, SAMPLE_TODO);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Modify the todo file (all tasks completed)
+        let updated_todo = r#"[
+            {"content": "Task 1", "status": "completed", "activeForm": null},
+            {"content": "Task 2", "status": "completed", "activeForm": null},
+            {"content": "Task 3", "status": "completed", "activeForm": null}
+        ]"#;
+        let mut file = std::fs::File::create(&todo_path).expect("Should open file");
+        file.write_all(updated_todo.as_bytes())
+            .expect("Should write");
+        file.flush().expect("Should flush");
+
+        // Should receive an updated event
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(
+            result.is_ok(),
+            "Should receive event for modified todo file"
+        );
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert_eq!(event.completed, 3);
+        assert_eq!(event.in_progress, 0);
+        assert_eq!(event.pending, 0);
+        assert!(!event.abandoned);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_abandonment_detection() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "f1e2d3c4-b5a6-0987-fedc-ba9876543210";
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Mark the session as ended BEFORE creating the file
+        tracker.mark_session_ended(session_id).await;
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a todo file with incomplete tasks
+        let incomplete_todo = r#"[
+            {"content": "Task 1", "status": "completed", "activeForm": null},
+            {"content": "Task 2", "status": "pending", "activeForm": null}
+        ]"#;
+        create_test_todo_file(&temp_dir, session_id, incomplete_todo);
+
+        // Should receive an event with abandoned=true
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert_eq!(event.completed, 1);
+        assert_eq!(event.pending, 1);
+        assert!(event.abandoned, "Should be marked as abandoned");
+    }
+
+    #[tokio::test]
+    async fn test_tracker_no_abandonment_for_active_session() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "11111111-2222-3333-4444-555555555555";
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a todo file with incomplete tasks (session NOT ended)
+        let incomplete_todo = r#"[
+            {"content": "Task 1", "status": "in_progress", "activeForm": "Working..."},
+            {"content": "Task 2", "status": "pending", "activeForm": null}
+        ]"#;
+        create_test_todo_file(&temp_dir, session_id, incomplete_todo);
+
+        // Should receive an event with abandoned=false (session not ended)
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event");
+
+        let event = result.unwrap().unwrap();
+        assert!(
+            !event.abandoned,
+            "Should NOT be marked as abandoned for active session"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tracker_ignores_non_json_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a non-json file
+        let non_json_path = temp_dir.path().join("some-file.txt");
+        std::fs::write(&non_json_path, "not a json file").expect("Should write");
+
+        // Should NOT receive any event
+        let result = timeout(TokioDuration::from_millis(200), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "Should not receive event for non-json file"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tracker_ignores_invalid_filename_format() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a json file with invalid filename format
+        let invalid_path = temp_dir.path().join("not-a-valid-todo-filename.json");
+        std::fs::write(&invalid_path, SAMPLE_TODO).expect("Should write");
+
+        // Should NOT receive any event
+        let result = timeout(TokioDuration::from_millis(200), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "Should not receive event for invalid filename format"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tracker_handles_empty_todo_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "00000000-0000-0000-0000-000000000000";
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create an empty todo file
+        create_test_todo_file(&temp_dir, session_id, "[]");
+
+        // Should receive an event with zero counts
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for empty todo file");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.completed, 0);
+        assert_eq!(event.in_progress, 0);
+        assert_eq!(event.pending, 0);
+        assert!(!event.abandoned);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_config_with_custom_debounce() {
+        // Test that custom debounce config is accepted
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let config = TodoTrackerConfig { debounce_ms: 50 };
+        let tracker = TodoTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
+            .expect("Should create tracker");
+
+        // Tracker should be created successfully with custom debounce config
+        assert_eq!(tracker.todos_dir(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_process_debounced_changes_integration() {
+        // Integration test: manually invoke the processing logic
+        // to verify events are emitted correctly
+        use crate::utils::debounce::Debouncer;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "00000000-1111-2222-3333-444444444444";
+
+        // Create a todo file directly
+        let todo_content = r#"[
+            {"content": "Task 1", "status": "completed", "activeForm": null},
+            {"content": "Task 2", "status": "pending", "activeForm": null}
+        ]"#;
+        let todo_path = create_test_todo_file(&temp_dir, session_id, todo_content);
+
+        // Set up channels for the processing task
+        let (event_tx, mut event_rx) = mpsc::channel(100);
+        let ended_sessions = Arc::new(RwLock::new(HashSet::new()));
+
+        // Set up debouncer that outputs to a channel we receive from
+        let (debounce_output_tx, debounce_output_rx) = mpsc::channel(100);
+
+        // Spawn the processing task
+        let ended_for_task = Arc::clone(&ended_sessions);
+        tokio::spawn(async move {
+            process_debounced_changes(debounce_output_rx, event_tx, ended_for_task).await;
+        });
+
+        // Manually send the "debounced" path to simulate what would happen
+        // after file watcher detects a change and debouncer coalesces it
+        debounce_output_tx
+            .send((todo_path.clone(), todo_path.clone()))
+            .await
+            .expect("Should send to debounce output");
+
+        // Should receive the event
+        let result = timeout(TokioDuration::from_millis(500), event_rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert_eq!(event.completed, 1);
+        assert_eq!(event.pending, 1);
+        assert!(!event.abandoned);
+    }
+
+    #[tokio::test]
+    async fn test_process_debounced_changes_with_ended_session() {
+        // Test that abandonment is detected when session is marked as ended
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let session_id = "55555555-6666-7777-8888-999999999999";
+
+        // Create a todo file with incomplete tasks
+        let todo_content = r#"[
+            {"content": "Task 1", "status": "completed", "activeForm": null},
+            {"content": "Task 2", "status": "in_progress", "activeForm": "Working..."}
+        ]"#;
+        let todo_path = create_test_todo_file(&temp_dir, session_id, todo_content);
+
+        // Set up channels
+        let (event_tx, mut event_rx) = mpsc::channel(100);
+        let ended_sessions = Arc::new(RwLock::new(HashSet::new()));
+
+        // Mark session as ended BEFORE processing
+        {
+            let mut sessions = ended_sessions.write().await;
+            sessions.insert(session_id.to_string());
+        }
+
+        // Set up the output channel
+        let (debounce_output_tx, debounce_output_rx) = mpsc::channel(100);
+
+        // Spawn the processing task
+        let ended_for_task = Arc::clone(&ended_sessions);
+        tokio::spawn(async move {
+            process_debounced_changes(debounce_output_rx, event_tx, ended_for_task).await;
+        });
+
+        // Send the path
+        debounce_output_tx
+            .send((todo_path.clone(), todo_path.clone()))
+            .await
+            .expect("Should send");
+
+        // Should receive event with abandoned=true
+        let result = timeout(TokioDuration::from_millis(500), event_rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert!(event.abandoned, "Should be marked as abandoned");
+    }
+
+    #[tokio::test]
+    async fn test_tracker_custom_config() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let config = TodoTrackerConfig { debounce_ms: 250 };
+        let tracker = TodoTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
+            .expect("Should create tracker");
+
+        // Tracker should be created successfully with custom config
+        assert_eq!(tracker.todos_dir(), temp_dir.path());
     }
 }
