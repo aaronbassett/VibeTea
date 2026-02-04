@@ -629,6 +629,53 @@ impl DashboardState {
     }
 }
 
+// =============================================================================
+// NO_COLOR Support
+// =============================================================================
+
+/// Checks if the `NO_COLOR` environment variable is set.
+///
+/// Per the [NO_COLOR standard](https://no-color.org/), when this environment
+/// variable is set (regardless of value, including empty string), command-line
+/// software should disable colored output.
+///
+/// # Returns
+///
+/// `true` if `NO_COLOR` is set (even if empty), `false` otherwise.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::is_no_color_set;
+///
+/// // Returns false unless NO_COLOR environment variable is set
+/// let no_color = is_no_color_set();
+/// ```
+#[must_use]
+pub fn is_no_color_set() -> bool {
+    std::env::var_os("NO_COLOR").is_some()
+}
+
+/// Creates a [`Theme`] based on the `NO_COLOR` environment variable.
+///
+/// If `NO_COLOR` is set (to any value, including empty), returns a monochrome
+/// theme with no ANSI colors. Otherwise, returns the default themed version.
+///
+/// This is a convenience function that delegates to [`Theme::from_env()`].
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::tui::app::theme_from_env;
+///
+/// // Returns monochrome if NO_COLOR is set, colorful otherwise
+/// let theme = theme_from_env();
+/// ```
+#[must_use]
+pub fn theme_from_env() -> Theme {
+    Theme::from_env()
+}
+
 /// Theme configuration for the TUI.
 ///
 /// Defines colors and styles used throughout the interface for consistent
@@ -848,7 +895,7 @@ impl Theme {
     /// ```
     #[must_use]
     pub fn from_env() -> Self {
-        if std::env::var("NO_COLOR").is_ok() {
+        if is_no_color_set() {
             Self::monochrome()
         } else {
             Self::default()
@@ -3865,6 +3912,80 @@ mod tests {
         // Should return monochrome theme
         assert_eq!(theme.status_connected.fg, None);
         assert!(theme.status_connected.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn theme_from_env_returns_monochrome_when_no_color_empty() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        // Per NO_COLOR standard, empty string should also disable colors
+        std::env::set_var("NO_COLOR", "");
+
+        let theme = Theme::from_env();
+        // Should return monochrome theme even with empty value
+        assert_eq!(theme.status_connected.fg, None);
+        assert!(theme.status_connected.add_modifier.contains(Modifier::BOLD));
+    }
+
+    // =============================================================================
+    // is_no_color_set Tests
+    // =============================================================================
+
+    #[test]
+    fn is_no_color_set_returns_false_when_unset() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        std::env::remove_var("NO_COLOR");
+
+        assert!(!is_no_color_set());
+    }
+
+    #[test]
+    fn is_no_color_set_returns_true_when_set_to_value() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        std::env::set_var("NO_COLOR", "1");
+
+        assert!(is_no_color_set());
+    }
+
+    #[test]
+    fn is_no_color_set_returns_true_when_set_to_empty() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        // Per NO_COLOR standard, empty string should also return true
+        std::env::set_var("NO_COLOR", "");
+
+        assert!(is_no_color_set());
+    }
+
+    #[test]
+    fn is_no_color_set_returns_true_when_set_to_any_value() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        std::env::set_var("NO_COLOR", "false");
+
+        // Per NO_COLOR standard, the presence matters, not the value
+        assert!(is_no_color_set());
+    }
+
+    // =============================================================================
+    // theme_from_env Tests
+    // =============================================================================
+
+    #[test]
+    fn theme_from_env_function_returns_colorful_when_unset() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        std::env::remove_var("NO_COLOR");
+
+        let theme = theme_from_env();
+        // Should return colorful theme
+        assert_eq!(theme.status_connected.fg, Some(Color::Green));
+    }
+
+    #[test]
+    fn theme_from_env_function_returns_monochrome_when_set() {
+        let _guard = EnvGuard::new("NO_COLOR");
+        std::env::set_var("NO_COLOR", "1");
+
+        let theme = theme_from_env();
+        // Should return monochrome theme
+        assert_eq!(theme.status_connected.fg, None);
     }
 
     // =============================================================================

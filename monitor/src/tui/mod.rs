@@ -40,10 +40,10 @@ pub mod widgets;
 
 // Re-exports for convenient access to core TUI types
 pub use app::{
-    default_session_name, detect_existing_keys, detect_existing_keys_in_dir,
-    setup_form_with_detected_defaults, setup_form_with_detected_defaults_in_dir, AppState,
-    ConnectionStatus, DashboardState, EventBuffer, EventHandler, EventStats, KeyOption, Screen,
-    ScrollState, SetupField, SetupFormState, Symbols, Theme, TuiEvent, ASCII_SYMBOLS,
+    default_session_name, detect_existing_keys, detect_existing_keys_in_dir, is_no_color_set,
+    setup_form_with_detected_defaults, setup_form_with_detected_defaults_in_dir, theme_from_env,
+    AppState, ConnectionStatus, DashboardState, EventBuffer, EventHandler, EventStats, KeyOption,
+    Screen, ScrollState, SetupField, SetupFormState, Symbols, Theme, TuiEvent, ASCII_SYMBOLS,
     DEFAULT_EVENT_BUFFER_CAPACITY, DEFAULT_TICK_RATE_MS, UNICODE_SYMBOLS,
 };
 pub use input::{handle_dashboard_key, handle_setup_key, DashboardAction, SetupAction};
