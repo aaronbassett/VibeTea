@@ -215,10 +215,10 @@
 - [x] T103 [GIT] Commit: wire skill_tracker to watcher
 - [x] T104 [US3] Add client store handler for skill_invocation events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
 - [x] T105 [GIT] Commit: add client skill_invocation handler
-- [ ] T106 [US3] Run /sdd:map incremental for Phase 5 changes
-- [ ] T107 [GIT] Commit: update codebase documents for phase 5
-- [ ] T108 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T109 [GIT] Commit: finalize phase 5 retro
+- [x] T106 [US3] Run /sdd:map incremental for Phase 5 changes
+- [x] T107 [GIT] Commit: update codebase documents for phase 5
+- [x] T108 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T109 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
 - [ ] T110 [GIT] Push branch to origin (ensure pre-push hooks pass)
