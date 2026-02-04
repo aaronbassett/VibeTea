@@ -220,14 +220,19 @@ impl SupabaseClient {
     ///     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     /// )?;
     /// ```
-    pub fn new(base_url: impl Into<String>, anon_key: impl Into<String>) -> Result<Self, SupabaseError> {
+    pub fn new(
+        base_url: impl Into<String>,
+        anon_key: impl Into<String>,
+    ) -> Result<Self, SupabaseError> {
         let base_url = base_url.into().trim_end_matches('/').to_string();
         let anon_key = anon_key.into();
 
         let http_client = Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
-            .map_err(|e| SupabaseError::Configuration(format!("failed to create HTTP client: {e}")))?;
+            .map_err(|e| {
+                SupabaseError::Configuration(format!("failed to create HTTP client: {e}"))
+            })?;
 
         Ok(Self {
             http_client,
@@ -300,10 +305,9 @@ impl SupabaseClient {
             )));
         }
 
-        let user_response: SupabaseUserResponse = response
-            .json()
-            .await
-            .map_err(|e| SupabaseError::InvalidResponse(format!("failed to parse user response: {e}")))?;
+        let user_response: SupabaseUserResponse = response.json().await.map_err(|e| {
+            SupabaseError::InvalidResponse(format!("failed to parse user response: {e}"))
+        })?;
 
         debug!(user_id = %user_response.id, "JWT validated successfully");
 
@@ -368,10 +372,9 @@ impl SupabaseClient {
             )));
         }
 
-        let keys_response: PublicKeysResponse = response
-            .json()
-            .await
-            .map_err(|e| SupabaseError::InvalidResponse(format!("failed to parse keys response: {e}")))?;
+        let keys_response: PublicKeysResponse = response.json().await.map_err(|e| {
+            SupabaseError::InvalidResponse(format!("failed to parse keys response: {e}"))
+        })?;
 
         debug!(count = keys_response.keys.len(), "Fetched public keys");
 
@@ -411,7 +414,10 @@ impl SupabaseClient {
             match self.fetch_public_keys().await {
                 Ok(keys) => {
                     if attempt > 0 {
-                        info!(attempt = attempt + 1, "Public key fetch succeeded after retry");
+                        info!(
+                            attempt = attempt + 1,
+                            "Public key fetch succeeded after retry"
+                        );
                     }
                     return Ok(keys);
                 }
@@ -480,7 +486,8 @@ mod tests {
 
     /// Helper to create a test client pointing to a mock server.
     fn create_test_client(mock_server: &MockServer) -> SupabaseClient {
-        SupabaseClient::new(mock_server.uri(), "test-anon-key").expect("failed to create test client")
+        SupabaseClient::new(mock_server.uri(), "test-anon-key")
+            .expect("failed to create test client")
     }
 
     // ==================== SupabaseClient::new tests ====================
@@ -615,8 +622,8 @@ mod tests {
     #[tokio::test]
     async fn validate_jwt_returns_unavailable_on_connection_error() {
         // Use a URL that won't connect
-        let client = SupabaseClient::new("http://127.0.0.1:1", "key")
-            .expect("should create client");
+        let client =
+            SupabaseClient::new("http://127.0.0.1:1", "key").expect("should create client");
 
         let result = client.validate_jwt("token").await;
 

@@ -618,7 +618,9 @@ mod tests {
 
         // Wrong length
         assert!(store.validate_session("short", false).is_none());
-        assert!(store.validate_session("x".repeat(100).as_str(), false).is_none());
+        assert!(store
+            .validate_session("x".repeat(100).as_str(), false)
+            .is_none());
 
         // Correct length but doesn't exist
         let fake_token = "a".repeat(TOKEN_LENGTH);
@@ -627,11 +629,8 @@ mod tests {
 
     #[test]
     fn test_session_expiration() {
-        let config = SessionStoreConfig::new(
-            100,
-            Duration::from_millis(10),
-            Duration::from_millis(0),
-        );
+        let config =
+            SessionStoreConfig::new(100, Duration::from_millis(10), Duration::from_millis(0));
         let store = SessionStore::new(config);
 
         let token = store
@@ -650,11 +649,8 @@ mod tests {
 
     #[test]
     fn test_session_grace_period() {
-        let config = SessionStoreConfig::new(
-            100,
-            Duration::from_millis(10),
-            Duration::from_millis(50),
-        );
+        let config =
+            SessionStoreConfig::new(100, Duration::from_millis(10), Duration::from_millis(50));
         let store = SessionStore::new(config);
 
         let token = store
@@ -680,11 +676,8 @@ mod tests {
 
     #[test]
     fn test_session_ttl_extension() {
-        let config = SessionStoreConfig::new(
-            100,
-            Duration::from_millis(100),
-            Duration::from_millis(0),
-        );
+        let config =
+            SessionStoreConfig::new(100, Duration::from_millis(100), Duration::from_millis(0));
         let store = SessionStore::new(config);
 
         let token = store
@@ -728,11 +721,7 @@ mod tests {
 
     #[test]
     fn test_session_store_capacity_limit() {
-        let config = SessionStoreConfig::new(
-            3,
-            Duration::from_secs(300),
-            Duration::from_secs(30),
-        );
+        let config = SessionStoreConfig::new(3, Duration::from_secs(300), Duration::from_secs(30));
         let store = SessionStore::new(config);
 
         // Fill to capacity
@@ -744,16 +733,16 @@ mod tests {
 
         // Fourth session should fail
         let result = store.create_session("user-4".to_string(), None);
-        assert!(matches!(result, Err(SessionError::AtCapacity { max_capacity: 3 })));
+        assert!(matches!(
+            result,
+            Err(SessionError::AtCapacity { max_capacity: 3 })
+        ));
     }
 
     #[test]
     fn test_session_store_cleanup_expired() {
-        let config = SessionStoreConfig::new(
-            100,
-            Duration::from_millis(5),
-            Duration::from_millis(0),
-        );
+        let config =
+            SessionStoreConfig::new(100, Duration::from_millis(5), Duration::from_millis(0));
         let store = SessionStore::new(config);
 
         // Create some sessions
@@ -777,11 +766,8 @@ mod tests {
 
     #[test]
     fn test_session_store_capacity_metrics() {
-        let config = SessionStoreConfig::new(
-            100,
-            Duration::from_secs(300),
-            Duration::from_secs(30),
-        );
+        let config =
+            SessionStoreConfig::new(100, Duration::from_secs(300), Duration::from_secs(30));
         let store = SessionStore::new(config);
 
         assert_eq!(store.max_capacity(), 100);
@@ -814,11 +800,7 @@ mod tests {
 
     #[test]
     fn test_session_remaining_ttl() {
-        let session = Session::new(
-            "user-123".to_string(),
-            None,
-            Duration::from_secs(300),
-        );
+        let session = Session::new("user-123".to_string(), None, Duration::from_secs(300));
 
         let remaining = session.remaining_ttl();
         // Should be close to 300 seconds (allow some margin for test execution)
@@ -856,7 +838,10 @@ mod tests {
         let config = SessionStoreConfig::default();
         assert_eq!(config.max_capacity, DEFAULT_MAX_CAPACITY);
         assert_eq!(config.default_ttl, Duration::from_secs(DEFAULT_TTL_SECS));
-        assert_eq!(config.grace_period, Duration::from_secs(DEFAULT_GRACE_PERIOD_SECS));
+        assert_eq!(
+            config.grace_period,
+            Duration::from_secs(DEFAULT_GRACE_PERIOD_SECS)
+        );
     }
 
     #[test]
@@ -867,11 +852,8 @@ mod tests {
 
     #[test]
     fn test_lazy_cleanup_on_validation() {
-        let config = SessionStoreConfig::new(
-            100,
-            Duration::from_millis(5),
-            Duration::from_millis(0),
-        );
+        let config =
+            SessionStoreConfig::new(100, Duration::from_millis(5), Duration::from_millis(0));
         let store = SessionStore::new(config);
 
         let token = store.create_session("user-1".to_string(), None).unwrap();
@@ -890,11 +872,8 @@ mod tests {
 
     #[test]
     fn test_extend_expired_session() {
-        let config = SessionStoreConfig::new(
-            100,
-            Duration::from_millis(5),
-            Duration::from_millis(0),
-        );
+        let config =
+            SessionStoreConfig::new(100, Duration::from_millis(5), Duration::from_millis(0));
         let store = SessionStore::new(config);
 
         let token = store.create_session("user-1".to_string(), None).unwrap();

@@ -314,10 +314,7 @@ mod tests {
             config.supabase_url,
             Some("https://test.supabase.co".to_string())
         );
-        assert_eq!(
-            config.supabase_anon_key,
-            Some("test-anon-key".to_string())
-        );
+        assert_eq!(config.supabase_anon_key, Some("test-anon-key".to_string()));
         assert_eq!(config.port, 9090);
     }
 
@@ -495,9 +492,7 @@ mod tests {
         let result = Config::from_env();
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(
-            matches!(err, ConfigError::MissingEnvVar(ref v) if v == "VIBETEA_SUPABASE_URL")
-        );
+        assert!(matches!(err, ConfigError::MissingEnvVar(ref v) if v == "VIBETEA_SUPABASE_URL"));
     }
 
     #[test]
@@ -550,9 +545,6 @@ mod tests {
             config.supabase_url,
             Some("https://test.supabase.co".to_string())
         );
-        assert_eq!(
-            config.supabase_anon_key,
-            Some("test-anon-key".to_string())
-        );
+        assert_eq!(config.supabase_anon_key, Some("test-anon-key".to_string()));
     }
 }

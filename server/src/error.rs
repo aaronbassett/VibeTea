@@ -879,7 +879,12 @@ mod tests {
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(
-            response.headers().get("Retry-After").unwrap().to_str().unwrap(),
+            response
+                .headers()
+                .get("Retry-After")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "120"
         );
     }

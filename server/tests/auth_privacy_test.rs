@@ -263,7 +263,10 @@ fn session_token_not_logged_on_validation() {
 
         // Validate with grace period
         let result = store.validate_session(&token, true);
-        assert!(result.is_some(), "Session should be valid with grace period");
+        assert!(
+            result.is_some(),
+            "Session should be valid with grace period"
+        );
 
         // Invalid token lookup (should not log the attempted token)
         let invalid_token = "x".repeat(43);
@@ -285,11 +288,7 @@ fn session_token_not_logged_on_validation() {
 #[test]
 fn session_token_not_logged_on_expiry() {
     // Create a store with very short TTL for testing
-    let config = SessionStoreConfig::new(
-        100,
-        Duration::from_millis(5),
-        Duration::from_millis(0),
-    );
+    let config = SessionStoreConfig::new(100, Duration::from_millis(5), Duration::from_millis(0));
     let store = SessionStore::new(config);
 
     // Create sessions outside of log capture
@@ -463,7 +462,10 @@ async fn jwt_not_logged_on_server_error() {
 
     let logs = with_log_capture_async(|| async {
         let result = client.validate_jwt(test_jwt).await;
-        assert!(result.is_err(), "JWT validation should fail on server error");
+        assert!(
+            result.is_err(),
+            "JWT validation should fail on server error"
+        );
     })
     .await;
 
@@ -567,11 +569,7 @@ fn session_store_debug_does_not_leak_tokens() {
 #[test]
 fn capacity_warnings_do_not_leak_tokens() {
     // Create a store with very low capacity
-    let config = SessionStoreConfig::new(
-        2,
-        Duration::from_secs(300),
-        Duration::from_secs(30),
-    );
+    let config = SessionStoreConfig::new(2, Duration::from_secs(300), Duration::from_secs(30));
     let store = SessionStore::new(config);
 
     // Fill to capacity outside of log capture
