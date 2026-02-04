@@ -233,6 +233,78 @@
 | Signature consistency | Ed25519 is deterministic; exported key produces identical signatures |
 | Memory safety | Seed array explicitly zeroed after use (zeroize crate) |
 
+## Project Activity Tracking (Phase 11)
+
+### Privacy-First Design
+
+| Aspect | Implementation | Assurance |
+|--------|-----------------|-----------|
+| No code transmission | Only metadata extracted from session files | Pattern matching on JSON, no file content read |
+| No prompt transmission | Session content never read beyond summary detection | Only JSONL headers scanned for `"type": "summary"` |
+| Path transmission only | Absolute project paths sent as metadata | Derived from directory slug parsing |
+| Session ID transmission | UUID identifiers sent as activity markers | Filenames validated as UUID format |
+| No secrets exposure | Claude API keys, file contents never accessed | File watching limited to `.jsonl` files in `~/.claude/projects/` |
+
+### ProjectTracker Implementation
+
+| Component | Security Detail | Location |
+|-----------|-----------------|----------|
+| Directory scope | Watches only `~/.claude/projects/` (user-local) | `monitor/src/trackers/project_tracker.rs:337-344` |
+| File filtering | Processes only `.jsonl` files | `monitor/src/trackers/project_tracker.rs:582` |
+| Filename validation | Session IDs must match UUID format (8-4-4-4-12 hex) | `monitor/src/trackers/project_tracker.rs:751-772` |
+| Content access | Only reads file to detect summary events | `monitor/src/trackers/project_tracker.rs:775-778` |
+| Summary detection | Parses JSONL lines as JSON, checks `type: "summary"` field only | `monitor/src/trackers/project_tracker.rs:157-173` |
+| Path reconstruction | Reverses slug format (`-` to `/`) without validation | `monitor/src/trackers/project_tracker.rs:119-123` |
+| Event emission | Sends project path, session ID, active flag only | `monitor/src/types.rs:189-196` |
+
+### ProjectActivityEvent Type
+
+| Field | Content | Privacy Impact | Location |
+|-------|---------|-----------------|----------|
+| `project_path` | Absolute filesystem path (e.g., `/home/user/Projects/VibeTea`) | Metadata only; no content leaked | `monitor/src/types.rs:191` |
+| `session_id` | UUID from filename (e.g., `6e45a55c-...`) | Activity tracking identifier | `monitor/src/types.rs:193` |
+| `is_active` | Boolean (true if no summary event detected) | Session status indicator | `monitor/src/types.rs:195` |
+
+### Data Extracted from Session Files
+
+| Data Type | Extracted | Transmitted | Reason |
+|-----------|-----------|-------------|--------|
+| Project path | Yes (from directory slug) | Yes | Activity dashboard |
+| Session ID | Yes (from filename) | Yes | Session correlation |
+| Session status | Yes (presence of summary event) | Yes | Activity indication |
+| Prompt content | No | No | Privacy |
+| Code snippets | No | No | Intellectual property protection |
+| File contents | No | No | Data minimization |
+| Session metadata (messages, timestamps) | No | No | Data minimization |
+
+### File Watching Security
+
+| Aspect | Implementation |
+|--------|-----------------|
+| Event source | `notify` crate file system watcher |
+| Recursive watching | Monitors `~/.claude/projects/` and subdirectories |
+| Event filtering | Only processes `Create` and `Modify` events |
+| Debouncing | None (per research.md: 0ms debounce for project files) |
+| Path validation | Events checked against projects directory boundary |
+| Error handling | File not found treated as session completion |
+
+### Slug Format Limitations
+
+| Limitation | Impact | Mitigation |
+|-----------|--------|------------|
+| Dashes in directory names ambiguous | `/home/user/my-project` becomes `/home/user/my/project` | Document in privacy considerations; use alternative separators in project names |
+| No validation of decoded path | May produce invalid paths | Used for display only; not interpreted as filesystem operations |
+| No round-trip guarantee | Cannot reliably recover original path if it contains dashes | Use camelCase or underscores in project directory names |
+
+### Thread Safety
+
+| Component | Thread-Safe | Mechanism |
+|-----------|-------------|-----------|
+| Watcher creation | Yes | Single ownership in `ProjectTracker` struct |
+| File event delivery | Yes | `mpsc` channel for thread-safe delivery |
+| Session scanning | Yes | Async tasks with channel coordination |
+| Event emission | Yes | Sender type enforces single owner per channel |
+
 ## Rate Limiting
 
 | Endpoint | Default Limit | Configuration |
@@ -333,6 +405,7 @@
 | WebSocket connect | filter params | info |
 | WebSocket disconnect | - | info |
 | Configuration errors | Missing variables | error |
+| Project activity tracking | project_path, session_id, is_active | debug/trace |
 
 ---
 

@@ -1,13 +1,13 @@
 # Technology Stack
 
-**Status**: Phase 6 - GitHub Actions composite action for monitor integration
+**Status**: Phase 11 - Project activity tracking for multi-project monitoring
 **Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, CLI with export-key |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, CLI with export-key, project activity tracking |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
 | GitHub Actions | YAML/Bash | - | Composite action for monitor integration and workflow orchestration |
@@ -32,7 +32,7 @@
 | anyhow             | 1.0     | Flexible error handling and context | Server, Monitor |
 | tracing            | 0.1     | Structured logging framework | Server, Monitor |
 | tracing-subscriber | 0.3     | Logging implementation (JSON, env-filter) | Server, Monitor |
-| notify             | 8.0     | File system watching | Monitor |
+| notify             | 8.0     | File system watching (inotify/FSEvents/ReadDirectoryChangesW) | Monitor (sessions, skills, todos, stats, projects) |
 | base64             | 0.22    | Base64 encoding/decoding | Server, Monitor |
 | rand               | 0.9     | Random number generation | Server, Monitor |
 | directories        | 6.0     | Standard directory paths | Monitor |
@@ -42,6 +42,8 @@
 | futures-util       | 0.3     | WebSocket stream utilities | Server |
 | futures            | 0.3     | Futures trait and utilities | Monitor (async coordination) |
 | clap               | 4.5     | CLI argument parsing with derive macros | Monitor (clap Subcommand/Parser for export-key, Phase 4) |
+| lru                | 0.12    | LRU cache for session state tracking (Phase 11) | Monitor project tracker |
+| similar            | 2.6     | Line diffing for file history tracking (Phase 11) | Monitor stats tracker |
 
 ### TypeScript/JavaScript (Client)
 
@@ -111,7 +113,7 @@
 | Async Model | Tokio (Rust), Promises (TypeScript) |
 | WebSocket Support | Native (server-side via axum, client-side via browser) |
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
-| File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
+| File System Monitoring | Rust notify crate (inotify/FSEvents/ReadDirectoryChangesW) for multi-file tracking: JSONL sessions, history, todos, stats, projects |
 | CLI Support | clap Subcommand enum for command parsing (init, run, export-key via clap derive macros, Phase 4) |
 | CI/CD Integration | GitHub Actions workflow with monitor deployment and background execution (Phase 5), composite action wrapper (Phase 6) |
 
@@ -122,7 +124,7 @@
 | Monitor → Server | HTTPS POST | JSON | Ed25519 signature with X-Signature header |
 | Server → Client | WebSocket | JSON | Bearer token |
 | Client → Server | WebSocket | JSON | Bearer token |
-| Monitor → File System | Native | JSONL | N/A (local file access) |
+| Monitor → File System | Native | JSONL (sessions/history), JSON (todos/stats), detect (projects) | N/A (local file access) |
 | GitHub Actions | SSH/HTTPS | Binary download + env var injection | GitHub Actions secrets |
 
 ## Data Serialization
@@ -136,6 +138,7 @@
 | History File | JSONL (JSON Lines) | One JSON object per line, append-only file |
 | Todo Files | JSON Array | Array of todo entries with status fields |
 | Stats Cache | JSON Object | Claude Code stats-cache.json with model usage data and hour counts |
+| Project Activity | File system events | Directory structure scanning, summary event detection |
 | Cryptographic Keys | Base64 + raw bytes | Public keys base64-encoded, private keys raw 32-byte seeds |
 
 ## Build Output
@@ -170,18 +173,25 @@
 - `rate_limit.rs` - Per-source token bucket rate limiting (100 events/sec)
 - `routes.rs` - HTTP endpoints (POST /events, GET /ws, GET /health)
 - `error.rs` - Comprehensive error types and handling
-- `types.rs` - Event types and data models (Phase 10: ActivityPatternEvent, ModelDistributionEvent)
+- `types.rs` - Event types and data models (Phase 10: ActivityPatternEvent, ModelDistributionEvent; Phase 11: ProjectActivityEvent)
 - `main.rs` - Server binary entry point
 
 ### Monitor (`monitor/src`)
 - `config.rs` - Configuration from environment variables (server URL, source ID, key path, buffer size)
 - `error.rs` - Error types
-- `types.rs` - Event types
+- `types.rs` - Event types (Phase 11: ProjectActivityEvent struct)
 - `parser.rs` - Claude Code JSONL parser (privacy-first metadata extraction)
 - `watcher.rs` - File system watcher for `.claude/projects/**/*.jsonl` files with position tracking
 - `privacy.rs` - **Phase 5**: Privacy pipeline for event sanitization before transmission
 - `crypto.rs` - **Phase 3-6**: Ed25519 keypair generation, loading, saving, and event signing with memory safety
 - `sender.rs` - **Phase 6**: HTTP client with event buffering, exponential backoff retry, and rate limit handling
+- `trackers/` - **Phase 11**: Project and session activity tracking
+  - `agent_tracker.rs` - Task tool agent spawn tracking
+  - `skill_tracker.rs` - Skill invocation tracking from history.jsonl
+  - `stats_tracker.rs` - Token usage and session metrics from stats-cache.json (Phase 10)
+  - `todo_tracker.rs` - Todo progress tracking from todos/*.json
+  - `project_tracker.rs` - **Phase 11**: Project activity detection via `~/.claude/projects/` directory scanning
+- `utils/` - Utility modules for tokenization, debouncing, session filename parsing
 - `main.rs` - **Phase 4**: CLI entry point with init, run, and export-key commands (clap Subcommand enum)
 - `lib.rs` - Public interface
 
@@ -491,6 +501,7 @@
 - Cryptographic authentication for event integrity
 - Efficient file watching with position tracking and debouncing
 - Virtual scrolling for high-volume event display
+- Multi-source project activity detection
 
 **Monitor CLI Module** (`monitor/src/main.rs` - 301-566 lines):
 - **Command enum**: Init, Run, Help, Version variants (Phase 6: before clap)
@@ -529,6 +540,50 @@
 - Bearer token authentication for clients
 - File permission enforcement (0600 private keys)
 - Privacy pipeline stripping sensitive data
+
+## Phase 11 - Project Activity Tracking (In Progress)
+
+**Project Tracker Module** (`monitor/src/trackers/project_tracker.rs` - 500+ lines):
+- **ProjectActivityEvent** - New event type for project-level activity tracking
+  - Fields: `project_path: String`, `session_id: String`, `is_active: bool`
+  - Tracks both active and completed sessions per project
+  - Serialized with camelCase for API compatibility
+
+- **ProjectTracker** - File system watcher for `~/.claude/projects/` directory
+  - Uses `notify` crate (already in stack) for cross-platform directory monitoring
+  - Recursive watching of project subdirectories
+  - Session activity detection via summary event presence
+  - `parse_project_slug()` - Converts slug format back to absolute paths
+  - `has_summary_event()` - Detects session completion state
+  - `create_project_activity_event()` - Factory function for event construction
+
+- **ProjectTrackerConfig** - Configuration for tracker behavior
+  - `scan_on_init: bool` - Initial full scan option
+  - Default: true (scan all projects on startup)
+
+- **ProjectTrackerError** - Comprehensive error handling
+  - WatcherInit: File system watcher setup failures
+  - Io: File read/write errors
+  - ClaudeDirectoryNotFound: Missing project directory
+  - ChannelClosed: Event sender channel unavailable
+
+- **Features**:
+  - No debouncing needed (project/* files change infrequently)
+  - Async/await compatible with tokio runtime
+  - Thread-safe via mpsc channels
+  - Graceful error handling and logging
+  - Privacy-first: Only paths and session IDs tracked
+
+- **Use Cases**:
+  - Track which projects have active sessions
+  - Detect when sessions are completed
+  - Multi-project monitoring dashboards
+  - Correlate activity across projects
+
+**Monitor Type Additions** (`monitor/src/types.rs` - Phase 11):
+- `EventPayload::ProjectActivity(ProjectActivityEvent)` - New event variant
+- `ProjectActivityEvent` struct with camelCase serialization
+- Full enum support for discriminated union event types
 
 ---
 

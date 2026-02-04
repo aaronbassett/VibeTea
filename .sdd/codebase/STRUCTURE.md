@@ -20,13 +20,14 @@ VibeTea/
 │   │   ├── sender.rs          # HTTP client with retry and buffering
 │   │   ├── types.rs           # Event type definitions
 │   │   ├── error.rs           # Error types
-│   │   ├── trackers/          # Enhanced tracking modules (Phase 4-10)
+│   │   ├── trackers/          # Enhanced tracking modules (Phase 4-11)
 │   │   │   ├── mod.rs         # Tracker module exports
 │   │   │   ├── agent_tracker.rs     # Task tool agent spawn detection
 │   │   │   ├── skill_tracker.rs     # Skill/slash command invocation tracking (Phase 5)
 │   │   │   ├── stats_tracker.rs     # Token usage, session metrics, activity patterns, model distribution (Phase 8-10)
 │   │   │   ├── todo_tracker.rs      # Todo list progress tracking (Phase 6)
-│   │   │   └── file_history_tracker.rs # File edit tracking (Phase 8+)
+│   │   │   ├── file_history_tracker.rs # File edit tracking (Phase 8+)
+│   │   │   └── project_tracker.rs   # Project session activity tracking (Phase 11)
 │   │   └── utils/             # Shared utilities (debouncing, tokenization, etc.)
 │   │       ├── mod.rs         # Utilities exports
 │   │       ├── debounce.rs    # Event debouncing for coalescing rapid changes
@@ -122,14 +123,15 @@ VibeTea/
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
 | `crypto.rs` | Ed25519 keypair with dual loading strategy (env var + file fallback) and key export | `Crypto`, `KeySource`, `CryptoError` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
-| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent`, `TodoProgressEvent` |
+| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent`, `TodoProgressEvent`, `ProjectActivityEvent` |
 | `error.rs` | Error types | `MonitorError`, custom errors |
-| `trackers/mod.rs` | Tracker module organization | Exports `agent_tracker`, `skill_tracker`, `stats_tracker`, `todo_tracker`, `file_history_tracker` |
+| `trackers/mod.rs` | Tracker module organization | Exports `agent_tracker`, `skill_tracker`, `stats_tracker`, `todo_tracker`, `file_history_tracker`, `project_tracker` |
 | `trackers/agent_tracker.rs` | Task tool agent spawn parsing | `TaskToolInput`, `parse_task_tool_use()`, `try_extract_agent_spawn()` |
 | `trackers/skill_tracker.rs` (Phase 5) | Skill/slash command parsing from history.jsonl | `SkillTracker`, `parse_history_entry()`, `create_skill_invocation_event()` |
 | `trackers/stats_tracker.rs` (Phase 8-10) | Token usage, session metrics, activity patterns, model distribution from stats-cache.json | `StatsTracker`, `StatsCache`, `ModelTokens`, `StatsEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent` |
 | `trackers/todo_tracker.rs` (Phase 6) | Todo list progress and abandonment detection | `TodoTracker`, `TodoEntry`, `TodoStatus`, `TodoProgressEvent`, `parse_todo_file()`, `count_todo_statuses()`, `is_abandoned()` |
 | `trackers/file_history_tracker.rs` (Phase 8+) | File edit history tracking | `FileHistoryTracker`, `FileChangeEvent` |
+| `trackers/project_tracker.rs` (Phase 11) | Project session activity tracking | `ProjectTracker`, `ProjectTrackerConfig`, `ProjectActivityEvent`, `parse_project_slug()`, `has_summary_event()`, `extract_session_id()` |
 | `utils/mod.rs` | Utility module exports | Exports `debounce`, `tokenize`, `session_filename` |
 | `utils/debounce.rs` | Event debouncing to coalesce rapid changes | `Debouncer`, `DebouncerError` |
 | `utils/session_filename.rs` | Parsing session identifiers from filenames | `parse_todo_filename()`, `parse_project_filename()` |
@@ -283,12 +285,13 @@ Instead of manual binary download, workflows can use:
 ### Monitor Module
 
 Self-contained CLI with these responsibilities:
-1. **Watch** files via `FileWatcher` (both session JSONL and history.jsonl and todos/ directory and stats-cache.json)
+1. **Watch** files via `FileWatcher` (both session JSONL and history.jsonl and todos/ directory and stats-cache.json and projects directory)
 2. **Parse** JSONL via `SessionParser`
 3. **Filter** events via `PrivacyPipeline`
 4. **Sign** events via `Crypto` (with dual-source key loading and export)
 5. **Send** to server via `Sender`
 6. **Export** keys via `export-key` command
+7. **Track** project sessions via `ProjectTracker` (Phase 11)
 
 No cross-dependencies with Server or Client.
 
@@ -302,6 +305,8 @@ monitor/src/main.rs
 │   ├── watcher.rs → sender.rs
 │   │   ↓
 │   ├── parser.rs → privacy.rs
+│   │   ↓
+│   ├── ProjectTracker (Phase 11) → channel → sender.queue()
 │   │   ↓
 │   └── sender.rs (HTTP, retry, buffering)
 │       ├── crypto.rs (sign events)
@@ -410,6 +415,7 @@ use vibetea_monitor::trackers::skill_tracker::SkillTracker;  // Phase 5
 use vibetea_monitor::trackers::stats_tracker::{StatsTracker, StatsEvent};  // Phase 8-10
 use vibetea_monitor::trackers::todo_tracker::TodoTracker;    // Phase 6
 use vibetea_monitor::trackers::file_history_tracker::FileHistoryTracker;  // Phase 8+
+use vibetea_monitor::trackers::project_tracker::ProjectTracker;  // Phase 11
 use vibetea_monitor::utils::tokenize::extract_skill_name;    // Phase 5
 use vibetea_monitor::utils::debounce::Debouncer;             // Phase 6
 
@@ -533,8 +539,8 @@ Files that are auto-generated or should not be manually edited:
 ### Monitor
 
 ```
-✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, error
-✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, zeroize
+✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, error, trackers, utils
+✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, zeroize, directories
 ✗ CANNOT import:  server modules, client code
 ```
 

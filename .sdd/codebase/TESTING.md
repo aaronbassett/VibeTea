@@ -66,6 +66,7 @@
 | `cargo test --test key_export_test` | Run export-key CLI tests (Phase 12, 12 tests) |
 | `cargo test -p vibetea-monitor crypto` | Run crypto module tests |
 | `cargo test -p vibetea-monitor sender` | Run sender module tests |
+| `cargo test -p vibetea-monitor project_tracker` | Run project tracker module tests (Phase 11, 69 tests) |
 
 **Important**: Monitor tests run with `--test-threads=1` in CI to prevent environment variable interference:
 
@@ -118,7 +119,8 @@ monitor/src/
     ├── agent_tracker.rs   # Agent spawn detection (Phase 4) with 28+ tests
     ├── skill_tracker.rs   # Skill invocation tracking (Phase 5) with 20+ tests
     ├── todo_tracker.rs    # Todo list monitoring (Phase 6) with 79 tests
-    └── stats_tracker.rs   # Token usage tracking (Phase 8-10) with 40+ tests
+    ├── stats_tracker.rs   # Token usage tracking (Phase 8-10) with 40+ tests
+    └── project_tracker.rs # Project session tracking (Phase 11) with 69 tests
 ```
 
 ### Rust/Monitor Directory Structure
@@ -135,7 +137,13 @@ monitor/
 │   ├── crypto.rs               # Ed25519 crypto operations with 14 inline unit tests
 │   ├── sender.rs               # HTTP sender with 8 inline unit tests
 │   ├── lib.rs                  # Library entrypoint
-│   └── main.rs                 # Binary entrypoint (CLI)
+│   ├── main.rs                 # Binary entrypoint (CLI)
+│   └── trackers/
+│       ├── agent_tracker.rs    # Agent spawn detection (Phase 4) with 28+ inline tests
+│       ├── skill_tracker.rs    # Skill invocation tracking (Phase 5) with 20+ inline tests
+│       ├── todo_tracker.rs     # Todo list monitoring (Phase 6) with 79 inline tests
+│       ├── stats_tracker.rs    # Token usage tracking (Phase 8-10) with 40+ inline tests
+│       └── project_tracker.rs  # Project session tracking (Phase 11) with 69 inline tests
 └── tests/
     ├── env_key_test.rs         # 21 integration tests for env var key loading (Phase 11)
     ├── privacy_test.rs         # 17 integration tests for privacy compliance
@@ -218,6 +226,67 @@ describe('Event Types', () => {
   });
 });
 ```
+
+### Inline Module Unit Tests (Rust - Phase 11)
+
+New pattern for tracker modules with comprehensive unit test coverage:
+
+#### File: `monitor/src/trackers/project_tracker.rs` (1,822 lines, 69 tests)
+
+Key features of project_tracker tests:
+
+1. **Comprehensive coverage**: 69 unit tests covering:
+   - Path slug parsing (8 tests) - handles standard paths, nested dirs, edge cases
+   - Summary event detection (18 tests) - various JSON formats and edge cases
+   - Event creation (4 tests) - active/inactive sessions, empty strings, unicode
+   - Session ID extraction (8 tests) - valid/invalid UUIDs, wrong format
+   - Error types (2 tests) - Display impl, Debug impl
+   - Configuration (2 tests) - defaults, cloning
+   - Tracker creation (3 tests) - directory existence, valid paths
+   - File watching (15 tests) - new files, modifications, ignoring non-jsonl, invalid UUIDs
+   - Manual scanning (3 tests) - scan_projects method, multiple projects, hidden directories
+
+2. **Test organization**: Tests grouped by feature with section markers
+   ```rust
+   #[cfg(test)]
+   mod tests {
+       // ===================================================================
+       // T230: Unit test for project path slug parsing
+       // ===================================================================
+
+       #[test]
+       fn parse_project_slug_standard_path() { ... }
+   }
+   ```
+
+3. **Async test support**: Uses `#[tokio::test]` for async file watching tests
+   ```rust
+   #[tokio::test]
+   async fn test_tracker_detects_new_session_file() {
+       let temp_dir = TempDir::new().expect("Failed to create temp dir");
+       // Test with file system isolation
+   }
+   ```
+
+4. **Test isolation**: Uses `tempfile::TempDir` for file system isolation
+   ```rust
+   use tempfile::TempDir;
+
+   let temp_dir = TempDir::new()?;
+   // TempDir automatically cleaned up when dropped
+   ```
+
+5. **Constants for test data**:
+   ```rust
+   const ACTIVE_SESSION: &str = r#"{"type": "user", "message": "hello"}
+   {"type": "assistant", "message": "hi there"}
+   "#;
+
+   const COMPLETED_SESSION: &str = r#"{"type": "user", "message": "hello"}
+   {"type": "assistant", "message": "hi there"}
+   {"type": "summary", "summary": "Session completed"}
+   "#;
+   ```
 
 ### Integration Tests - Environment Variable Handling (Rust - Phase 11)
 
@@ -841,7 +910,7 @@ Tests for previously fixed bugs:
 
 | Package | Test Type | Count | Status |
 |---------|-----------|-------|--------|
-| monitor | Unit (inline) | 60+ | In use |
+| monitor | Unit (inline) | 129+ | In use (includes project_tracker 69 tests) |
 | monitor | Integration (env_key_test) | 21 | Phase 11 |
 | monitor | Integration (privacy_test) | 17 | In use |
 | monitor | Integration (key_export_test) | 12 | Phase 12 |
@@ -851,10 +920,11 @@ Tests for previously fixed bugs:
 | client | Unit (Vitest) | 33+ | In use |
 
 ### Total Test Coverage (Phase 12)
-- **Rust/Monitor**: 110+ tests across unit and integration
+
+- **Rust/Monitor**: 179+ tests across unit and integration (includes Phase 11 project_tracker 69 tests)
 - **Rust/Server**: 40+ unit tests
 - **TypeScript/Client**: 33+ tests
-- **Grand Total**: 180+ tests
+- **Grand Total**: 252+ tests
 
 ## CI Integration
 

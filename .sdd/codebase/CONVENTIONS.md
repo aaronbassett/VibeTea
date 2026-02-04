@@ -84,21 +84,21 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs` |
+| Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs`, `project_tracker.rs` |
 | Test files | `*_test.rs` in `tests/` directory | `env_key_test.rs`, `privacy_test.rs`, `sender_recovery_test.rs`, `key_export_test.rs` |
-| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS` |
+| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command`, `ProjectTracker`, `ProjectActivityEvent` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS`, `STATS_DEBOUNCE_MS`, `PARSE_RETRY_DELAY_MS` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
 
 #### Code Elements
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()`, `run_export_key()` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60`, `ENV_VAR_NAME = "VIBETEA_PRIVATE_KEY"` |
-| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command` |
-| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command` |
-| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()`, `.seed_base64()`, `.public_key_fingerprint()` |
+| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()`, `run_export_key()`, `parse_project_slug()`, `has_summary_event()` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60`, `ENV_VAR_NAME = "VIBETEA_PRIVATE_KEY"`, `ACTIVE_SESSION`, `COMPLETED_SESSION` |
+| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command`, `ProjectTracker`, `ProjectTrackerConfig` |
+| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command`, `ProjectTrackerError` |
+| Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()`, `.seed_base64()`, `.public_key_fingerprint()`, `.scan_projects()`, `.projects_dir()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
 ### GitHub Actions/YAML
@@ -164,6 +164,7 @@ Client error handling uses:
 | History.jsonl parsing (Phase 5) | Enum with specific variants | `HistoryParseError::InvalidJson`, `HistoryParseError::MissingDisplay`, `HistoryParseError::MissingTimestamp` |
 | Skill tracker errors (Phase 5) | Enum with watcher/channel variants | `SkillTrackerError::WatcherError`, `SkillTrackerError::ChannelError` |
 | Stats tracker errors (Phase 8) | Enum with watcher/parse/channel variants | `StatsTrackerError::WatcherInit`, `StatsTrackerError::Parse`, `StatsTrackerError::ChannelClosed` |
+| Project tracker errors (Phase 11) | Enum with watcher/directory/channel variants | `ProjectTrackerError::WatcherInit`, `ProjectTrackerError::ClaudeDirectoryNotFound`, `ProjectTrackerError::ChannelClosed` |
 
 #### GitHub Actions (YAML)
 
@@ -310,6 +311,25 @@ pub enum StatsTrackerError {
     Parse(#[from] serde_json::Error),
 
     #[error("claude directory not found: {0}")]
+    ClaudeDirectoryNotFound(PathBuf),
+
+    #[error("failed to send event: channel closed")]
+    ChannelClosed,
+}
+```
+
+**Project Tracker Example** (`monitor/src/trackers/project_tracker.rs` - Phase 11):
+
+```rust
+#[derive(Error, Debug)]
+pub enum ProjectTrackerError {
+    #[error("failed to create watcher: {0}")]
+    WatcherInit(#[from] notify::Error),
+
+    #[error("failed to read session file: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("claude projects directory not found: {0}")]
     ClaudeDirectoryNotFound(PathBuf),
 
     #[error("failed to send event: channel closed")]
@@ -600,6 +620,42 @@ pub struct Event {
 }
 ```
 
+### File Watching Pattern (Phase 11)
+
+The project_tracker module demonstrates file watching best practices used throughout the codebase:
+
+```rust
+// monitor/src/trackers/project_tracker.rs
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use tokio::sync::mpsc;
+
+// 1. Create channels for async communication
+let (change_tx, change_rx) = mpsc::channel::<PathBuf>(1000);
+
+// 2. Spawn background task for processing
+let watcher = RecommendedWatcher::new(
+    move |res: Result<Event, notify::Error>| {
+        handle_notify_event(res, &projects_dir, &change_tx);
+    },
+    Config::default(),
+)?;
+
+// 3. Watch directory recursively
+watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
+
+// 4. Process events in async task
+tokio::spawn(async move {
+    process_file_changes(change_rx, sender, projects_dir).await;
+});
+```
+
+Key patterns:
+- **Channel-based communication**: Decouples file watching from event processing
+- **Async task spawning**: Uses `tokio::spawn` for concurrent processing
+- **Debouncing**: Applied as needed (project_tracker uses 0ms for session files per research)
+- **Error handling**: Graceful degradation for file read errors or missing files
+- **Recursive watching**: Enables monitoring subdirectories for new sessions
+
 ### RAII Pattern for Test Cleanup (Phase 11)
 
 The `EnvGuard` pattern saves and restores environment variables automatically:
@@ -705,6 +761,53 @@ fn load_valid_base64_key_from_env() {
 ```
 
 Pattern: Each test documents its feature requirement (FR-###) from the spec.
+
+### Inline Module Testing Pattern (Phase 11)
+
+Each tracker module organizes tests using the `#[cfg(test)] mod tests` pattern with section markers:
+
+```rust
+// monitor/src/trackers/project_tracker.rs (1,822 lines with 69 tests)
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // T230: Unit test for project path slug parsing
+    // =========================================================================
+
+    #[test]
+    fn parse_project_slug_standard_path() {
+        // Standard Unix path
+        let slug = "-home-ubuntu-Projects-VibeTea";
+        let path = parse_project_slug(slug);
+        assert_eq!(path, "/home/ubuntu/Projects/VibeTea");
+    }
+
+    // ... more tests organized in sections
+
+    // =========================================================================
+    // T233/T234: ProjectTracker with file watching tests
+    // =========================================================================
+
+    use tempfile::TempDir;
+    use tokio::time::{sleep, timeout, Duration as TokioDuration};
+
+    #[tokio::test]
+    async fn test_tracker_detects_new_session_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        // ... async test with tempfile isolation
+    }
+}
+```
+
+Key conventions:
+- **Section markers**: Use `// =========` comments to group related tests (typically 3-10 tests per section)
+- **Test naming**: Tests named with descriptive verbs (e.g., `parse_project_slug_standard_path`)
+- **Async tests**: Marked with `#[tokio::test]` for async operations
+- **Isolation**: Uses `tempfile::TempDir` for file system isolation
+- **Constants**: Test data defined at top (e.g., `ACTIVE_SESSION`, `COMPLETED_SESSION`)
+- **Helper functions**: Utility functions like `create_test_project` for setup
 
 ### Test Organization Pattern (Phase 11)
 
@@ -1218,41 +1321,6 @@ fn whitespace_is_trimmed_from_env_value() {
 }
 ```
 
-### GitHub Actions (YAML)
-
-| Type | When to Use | Format |
-|------|-------------|--------|
-| Action description | Every action metadata | `description:` field |
-| Step names | Every workflow step | Clear, descriptive title |
-| Step comments | Complex logic | YAML comments with `#` |
-| Inline docs | In action implementation | Shell comments explaining logic |
-
-Example from `.github/actions/vibetea-monitor/action.yml`:
-
-```yaml
-# Composite action metadata
-name: 'VibeTea Monitor'
-description: 'Start VibeTea monitor to track Claude Code events during GitHub Actions workflows'
-author: 'aaronbassett'
-
-# Detailed input descriptions
-inputs:
-  server-url:
-    description: 'URL of the VibeTea server'
-    required: true
-  private-key:
-    description: 'Base64-encoded Ed25519 private key (from vibetea-monitor export-key)'
-    required: true
-
-# Steps with clear names
-steps:
-  - name: Download VibeTea Monitor
-    id: download
-    shell: bash
-    run: |
-      # Download logic with inline comments explaining steps
-```
-
 Example from `monitor/src/trackers/agent_tracker.rs` (Phase 4):
 
 ```rust
@@ -1374,6 +1442,67 @@ pub struct HistoryEntry {
 }
 ```
 
+Example from `monitor/src/trackers/project_tracker.rs` (Phase 11):
+
+```rust
+//! Project tracker for monitoring active Claude Code sessions per project.
+//!
+//! This module scans `~/.claude/projects/` to identify projects and their
+//! session activity status by checking for the presence of summary events.
+//!
+//! # Directory Structure
+//!
+//! ```text
+//! ~/.claude/projects/
+//! +-- -home-ubuntu-Projects-VibeTea/
+//! |   +-- 6e45a55c-3124-4cc8-ad85-040a5c316009.jsonl  # Active session
+//! |   +-- a1b2c3d4-5678-90ab-cdef-1234567890ab.jsonl  # Completed session
+//! +-- -home-ubuntu-Projects-SMILE/
+//!     +-- 60fc5b5e-a285-4a6d-b9cc-9a315eb90ea8.jsonl
+//! ```
+//!
+//! # Path Slug Format
+//!
+//! Project directories use a "slug" format where the absolute path has
+//! forward slashes replaced with dashes:
+//! - `/home/ubuntu/Projects/VibeTea` becomes `-home-ubuntu-Projects-VibeTea`
+//!
+//! # Session Activity Detection
+//!
+//! A session is considered **active** if its JSONL file does not contain
+//! a summary event (`{"type": "summary", ...}`). Once a summary event
+//! is written, the session is considered **completed**.
+
+/// Parses a project directory slug back to its original absolute path.
+///
+/// Project directories in `~/.claude/projects/` use a "slug" format where
+/// forward slashes in the path are replaced with dashes. This function
+/// reverses that transformation.
+///
+/// # Arguments
+///
+/// * `slug` - The project directory name (e.g., `-home-ubuntu-Projects-VibeTea`)
+///
+/// # Returns
+///
+/// The original absolute path (e.g., `/home/ubuntu/Projects/VibeTea`)
+///
+/// # Examples
+///
+/// ```
+/// use vibetea_monitor::trackers::project_tracker::parse_project_slug;
+///
+/// let path = parse_project_slug("-home-ubuntu-Projects-VibeTea");
+/// assert_eq!(path, "/home/ubuntu/Projects/VibeTea");
+/// ```
+#[must_use]
+pub fn parse_project_slug(slug: &str) -> String {
+    // The slug format replaces '/' with '-'
+    // A leading dash represents the root '/'
+    slug.replace('-', "/")
+}
+```
+
 Example from `monitor/src/trackers/stats_tracker.rs` (Phase 8):
 
 ```rust
@@ -1415,6 +1544,41 @@ Example from `monitor/src/trackers/stats_tracker.rs` (Phase 8):
 //! 3. A [`TokenUsageEvent`] is emitted for each model in modelUsage
 ```
 
+### GitHub Actions (YAML)
+
+| Type | When to Use | Format |
+|------|-------------|--------|
+| Action description | Every action metadata | `description:` field |
+| Step names | Every workflow step | Clear, descriptive title |
+| Step comments | Complex logic | YAML comments with `#` |
+| Inline docs | In action implementation | Shell comments explaining logic |
+
+Example from `.github/actions/vibetea-monitor/action.yml`:
+
+```yaml
+# Composite action metadata
+name: 'VibeTea Monitor'
+description: 'Start VibeTea monitor to track Claude Code events during GitHub Actions workflows'
+author: 'aaronbassett'
+
+# Detailed input descriptions
+inputs:
+  server-url:
+    description: 'URL of the VibeTea server'
+    required: true
+  private-key:
+    description: 'Base64-encoded Ed25519 private key (from vibetea-monitor export-key)'
+    required: true
+
+# Steps with clear names
+steps:
+  - name: Download VibeTea Monitor
+    id: download
+    shell: bash
+    run: |
+      # Download logic with inline comments explaining steps
+```
+
 ## Git Conventions
 
 ### Commit Messages
@@ -1433,6 +1597,10 @@ Format: `type(scope): description`
 | security | Security improvements | `security(monitor): zero intermediate key material buffers` |
 | ci | CI/CD pipeline changes | `ci: add example workflow with VibeTea monitoring` |
 
+Examples with Phase 11:
+- `feat(monitor): add project_tracker for monitoring Claude Code project sessions`
+- `test(monitor): add 69 unit tests for project_tracker (slug parsing, activity detection, file watching)`
+
 Examples with Phase 5:
 - `feat(monitor): implement skill_tracker file watching for history.jsonl`
 - `feat(monitor): add skill name extraction from history.jsonl display field`
@@ -1447,7 +1615,7 @@ Examples with Phase 4:
 
 Format: `{type}/{ticket}-{description}`
 
-Example: `feat/004-monitor-gh-actions`
+Example: `feat/011-project-tracker` or `feat/005-monitor-enhanced-tracking`
 
 ---
 

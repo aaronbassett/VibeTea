@@ -448,17 +448,17 @@
 - [x] T232 [GIT] Commit: add project_tracker tests
 
 ### Implementation for User Story 9
-- [ ] T233 [US9] Implement project_tracker module in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
-- [ ] T234 [GIT] Commit: implement project_tracker module
-- [ ] T235 [US9] Implement project path slug parsing in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
-- [ ] T236 [GIT] Commit: implement project path slug parsing
-- [ ] T237 [US9] Implement active session detection via summary event check in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
-- [ ] T238 [GIT] Commit: implement active session detection
-- [ ] T239 [US9] Wire project_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [ ] T240 [GIT] Commit: wire project_tracker to watcher
-- [ ] T241 [US9] Add client store handler for project_activity events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T242 [GIT] Commit: add client project_activity handler
-- [ ] T243 [US9] Run /sdd:map incremental for Phase 11 changes
+- [x] T233 [US9] Implement project_tracker module in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
+- [x] T234 [GIT] Commit: implement project_tracker module
+- [x] T235 [US9] Implement project path slug parsing in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
+- [x] T236 [GIT] Commit: implement project path slug parsing
+- [x] T237 [US9] Implement active session detection via summary event check in monitor/src/trackers/project_tracker.rs (use devs:rust-dev agent)
+- [x] T238 [GIT] Commit: implement active session detection
+- [x] T239 [US9] Wire project_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [x] T240 [GIT] Commit: wire project_tracker to watcher
+- [x] T241 [US9] Add client store handler for project_activity events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T242 [GIT] Commit: add client project_activity handler
+- [x] T243 [US9] Run /sdd:map incremental for Phase 11 changes
 - [ ] T244 [GIT] Commit: update codebase documents for phase 11
 - [ ] T245 [US9] Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T246 [GIT] Commit: finalize phase 11 retro

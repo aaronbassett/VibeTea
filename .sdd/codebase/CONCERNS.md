@@ -13,20 +13,23 @@
 | SEC-001 | WebSocket authentication | Single static token for all clients allows no per-client revocation or auditing | High | Plan token rotation mechanism or client certificates | Open |
 | SEC-002 | Token management | Subscriber token hardcoded in environment variable with no expiration or rotation | High | Implement periodic token rotation and audit logging | Open |
 | SEC-003 | CORS policy | All origins allowed, no CORS validation in place | Medium | Add configurable CORS origin whitelist | Open |
-| SEC-004 | Signature header validation | X-Signature header parsed as-is with minimal format validation | Low | Already mitigated by base64 decoding and cryptographic verification | Mitigated |
 
 ### Medium Priority
 
 | ID | Area | Description | Risk Level | Mitigation | Status |
 |----|------|-------------|------------|------------|---------|
+| SEC-004 | Signature header validation | X-Signature header parsed as-is with minimal format validation | Low | Already mitigated by base64 decoding and cryptographic verification | Mitigated |
 | SEC-005 | Private key environment variable | `VIBETEA_PRIVATE_KEY` env var alternative now documented and implemented | Low | Documented in SECURITY.md; same validation as file-based keys | Resolved |
 | SEC-006 | Rate limiting overhead | Per-source token bucket tracking could consume memory with many unique sources | Medium | Implement stale entry cleanup (partially done); add configurable limits | Open |
 | SEC-007 | Event persistence | Events are in-memory only; no persistence means events lost on restart | Medium | Document as design decision; recommend replay mechanism at application level | Open |
 | SEC-008 | Export-key stdout purity | Diagnostic/error messages must be stderr-only to enable safe piping | Low | Export-key explicitly prints errors to stderr; only key goes to stdout | Mitigated (Phase 4) |
 | SEC-009 | GitHub Actions secret exposure | Private key accessible in GitHub Actions environment; potential exposure via leaked logs | Medium | Use GitHub secret masking; never log VIBETEA_PRIVATE_KEY; minimize output from monitor process | Mitigated (Phase 5) |
 | SEC-010 | Composite action error handling | Action warns on network failure but continues workflow; potential silent monitoring failures | Medium | Document in README; monitor logs for warnings; consider explicit failure modes | Mitigated (Phase 6) |
+| SEC-011 | Project slug path decoding | Directory names with dashes cannot be reliably decoded (e.g., `my-project` becomes `my/project`) | Low | Document limitation; recommend camelCase or underscores for project directory names | Open |
+| SEC-012 | Project path traversal | Decoded project paths not validated; may produce nonsensical or system paths | Low | Paths used for display only, not filesystem operations; not a security risk | Open |
+| SEC-013 | Session file state race | File may be deleted after event detection but before processing | Low | Handled gracefully: missing file treated as session completion | Mitigated |
 
-## Security Improvements (Phase 3-6)
+## Security Improvements (Phase 3-11)
 
 ### Phase 3 Features
 
@@ -65,6 +68,18 @@
 | FR-035 | Non-blocking action errors | Network/config failures log warnings but don't fail workflow | Implemented | `.github/actions/vibetea-monitor/action.yml:101-120` |
 | FR-036 | Dynamic source ID interpolation | Action default source ID uses repo and run_id for uniqueness | Implemented | `.github/actions/vibetea-monitor/action.yml:96` |
 
+### Phase 11 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-037 | Project activity tracking | ProjectTracker monitors `~/.claude/projects/` for session JSONL changes | Implemented | `monitor/src/trackers/project_tracker.rs` |
+| FR-038 | Privacy-first project tracking | Only transmits project path, session ID, and activity status; no code/prompts | Implemented | `monitor/src/trackers/project_tracker.rs:238-246` |
+| FR-039 | Summary event detection | Session activity determined by presence of summary event in JSONL | Implemented | `monitor/src/trackers/project_tracker.rs:157-173` |
+| FR-040 | UUID filename validation | Session files must match UUID format (8-4-4-4-12 hex digits) | Implemented | `monitor/src/trackers/project_tracker.rs:751-772` |
+| FR-041 | Project slug parsing | Reverse transforms slug format (dashes to slashes) for path reconstruction | Implemented | `monitor/src/trackers/project_tracker.rs:119-123` |
+| FR-042 | File system watching | Uses notify crate for efficient recursive directory watching | Implemented | `monitor/src/trackers/project_tracker.rs:531-553` |
+| FR-043 | Initial project scan | Configurable full scan of projects directory on startup | Implemented | `monitor/src/trackers/project_tracker.rs:405-413` |
+
 ## Technical Debt
 
 ### High Priority
@@ -81,15 +96,17 @@
 | TD-003 | Configuration validation | VIBETEA_PUBLIC_KEYS parsing doesn't validate that decoded base64 is exactly 32 bytes | Confusing error messages at runtime | Low | Open |
 | TD-004 | Type safety | EventPayload uses untagged enum which could be fragile with certain JSON structures | API contract ambiguity | Medium | Open |
 | TD-005 | Logging | Some debug/trace logs are verbose and could impact performance under load | Performance in high-traffic scenarios | Low | Open |
-| TD-008 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
-| TD-009 | Composite action cleanup | Post-job cleanup requires manual SIGTERM step; no automatic cleanup mechanism | Potential zombie processes | Medium | Open |
+| TD-006 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
+| TD-007 | Composite action cleanup | Post-job cleanup requires manual SIGTERM step; no automatic cleanup mechanism | Potential zombie processes | Medium | Open |
+| TD-010 | Project slug ambiguity | Slug format cannot distinguish between path separators and dashes in directory names | Path reconstruction ambiguity | Medium | Open |
+| TD-011 | Project tracker scanning | Manual scan_projects() requires awaiting but doesn't feed results to external channels | Developer friction | Low | Open |
 
 ### Low Priority
 
 | ID | Area | Description | Impact | Effort | Status |
 |----|------|-------------|--------|--------|--------|
-| TD-006 | Documentation | VIBETEA_PRIVATE_KEY environment variable now documented in SECURITY.md | Developer confusion | Low | Resolved |
-| TD-007 | Error response codes | Health endpoint always returns 200 even during degradation; no status codes for partial failure | Monitoring complexity | Low | Open |
+| TD-008 | Documentation | VIBETEA_PRIVATE_KEY environment variable now documented in SECURITY.md | Developer confusion | Low | Resolved |
+| TD-009 | Error response codes | Health endpoint always returns 200 even during degradation; no status codes for partial failure | Monitoring complexity | Low | Open |
 
 ## Known Bugs
 
@@ -97,6 +114,7 @@
 |----|-------------|------------|----------|--------|
 | BUG-001 | EnvGuard in tests modifies global env var state; tests must use `#[serial]` to avoid race conditions | Use `#[serial]` decorator on all env-var-touching tests | Medium | Mitigated in code |
 | BUG-002 | WebSocket client lagging causes skipped events (lagged count logged but events discarded) | No workaround; clients must reconnect to resume from current position | Medium | Documented in trace log |
+| BUG-003 | ProjectTracker initial scan is async and may miss file events during startup | Configure scan_on_init to false if using external discovery; startup delay allows watcher to initialize | Low | Documented |
 
 ## Fragile Areas
 
@@ -111,6 +129,7 @@
 | `monitor/src/main.rs` | New export-key logic handles private key material and must not log it | Verify stdout purity in tests; all key writes are stderr only |
 | `.github/workflows/ci-with-monitor.yml` | Workflow manages private key and process; signal handling is critical | Test with dry-run first; ensure SIGTERM properly terminates and flushes |
 | `.github/actions/vibetea-monitor/action.yml` | Composite action manages binary download and monitor process lifecycle | Ensure secret masking works; test with actual GitHub Actions runner |
+| `monitor/src/trackers/project_tracker.rs` | File watching with channel-based event delivery; concurrent file changes may arrive out-of-order | Comprehensive unit tests (1822 lines) verify all edge cases; async processing handles file deletion gracefully |
 
 ## Deprecated Code
 
@@ -134,6 +153,7 @@
 | `tokio` | Runtime; heavy async dependency with many transitive deps | Keep updated; monitor for CVEs | Open |
 | `base64` | Decoding; generally stable but validate error handling | No immediate action needed | Resolved |
 | `zeroize` | New dependency for memory safety; critical for security | Monitor for updates and best practices | Open |
+| `notify` | File system watcher (Phase 11); platform-specific behavior varies | Test on macOS, Linux, Windows; verify recursive watching works correctly | Open |
 
 ## Performance Concerns
 
@@ -144,6 +164,8 @@
 | PERF-003 | JSON serialization | Every event serialized per WebSocket subscriber | CPU under high load | No mitigation; consider compression |
 | PERF-004 | GitHub Actions binary download | Release binary download on every workflow run | Network overhead | Consider caching binary or building from source |
 | PERF-005 | Composite action overhead | Action adds step overhead for binary download and validation | Minimal workflow slowdown | Overhead is ~5-10 seconds per workflow; acceptable for CI |
+| PERF-006 | Project tracker file scanning | Initial scan reads all project directories and session files synchronously | Slow startup with many projects | Async processing; consider pagination for very large project directories |
+| PERF-007 | Session file I/O | Full file read to check for summary event on every change | I/O overhead with large session files | Consider caching last-seen summary position or file metadata |
 
 ## Monitoring Gaps
 
@@ -156,6 +178,8 @@
 | Export-key usage | No audit trail of key exports | Can't track which systems have exported keys | Consider adding telemetry or structured logging |
 | GitHub Actions monitor | No metrics on monitor process uptime/failures in CI | Can't detect if monitoring silently fails | Consider structured logging to Actions output |
 | Composite action usage | No telemetry on adoption or failure rates | Can't track action usage patterns | Could add optional telemetry to action |
+| Project tracker state | No visibility into tracked projects or sessions | Can't monitor project activity dashboard | Consider periodic sync status events |
+| Project scan performance | No metrics on scan duration or file processing time | Can't detect performance degradation | Consider adding timing instrumentation |
 
 ## Improvement Opportunities
 
@@ -170,6 +194,9 @@
 | Export-key defaults | Explicit --path flag required | Auto-discovery of ~/.vibetea or env var | Smoother UX for end users |
 | GitHub Actions integration | Manual secret setup | Documentation or automated secret creation script | Easier onboarding for CI/CD |
 | Composite action | Basic functionality | Advanced features (log output, retry logic) | Better debugging and resilience |
+| Project slug format | Ambiguous with dashes in names | UUID-based project identifiers or encoded separators | Reliable path reconstruction |
+| Session file reading | Full file read every time | Seek to end and check last N lines or file metadata | Improved performance with large sessions |
+| Project tracker initial load | Synchronous blocking scan | Incremental async scanning with progress reporting | Better startup time with many projects |
 
 ## Security Debt Items
 
@@ -182,6 +209,7 @@
 | DEBT-005 | Key export audit | No record of when/where keys are exported | Implement export logging with timestamp/system info | Open |
 | DEBT-006 | GitHub Actions secret usage | Monitor process has access to private key; potential logging risk | Implement log filtering to never output env vars | Phase 5 risk |
 | DEBT-007 | Composite action versioning | Action pinned to @main; no semantic versioning | Implement version tags and GitHub releases | Phase 6 opportunity |
+| DEBT-008 | Project activity auditing | No audit trail of which projects/sessions are monitored | Consider opt-in telemetry or privacy dashboard | Phase 11 opportunity |
 
 ## Potential Attack Vectors
 
@@ -202,6 +230,10 @@
 | GitHub Actions log leakage | Private key is env var, subject to accidental logging | Partially mitigated by GitHub secret masking (Phase 5) |
 | Composite action binary tampering | Binary downloaded from GitHub releases without signature verification | Partially mitigated by HTTPS; recommend checksum verification |
 | Man-in-the-middle on binary download | Binary download from GitHub releases via HTTP curl | Mitigated by HTTPS (curl -fsSL) |
+| Project path directory traversal | Decoded paths not validated but only used for display | Not a risk (display only) |
+| Session file race condition | File deleted between event notification and processing | Mitigated by treating missing file as session completion |
+| Project slug poisoning | Directory names with dashes decoded ambiguously | Low risk (display only; validated filenames) |
+| JSONL parsing DoS | Malformed JSON in session file could consume CPU | Low risk (fast-fail parsing; no recursive structures) |
 
 ---
 

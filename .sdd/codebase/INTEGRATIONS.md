@@ -1,12 +1,12 @@
 # External Integrations
 
-**Status**: Phase 6 - GitHub Actions composite action for simplified monitor integration
+**Status**: Phase 11 - Project activity tracking integration via file system watching
 **Last Updated**: 2026-02-04
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4). Can be deployed in GitHub Actions workflows (Phase 5). Integrated via reusable GitHub Actions composite action (Phase 6).
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4). Can be deployed in GitHub Actions workflows (Phase 5). Integrated via reusable GitHub Actions composite action (Phase 6). Now tracks project-level activity via directory scanning (Phase 11).
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization with token-based authentication
 
@@ -372,6 +372,98 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - Phase 10: ModelDistributionEvent tests (3 tests)
 - Enum/equality tests (10 tests)
 
+### Claude Code Project Directory (Phase 11)
+
+**Source**: `~/.claude/projects/`
+**Format**: Directory structure with project slugs and session JSONL files
+**Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents/ReadDirectoryChangesW)
+
+**Project Tracker Location**: `monitor/src/trackers/project_tracker.rs` (500+ lines)
+
+**Purpose**: Monitor which projects have active Claude Code sessions and track session completion state
+
+**Directory Structure**:
+```
+~/.claude/projects/
++-- -home-ubuntu-Projects-VibeTea/
+|   +-- 6e45a55c-3124-4cc8-ad85-040a5c316009.jsonl  (active session)
+|   +-- a1b2c3d4-5678-90ab-cdef-1234567890ab.jsonl  (completed session)
++-- -home-ubuntu-Projects-SMILE/
+    +-- 60fc5b5e-a285-4a6d-b9cc-9a315eb90ea8.jsonl
+```
+
+**Project Slug Format**:
+- Absolute paths have forward slashes replaced with dashes
+- `/home/ubuntu/Projects/VibeTea` becomes `-home-ubuntu-Projects-VibeTea`
+- Slug format is set by Claude Code; monitor only reads it
+
+**Session Activity Detection**:
+- A session is **active** if its JSONL file does NOT contain a `{"type": "summary", ...}` event
+- A session is **completed** once a summary event is present
+- Summary events indicate session end markers
+
+**Privacy-First Approach**:
+- Only project paths and session IDs tracked
+- No code content, prompts, or responses
+- No session details beyond activity status
+- Session completion detected via file presence, not content analysis
+
+**Project Tracker Module** (`monitor/src/trackers/project_tracker.rs`):
+
+1. **Core Types**:
+   - `ProjectActivityEvent` - Emitted when project session status changes
+     - `project_path: String` - Absolute path to project
+     - `session_id: String` - Session UUID
+     - `is_active: bool` - True if session has no summary event
+   - `ProjectTracker` - File system watcher for projects directory
+   - `ProjectTrackerConfig` - Tracker configuration
+   - `ProjectTrackerError` - Error handling
+
+2. **Utility Functions**:
+   - `parse_project_slug(slug)` - Converts slug back to absolute path
+   - `has_summary_event(content)` - Detects session completion
+   - `create_project_activity_event()` - Factory for event construction
+
+3. **File Watching**:
+   - Monitors `~/.claude/projects/` recursively
+   - Detects .jsonl file creation and modification
+   - Reads file content to check for summary events
+   - Maintains session state
+   - Emits ProjectActivityEvent via mpsc channel
+
+4. **Features**:
+   - No debouncing needed (project files change infrequently)
+   - Async/await compatible with tokio runtime
+   - Thread-safe via mpsc channels
+   - Graceful error handling and logging
+   - Initial scan option on startup (default: enabled)
+
+5. **Configuration** (`ProjectTrackerConfig`):
+   - `scan_on_init: bool` - Whether to scan all projects on startup
+   - Default: true (scan existing projects)
+   - Useful for initial dashboard population
+
+6. **Error Handling**:
+   - `WatcherInit` - File system watcher setup failures
+   - `Io` - File read/write errors
+   - `ClaudeDirectoryNotFound` - Missing project directory
+   - `ChannelClosed` - Event sender channel unavailable
+
+**Use Cases**:
+- Multi-project activity overview
+- Detect active sessions across projects
+- Monitor completion state changes
+- Project-based filtering in dashboards
+- Correlate tool usage by project
+
+**Test Coverage**: 50+ tests covering:
+- Slug parsing (bidirectional)
+- Summary event detection
+- Event creation and serialization
+- File watching and change detection
+- Error handling and edge cases
+- Async tracker initialization
+
 ## Privacy & Data Sanitization
 
 ### Privacy Pipeline Architecture
@@ -419,6 +511,7 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 | TokenUsage | Pass through unchanged (aggregate data) |
 | ActivityPattern | Pass through unchanged (hourly counts) |
 | ModelDistribution | Pass through unchanged (model usage) |
+| ProjectActivity | Pass through unchanged (paths & session IDs) |
 | Summary | Text replaced with "Session ended" |
 | Error | Pass through unchanged |
 
@@ -439,6 +532,12 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - ModelDistributionEvent contains aggregated usage by model (no session data)
 - No per-session data or user information
 - Cache metrics are transparent usage data
+
+**Project Privacy** (Phase 11):
+- ProjectActivityEvent contains only project path and session ID
+- No project content or code
+- Only session activity status (active/completed)
+- Paths are absolute (user-identified) for context
 
 ### Privacy Test Suite
 
@@ -1428,7 +1527,7 @@ interface TokenFormProps {
 
 ## External APIs
 
-There are no external third-party API integrations in Phase 10. The system is self-contained:
+There are no external third-party API integrations in Phase 11. The system is self-contained:
 - All data sources are local files
 - All services are internal (Monitor, Server, Client)
 - No SaaS dependencies or external service calls
@@ -1568,16 +1667,17 @@ There are no external third-party API integrations in Phase 10. The system is se
 - ConnectionStatus component for visual feedback
 - useWebSocket hook with auto-reconnect
 
-### Monitor → File System (JSONL, Todo, & Stats Watching)
+### Monitor → File System (JSONL, Todo, Stats, & Projects Watching)
 
 **Targets**:
 - `~/.claude/projects/**/*.jsonl` - Session events
+- `~/.claude/projects/` - Project directory scanning (Phase 11)
 - `~/.claude/history.jsonl` - Skill invocations
 - `~/.claude/todos/*.json` - Todo lists
 - `~/.claude/stats-cache.json` - Token/session statistics
 
 **Mechanism**: `notify` crate file system events
-**Update Strategy**: Incremental line reading with position tracking (sessions/history), file debouncing (todos/stats)
+**Update Strategy**: Incremental line reading with position tracking (sessions/history), file debouncing (todos/stats), directory scanning with summary detection (projects)
 
 **Session File Flow**:
 1. FileWatcher initialized with watch directory
@@ -1587,6 +1687,15 @@ There are no external third-party API integrations in Phase 10. The system is se
 5. Lines accumulated → WatchEvent::LinesAdded
 6. Position marker updated
 7. File deletion detected → WatchEvent::FileRemoved
+
+**Project Monitoring Flow** (Phase 11):
+1. ProjectTracker initialized with projects directory
+2. Recursive file system monitoring begins
+3. File creation/modification detected
+4. JSONL file read to check for summary events
+5. Session activity status determined
+6. ProjectActivityEvent emitted via mpsc channel
+7. Event sent to server for broadcast
 
 **Skill File Monitoring** (Phase 5):
 1. SkillTracker initialized with history.jsonl path
@@ -1627,6 +1736,7 @@ There are no external third-party API integrations in Phase 10. The system is se
 - Arc<RwLock<>> for thread-safe concurrent access
 - Atomic offset for lock-free reads in skill tracker
 - Debouncing prevents duplicate processing (todos/stats)
+- Summary event detection enables efficient completion tracking (projects)
 
 ## Development & Local Configuration
 
@@ -1694,6 +1804,7 @@ RUST_LOG=debug                                   # Logging level
 - Uses `notify` crate (version 8.0) for cross-platform inotify/FSEvents
 - Optional extension filtering via VIBETEA_BASENAME_ALLOWLIST
 - Phase 4: FileWatcher tracks position to efficiently tail JSONL files
+- Phase 11: ProjectTracker scans project directory for session activity
 
 **JSONL Parsing**:
 - Phase 4: SessionParser extracts metadata from Claude Code JSONL

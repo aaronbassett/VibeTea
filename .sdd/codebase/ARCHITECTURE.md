@@ -8,7 +8,7 @@
 
 VibeTea is a distributed event aggregation and broadcast system for AI coding assistants with three independent components:
 
-- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server, with enhanced tracking modules for agent spawns, skill invocations, token usage, activity patterns, model distribution, todo progress, file changes, and other metrics
+- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server, with enhanced tracking modules for agent spawns, skill invocations, token usage, activity patterns, model distribution, todo progress, file changes, project activity, and other metrics
 - **Server** (Rust HTTP API) - Central hub that receives events from monitors and broadcasts them to subscribers via WebSocket
 - **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, usage heatmaps, and analytics
 
@@ -20,7 +20,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 |---------|-------------|
 | **Hub-and-Spoke** | Central Server acts as event aggregation point, Monitors feed events, Clients consume |
 | **Producer-Consumer** | Monitors are event producers, Clients are event consumers, Server mediates asynchronous delivery |
-| **Privacy-First** | Events contain only structural metadata (timestamps, tool names, skill names, file basenames), never code or sensitive content |
+| **Privacy-First** | Events contain only structural metadata (timestamps, tool names, skill names, file basenames, project paths), never code or sensitive content |
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
 | **CI/CD Integration** | Environment variable key loading enables monitor deployment in containerized and GitHub Actions environments |
 | **Composite Action** | GitHub Actions workflow integration via reusable composite action for simplified monitor setup |
@@ -29,7 +29,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 
 ### Monitor (Source)
 
-- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl`, `~/.claude/history.jsonl`, `~/.claude/stats-cache.json`, `~/.claude/todos/` and file history, emitting structured events
+- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl`, `~/.claude/history.jsonl`, `~/.claude/stats-cache.json`, `~/.claude/todos/`, and file history, emitting structured events
 - **Location**: `monitor/src/`
 - **Key Responsibilities**:
   - File watching via `inotify` (Linux), `FSEvents` (macOS), `ReadDirectoryChangesW` (Windows)
@@ -39,6 +39,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Graceful shutdown with event flushing
   - Key export functionality for GitHub Actions integration
   - Dual-source key loading (environment variable with file fallback)
+  - Project session activity tracking (Phase 11)
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events`)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
@@ -110,10 +111,10 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 ### Primary Monitor-to-Client Flow
 
 Claude Code → Monitor → Server → Client:
-1. JSONL line written to `~/.claude/projects/<uuid>.jsonl` or skill invocation to `~/.claude/history.jsonl` or todo change to `~/.claude/todos/<uuid>-agent-<uuid>.json` or stats update to `~/.claude/stats-cache.json`
+1. JSONL line written to `~/.claude/projects/<uuid>.jsonl` or skill invocation to `~/.claude/history.jsonl` or todo change to `~/.claude/todos/<uuid>-agent-<uuid>.json` or stats update to `~/.claude/stats-cache.json` or session file change in projects directory
 2. File watcher detects change via inotify/FSEvents
 3. Parser extracts event metadata (no code/prompts)
-4. Enhanced trackers extract specialized event types (agent spawns, skill invocations, token usage, activity patterns, model distribution, session metrics, todo progress, file changes)
+4. Enhanced trackers extract specialized event types (agent spawns, skill invocations, token usage, activity patterns, model distribution, session metrics, todo progress, file changes, project activity)
 5. Privacy pipeline sanitizes payload
 6. Sender signs with Ed25519, buffers, and retries on failure
 7. POST /events sent to Server with X-Source-ID and X-Signature headers
@@ -123,9 +124,9 @@ Claude Code → Monitor → Server → Client:
 11. Zustand store adds event (FIFO eviction at 1000 limit)
 12. React renders updated event list, session overview, heatmap
 
-### Enhanced Tracking Flow (Phase 4-10)
+### Enhanced Tracking Flow (Phase 4-11)
 
-Five parallel tracking pipelines within Monitor:
+Six parallel tracking pipelines within Monitor:
 
 **Pipeline 1: Session JSONL Parser (WatchEvent → ParsedEvent)**
 ```
@@ -199,6 +200,21 @@ FileHistoryTracker.process_file_changes()
 Main event loop: sender.queue()
 ```
 
+**Pipeline 6: Project Tracker (~/.claude/projects/ → ProjectActivityEvent) (Phase 11)**
+```
+~/.claude/projects/<slug>/<uuid>.jsonl → ProjectTracker (notify crate)
+  ↓
+WatchEvent (Create/Modify via notify crate, recursive)
+  ↓
+ProjectTracker.process_file_changes()
+  ├→ extract_session_id() (UUID validation from filename)
+  ├→ parse_project_slug() (path reconstruction from directory name)
+  ├→ check_session_active() (detect summary event in JSONL)
+  └→ ProjectActivityEvent (project_path, session_id, is_active)
+  ↓
+Main event loop: sender.queue() via channel
+```
+
 All pipelines feed into the same `sender.queue()` for batching and transmission.
 
 ### GitHub Actions Integration Flow (Phase 5 & 6)
@@ -235,6 +251,7 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
    - `StatsTracker` detects stats-cache.json changes and parses session metrics, activity patterns, model distribution, and token usage
    - `TodoTracker` detects todos/ changes and parses todo progress
    - `FileHistoryTracker` detects file changes and tracks line deltas
+   - `ProjectTracker` detects projects/ changes and tracks session activity status
    - `PrivacyPipeline` removes sensitive fields (code, prompts, task content)
    - `Event` struct created with unique ID (`evt_` prefix + 20-char suffix)
 
@@ -273,7 +290,7 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 
 | Layer | Responsibility | Can Access | Cannot Access |
 |-------|----------------|------------|---------------|
-| **Monitor** | Observe local activity, preserve privacy, authenticate, track metrics | FileSystem, HTTP client, Crypto, Stats files, history.jsonl, todos/, file history | Server internals, other Monitors, network stack details |
+| **Monitor** | Observe local activity, preserve privacy, authenticate, track metrics | FileSystem, HTTP client, Crypto, Stats files, history.jsonl, todos/, file history, projects directory | Server internals, other Monitors, network stack details |
 | **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state | File system, external APIs, Client implementation details |
 | **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
 | **GitHub Actions Composite Action** | Download, configure, launch monitor | GitHub releases, environment variables, bash shell | Monitor source code, Server config, Client code |
@@ -304,6 +321,7 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 | `StatsEvent` | Union of stats tracker events (Phase 8-10) | TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution |
 | `TodoProgressEvent` | Todo list progress per session | session_id, completed, in_progress, pending, abandoned |
 | `FileChangeEvent` | File edit line deltas | session_id, file_hash, version, lines_added, lines_removed, lines_modified, timestamp |
+| `ProjectActivityEvent` | Project session activity status (Phase 11) | project_path, session_id, is_active |
 | `TaskToolInput` | Parsed Task tool input | subagent_type, description (prompt excluded for privacy) |
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
@@ -364,6 +382,7 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 | **Stats Tracker State** | `StatsTracker` instance | Watches stats-cache.json with 200ms debounce, emits all four event types (SessionMetrics, ActivityPattern, ModelDistribution, TokenUsage) |
 | **Todo Tracker State** | `TodoTracker` instance | Maintains ended sessions set, debounces file changes, processes immediately (Phase 6) |
 | **File History Tracker State** | `FileHistoryTracker` instance | Tracks file versions and computes line deltas |
+| **Project Tracker State** | `ProjectTracker` instance | Watches projects directory recursively, detects session activity (active/completed), no debouncing needed (Phase 11) |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
 | **Crypto Keys** | Loaded once at startup | KeySource tracked for logging, indicates origin (env var or file) |
 
@@ -475,7 +494,7 @@ info!(
 | **Key Management** | Ed25519 key generation, storage, signing, export | `monitor/src/crypto.rs` (with KeySource tracking, memory zeroing, and export support) |
 | **GitHub Actions Integration** | Binary download, env var config, background launch | `.github/actions/vibetea-monitor/action.yml` |
 
-## Enhanced Tracking Subsystem (Phase 4-10)
+## Enhanced Tracking Subsystem (Phase 4-11)
 
 New modular tracking architecture in `monitor/src/trackers/`:
 
@@ -575,65 +594,41 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Output**: `FileChangeEvent` → queued by main event loop
 - **Architecture**: Computes line deltas without exposing code content
 
-### Future Tracker Modules (Planned)
+### project_tracker Module (Phase 11)
 
-- `project_tracker`: Active project session tracking
-
-## Design Decisions
-
-### Why Hub-and-Spoke?
-
-- **Decouples sources from sinks**: Multiple Monitor instances can run independently
-- **Centralized authentication**: Server is the only point needing cryptographic keys
-- **Easy horizontal scaling**: Monitors and Clients scale independently
-- **No inter-Monitor coupling**: Monitors don't need to know about each other
-
-### Why No Persistence?
-
-- **Simplifies deployment**: No database to manage
-- **Supports distributed monitoring**: Each Client sees latest events only
-- **Privacy-first**: Events never written to disk (except logs)
-- **Real-time focus**: System optimized for live streams, not historical analysis
-
-### Why Ed25519?
-
-- **Widely supported**: NIST-standardized modern elliptic curve
-- **Signature verification only**: Public key crypto prevents Monitors impersonating each other
-- **Timing-safe implementation**: `subtle::ConstantTimeEq` prevents timing attacks
-- **Small key size**: ~32 bytes per key, easy to share via env vars
-
-### Why WebSocket?
-
-- **Bi-directional low-latency**: Better than HTTP polling for real-time updates
-- **Connection persistence**: Single connection replaces request/response overhead
-- **Native browser support**: No additional libraries needed for basic connectivity
-- **Standard protocol**: Works with existing proxies and load balancers
-
-### Why Environment Variable Precedence?
-
-- **Container-friendly**: Secrets in env vars are standard practice for containerized apps
-- **No file permissions required**: Works in restricted environments (CI, serverless)
-- **Emergency override**: Can temporarily use different key without file system changes
-- **Key rotation support**: Switch keys by changing env var without file I/O
-- **Explicit precedence rules**: Clear error handling (env var errors don't silently fallback)
-
-### Why Separate export-key Command?
-
-- **Security**: Isolates key export from running monitor (no network involved)
-- **CI/CD Integration**: Enables headless key management in GitHub Actions
-- **Clean Output**: stdout contains only the key for direct piping to secret tools
-- **Auditability**: Separate invocation leaves clear audit trail in CI logs
-
-### Why Composite GitHub Actions (Phase 6)?
-
-- **Abstraction**: Hides binary download details and shell script complexity
-- **Reusability**: Single action can be used in multiple workflows
-- **Simplicity**: Users don't need to understand curl, chmod, background processes
-- **Consistency**: Standardized approach across all workflows using VibeTea
-- **Error Handling**: Action gracefully skips if network fails (non-blocking to CI)
-- **Outputs**: Provides monitor status and PID for advanced workflows
-- **Documentation**: Action metadata serves as inline usage documentation
-- **Maintenance**: Changes to binary location or download strategy only need updating action.yml
+- **Purpose**: Monitor `~/.claude/projects/` to identify active and completed sessions per project
+- **Location**: `monitor/src/trackers/project_tracker.rs`
+- **Directory Structure**: Watches `~/.claude/projects/<project-slug>/<session-uuid>.jsonl` files
+- **Project Slug Format**: Directory names use path-to-slug conversion (forward slashes → dashes)
+- **Key Components**:
+  - `ProjectTracker`: Main tracker instance managing directory watch and initial scan
+  - `ProjectTrackerConfig`: Configuration with `scan_on_init` flag
+  - `parse_project_slug()`: Converts slug format back to original absolute path
+  - `has_summary_event()`: Detects if session is completed (JSONL contains summary event)
+  - `extract_session_id()`: Validates UUID format in filename
+  - `create_project_activity_event()`: Constructs `ProjectActivityEvent`
+- **Session Activity Detection**:
+  - **Active**: Session JSONL does NOT contain a summary event (session ongoing)
+  - **Completed**: Session JSONL contains a summary event (session finished)
+- **Privacy**: Extracts only project paths and session IDs; never transmits code or file contents
+- **Integration**: Spawned as independent async task in `main.rs`; results queued via channel to `sender.queue()`
+- **Output**: `ProjectActivityEvent` → queued by main event loop
+- **Architecture**:
+  - Uses `notify` crate for recursive directory watching (handles project creation and session file changes)
+  - No debouncing (per research.md: 0ms needed for project files)
+  - Performs optional initial scan on startup (configurable via `ProjectTrackerConfig`)
+  - Supports manual `scan_projects()` method for refreshing all project state
+  - Channel-based communication (mpsc) for async event delivery
+- **Initialization**:
+  - Creates tracker with `ProjectTracker::new(tx)` - uses default config with scan_on_init=true
+  - Or `ProjectTracker::with_config()` for custom configuration
+  - Or `ProjectTracker::with_path()` to watch custom directory instead of ~/.claude/projects
+- **File Event Processing**:
+  - Only processes `.jsonl` files with valid UUID filenames
+  - Extracts project slug from parent directory name
+  - Verifies file is directly under project directory (not nested subdirs)
+  - Reads file and checks for summary event to determine activity status
+- **Testing**: Comprehensive unit + integration tests for path parsing, activity detection, file watching, and tracker lifecycle (39 test cases)
 
 ---
 
