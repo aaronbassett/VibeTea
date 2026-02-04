@@ -193,28 +193,28 @@
 - [x] T090 [GIT] Commit: add bounded event buffer
 
 ### Event Stream Widget
-- [ ] T091 [US2] Implement event_stream widget in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
-- [ ] T092 [GIT] Commit: add event stream widget
-- [ ] T093 [US2] Add timestamp formatting (HH:MM:SS) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
-- [ ] T094 [GIT] Commit: add timestamp formatting
-- [ ] T095 [US2] Add event type icons (unicode and ascii) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
-- [ ] T096 [GIT] Commit: add event type icons
+- [x] T091 [US2] Implement event_stream widget in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
+- [x] T092 [GIT] Commit: add event stream widget
+- [x] T093 [US2] Add timestamp formatting (HH:MM:SS) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
+- [x] T094 [GIT] Commit: add timestamp formatting
+- [x] T095 [US2] Add event type icons (unicode and ascii) in monitor/src/tui/widgets/event_stream.rs (use devs:rust-dev agent)
+- [x] T096 [GIT] Commit: add event type icons
 
 ### Scroll State
-- [ ] T097 [US2] Implement ScrollState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T098 [GIT] Commit: add scroll state
-- [ ] T099 [US2] Implement auto-scroll behavior (pause on manual scroll, resume on scroll-to-bottom) in monitor/src/tui/input.rs (use devs:rust-dev agent)
-- [ ] T100 [GIT] Commit: implement auto-scroll behavior
+- [x] T097 [US2] Implement ScrollState struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T098 [GIT] Commit: add scroll state
+- [x] T099 [US2] Implement auto-scroll behavior (pause on manual scroll, resume on scroll-to-bottom) in monitor/src/tui/input.rs (use devs:rust-dev agent)
+- [x] T100 [GIT] Commit: implement auto-scroll behavior
 
 ### Event Integration
-- [ ] T101 [US2] Integrate watcher events into display buffer in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T102 [GIT] Commit: integrate watcher events into TUI
-- [ ] T103 [US2] Handle terminal resize for event stream in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T104 [GIT] Commit: handle resize for event stream
+- [x] T101 [US2] Integrate watcher events into display buffer in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T102 [GIT] Commit: integrate watcher events into TUI
+- [x] T103 [US2] Handle terminal resize for event stream in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T104 [GIT] Commit: handle resize for event stream
 
 ### Codebase Mapping and Retro
-- [ ] T105 [US2] Run /sdd:map incremental for Phase 4 changes
-- [ ] T106 [GIT] Commit: update codebase documents for phase 4
+- [x] T105 [US2] Run /sdd:map incremental for Phase 4 changes
+- [x] T106 [GIT] Commit: update codebase documents for phase 4
 - [ ] T107 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T108 [GIT] Commit: finalize phase 4 retro
 
