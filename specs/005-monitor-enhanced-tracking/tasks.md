@@ -383,10 +383,10 @@
 - [x] T199 [GIT] Commit: implement ActivityPatternEvent emission
 - [x] T200 [US7] Add client store handler for activity_pattern events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
 - [x] T201 [GIT] Commit: add client activity_pattern handler
-- [ ] T202 [US7] Run /sdd:map incremental for Phase 9 changes
-- [ ] T203 [GIT] Commit: update codebase documents for phase 9
-- [ ] T204 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T205 [GIT] Commit: finalize phase 9 retro
+- [x] T202 [US7] Run /sdd:map incremental for Phase 9 changes
+- [x] T203 [GIT] Commit: update codebase documents for phase 9
+- [x] T204 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T205 [GIT] Commit: finalize phase 9 retro
 
 ### Phase Completion
 - [ ] T206 [GIT] Push branch to origin (ensure pre-push hooks pass)
@@ -415,10 +415,10 @@
 - [x] T215 [GIT] Commit: implement ModelDistributionEvent emission
 - [x] T216 [US8] Add client store handler for model_distribution events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
 - [x] T217 [GIT] Commit: add client model_distribution handler
-- [ ] T218 [US8] Run /sdd:map incremental for Phase 10 changes
-- [ ] T219 [GIT] Commit: update codebase documents for phase 10
-- [ ] T220 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T221 [GIT] Commit: finalize phase 10 retro
+- [x] T218 [US8] Run /sdd:map incremental for Phase 10 changes
+- [x] T219 [GIT] Commit: update codebase documents for phase 10
+- [x] T220 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T221 [GIT] Commit: finalize phase 10 retro
 
 ### Phase Completion
 - [ ] T222 [GIT] Push branch to origin (ensure pre-push hooks pass)
