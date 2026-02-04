@@ -221,9 +221,9 @@
 **Independent Test**: Use action in workflow with server-url and private-key inputs, verify events are captured
 
 ### Phase Start
-- [ ] T083 [GIT] Verify working tree is clean before starting Phase 6
-- [ ] T084 [GIT] Pull and rebase on origin/main if needed
-- [ ] T085 [US4] Create retro/P6.md for this phase
+- [x] T083 [GIT] Verify working tree is clean before starting Phase 6
+- [x] T084 [GIT] Pull and rebase on origin/main if needed
+- [x] T085 [US4] Create retro/P6.md for this phase
 - [ ] T086 [GIT] Commit: initialize phase 6 retro
 
 ### Implementation for User Story 4
