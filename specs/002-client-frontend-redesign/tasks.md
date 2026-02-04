@@ -297,9 +297,9 @@
 **Independent Test**: Toggle connection states and verify visual feedback matches state
 
 ### Phase Start
-- [ ] T160 [GIT] Verify working tree is clean before starting Phase 8
-- [ ] T161 [GIT] Pull and rebase on origin/main if needed
-- [ ] T162 [US6] Create retro/P8.md for this phase
+- [x] T160 [GIT] Verify working tree is clean before starting Phase 8
+- [x] T161 [GIT] Pull and rebase on origin/main if needed
+- [x] T162 [US6] Create retro/P8.md for this phase
 
 ### Implementation
 - [ ] T163 [GIT] Commit: initialize phase 8 retro
