@@ -304,8 +304,8 @@
 ### Implementation
 - [x] T163 [GIT] Commit: initialize phase 8 retro
 - [x] T164 [US6] Add ConnectionStatusAnimationState interface to ConnectionStatus.tsx (use devs:typescript-dev agent)
-- [ ] T165 [GIT] Commit: add connection animation state interface
-- [ ] T166 [US6] Implement glowing green pulse animation for connected state (use devs:react-dev agent)
+- [x] T165 [GIT] Commit: add connection animation state interface
+- [x] T166 [US6] Implement glowing green pulse animation for connected state (use devs:react-dev agent)
 - [ ] T167 [GIT] Commit: add connected pulse animation
 - [ ] T168 [US6] Implement animated ring effect for connecting/reconnecting states (use devs:react-dev agent)
 - [ ] T169 [GIT] Commit: add connecting ring animation

@@ -2,11 +2,14 @@
  * Visual indicator showing WebSocket connection state.
  *
  * Displays a colored dot with optional status text:
- * - Green = connected
+ * - Green = connected (with glowing pulse animation)
  * - Yellow = connecting/reconnecting
  * - Red = disconnected
  */
 
+import { LazyMotion, domAnimation, m } from 'framer-motion';
+
+import { COLORS } from '../constants/design-tokens';
 import { useEventStore } from '../hooks/useEventStore';
 
 import type { ConnectionStatus as ConnectionStatusType } from '../hooks/useEventStore';
@@ -130,6 +133,37 @@ const STATUS_CONFIG: Record<
   },
 };
 
+/**
+ * Animation configuration for the connected state glowing pulse.
+ *
+ * Creates a gentle, calming pulse effect with box-shadow glow
+ * that conveys "everything is working" without being jarring.
+ */
+const CONNECTED_PULSE_ANIMATION = {
+  /**
+   * Box shadow values for the pulse cycle.
+   * Uses design token connected color (#4ade80) with varying opacity/spread.
+   */
+  boxShadow: [
+    `0 0 0 0 ${COLORS.status.connected}00`,
+    `0 0 8px 2px ${COLORS.status.connected}60`,
+    `0 0 0 0 ${COLORS.status.connected}00`,
+  ],
+  /**
+   * Subtle scale for a breathing effect.
+   */
+  scale: [1, 1.1, 1],
+};
+
+/**
+ * Transition configuration for connected pulse animation.
+ */
+const CONNECTED_PULSE_TRANSITION = {
+  duration: 2,
+  repeat: Infinity,
+  ease: 'easeInOut' as const,
+};
+
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
@@ -160,22 +194,37 @@ export function ConnectionStatus({
   const status = useEventStore((state) => state.status);
 
   const config = STATUS_CONFIG[status];
+  const isConnected = status === 'connected';
 
   return (
-    <div
-      className={`inline-flex items-center gap-2 ${className}`}
-      role="status"
-      aria-label={`Connection status: ${config.label}`}
-    >
-      <span
-        className={`h-2.5 w-2.5 rounded-full ${config.color}`}
-        aria-hidden="true"
-      />
-      {showLabel && (
-        <span className="text-sm text-gray-600 dark:text-gray-400">
-          {config.label}
-        </span>
-      )}
-    </div>
+    <LazyMotion features={domAnimation}>
+      <div
+        className={`inline-flex items-center gap-2 ${className}`}
+        role="status"
+        aria-label={`Connection status: ${config.label}`}
+      >
+        {isConnected ? (
+          <m.span
+            className={`h-2.5 w-2.5 rounded-full ${config.color}`}
+            aria-hidden="true"
+            animate={CONNECTED_PULSE_ANIMATION}
+            transition={CONNECTED_PULSE_TRANSITION}
+            style={{
+              backgroundColor: COLORS.status.connected,
+            }}
+          />
+        ) : (
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${config.color}`}
+            aria-hidden="true"
+          />
+        )}
+        {showLabel && (
+          <span className="text-sm text-gray-600 dark:text-gray-400">
+            {config.label}
+          </span>
+        )}
+      </div>
+    </LazyMotion>
   );
 }
