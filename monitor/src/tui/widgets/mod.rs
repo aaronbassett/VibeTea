@@ -29,7 +29,7 @@
 //! - Responsive design adapts to available terminal space
 
 // TODO: Uncomment these module declarations as implementations are added
-// pub mod credentials;
+pub mod credentials;
 pub mod event_stream;
 pub mod header;
 // pub mod logo;
@@ -38,7 +38,7 @@ pub mod setup_form;
 // pub mod stats_footer;
 
 // Re-exports will be added as modules are implemented
-// pub use credentials::CredentialsWidget;
+pub use credentials::{CredentialsWidget, CREDENTIALS_HEIGHT};
 pub use event_stream::EventStreamWidget;
 pub use header::{header_height, ConnectionStatusWidget, HeaderWidget};
 // pub use logo::LogoWidget;
