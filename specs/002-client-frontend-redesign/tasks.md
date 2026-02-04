@@ -395,9 +395,9 @@
 - [x] T217 [P] [US8] Create ASCIIHeader.stories.tsx with animateOnLoad variations (use devs:react-dev agent)
 - [x] T218 [P] [US8] Create AnimatedBackground.stories.tsx with grid/particle toggles (use devs:react-dev agent)
 - [x] T219 [P] [US8] Create ErrorBoundary.stories.tsx with error trigger demonstration (use devs:react-dev agent)
-- [ ] T220 [GIT] Commit: add animated component stories
-- [ ] T221 [P] [US8] Create ActivityGraph.stories.tsx with sample data and time range controls (use devs:react-dev agent)
-- [ ] T222 [P] [US8] Create EventDistributionChart.stories.tsx with various event distributions (use devs:react-dev agent)
+- [x] T220 [GIT] Commit: add animated component stories
+- [x] T221 [P] [US8] Create ActivityGraph.stories.tsx with sample data and time range controls (use devs:react-dev agent)
+- [x] T222 [P] [US8] Create EventDistributionChart.stories.tsx with various event distributions (use devs:react-dev agent)
 - [ ] T223 [GIT] Commit: add graph component stories
 - [ ] T224 [US8] Create stories for enhanced existing components: Heatmap, SessionOverview, EventStream, ConnectionStatus (use devs:react-dev agent)
 - [ ] T225 [GIT] Commit: add enhanced component stories
