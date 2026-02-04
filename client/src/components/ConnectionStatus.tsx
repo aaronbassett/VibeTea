@@ -7,6 +7,8 @@
  * - Red = disconnected
  */
 
+import type React from 'react';
+
 import { LazyMotion, domAnimation, m } from 'framer-motion';
 
 import { COLORS } from '../constants/design-tokens';
@@ -26,6 +28,11 @@ interface ConnectionStatusProps {
   readonly showLabel?: boolean;
   /** Additional CSS classes to apply to the container. */
   readonly className?: string;
+  /**
+   * Callback invoked when the disconnected indicator is clicked.
+   * Use this to trigger a reconnection attempt.
+   */
+  readonly onReconnect?: () => void;
 }
 
 /**
@@ -192,6 +199,42 @@ const CONNECTING_RING_TRANSITION = {
   ease: 'easeOut' as const,
 };
 
+/**
+ * Animation configuration for the disconnected state warning flash.
+ *
+ * Creates a slow, attention-grabbing blink effect that conveys urgency
+ * while remaining non-intrusive. The animation uses opacity and a red
+ * glow to stand out distinctly from the calm pulse and active ring animations.
+ */
+const DISCONNECTED_FLASH_ANIMATION = {
+  /**
+   * Opacity cycles between full and dimmed to create blink effect.
+   * The minimum opacity (0.4) keeps the indicator visible while
+   * the full opacity (1.0) draws attention.
+   */
+  opacity: [1, 0.4, 1],
+  /**
+   * Red glow that pulses with the blink to enhance warning visual.
+   * Uses design token disconnected color (#ef4444).
+   */
+  boxShadow: [
+    `0 0 8px 3px ${COLORS.status.disconnected}80`,
+    `0 0 4px 1px ${COLORS.status.disconnected}40`,
+    `0 0 8px 3px ${COLORS.status.disconnected}80`,
+  ],
+};
+
+/**
+ * Transition configuration for disconnected flash animation.
+ * Slower than other animations (3s cycle) to convey persistent issue
+ * without being too jarring or distracting.
+ */
+const DISCONNECTED_FLASH_TRANSITION = {
+  duration: 3,
+  repeat: Infinity,
+  ease: 'easeInOut' as const,
+};
+
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
@@ -217,6 +260,7 @@ const CONNECTING_RING_TRANSITION = {
 export function ConnectionStatus({
   showLabel = false,
   className = '',
+  onReconnect,
 }: ConnectionStatusProps) {
   // Selective subscription: only re-render when status changes
   const status = useEventStore((state) => state.status);
@@ -224,13 +268,42 @@ export function ConnectionStatus({
   const config = STATUS_CONFIG[status];
   const isConnected = status === 'connected';
   const isConnecting = status === 'connecting' || status === 'reconnecting';
+  const isDisconnected = status === 'disconnected';
+
+  /**
+   * Handle click on the disconnected indicator.
+   * Triggers the reconnection callback if provided.
+   */
+  const handleReconnectClick = () => {
+    if (isDisconnected && onReconnect !== undefined) {
+      onReconnect();
+    }
+  };
+
+  /**
+   * Handle keyboard interaction for accessibility.
+   * Allows reconnection via Enter or Space key.
+   */
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (
+      isDisconnected &&
+      onReconnect !== undefined &&
+      (event.key === 'Enter' || event.key === ' ')
+    ) {
+      event.preventDefault();
+      onReconnect();
+    }
+  };
+
+  // Determine if the indicator should be interactive (clickable)
+  const isInteractive = isDisconnected && onReconnect !== undefined;
 
   return (
     <LazyMotion features={domAnimation}>
       <div
         className={`inline-flex items-center gap-2 ${className}`}
         role="status"
-        aria-label={`Connection status: ${config.label}`}
+        aria-label={`Connection status: ${config.label}${isInteractive ? '. Click to reconnect.' : ''}`}
       >
         {isConnected ? (
           <m.span
@@ -265,14 +338,34 @@ export function ConnectionStatus({
             />
           </span>
         ) : (
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${config.color}`}
-            aria-hidden="true"
+          /* Disconnected state: animated warning flash with optional click-to-reconnect */
+          <m.span
+            className={`h-2.5 w-2.5 rounded-full ${isInteractive ? 'cursor-pointer hover:scale-125 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-transparent' : ''}`}
+            aria-hidden={!isInteractive}
+            role={isInteractive ? 'button' : undefined}
+            tabIndex={isInteractive ? 0 : undefined}
+            aria-label={isInteractive ? 'Reconnect to server' : undefined}
+            onClick={isInteractive ? handleReconnectClick : undefined}
+            onKeyDown={isInteractive ? handleKeyDown : undefined}
+            animate={DISCONNECTED_FLASH_ANIMATION}
+            transition={DISCONNECTED_FLASH_TRANSITION}
+            whileHover={isInteractive ? { scale: 1.3 } : undefined}
+            whileTap={isInteractive ? { scale: 0.9 } : undefined}
+            style={{
+              backgroundColor: COLORS.status.disconnected,
+            }}
+            title={isInteractive ? 'Click to reconnect' : undefined}
           />
         )}
         {showLabel && (
-          <span className="text-sm text-gray-600 dark:text-gray-400">
+          <span
+            className={`text-sm ${isDisconnected ? 'text-red-400' : 'text-gray-600 dark:text-gray-400'} ${isInteractive ? 'cursor-pointer hover:text-red-300' : ''}`}
+            onClick={isInteractive ? handleReconnectClick : undefined}
+          >
             {config.label}
+            {isInteractive && (
+              <span className="ml-1 text-xs opacity-70">(click to reconnect)</span>
+            )}
           </span>
         )}
       </div>

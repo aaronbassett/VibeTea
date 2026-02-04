@@ -308,8 +308,8 @@
 - [x] T166 [US6] Implement glowing green pulse animation for connected state (use devs:react-dev agent)
 - [x] T167 [GIT] Commit: add connected pulse animation
 - [x] T168 [US6] Implement animated ring effect for connecting/reconnecting states (use devs:react-dev agent)
-- [ ] T169 [GIT] Commit: add connecting ring animation
-- [ ] T170 [US6] Implement distinct warning visual for disconnected state with reconnect option (use devs:react-dev agent)
+- [x] T169 [GIT] Commit: add connecting ring animation
+- [x] T170 [US6] Implement distinct warning visual for disconnected state with reconnect option (use devs:react-dev agent)
 - [ ] T171 [GIT] Commit: add disconnected warning visual
 - [ ] T172 [US6] Integrate useReducedMotion hook in ConnectionStatus.tsx (use devs:react-dev agent)
 - [ ] T173 [GIT] Commit: integrate reduced motion support in connection status
