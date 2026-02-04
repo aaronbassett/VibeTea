@@ -285,38 +285,38 @@
 **Independent Test**: Have Claude edit files, verify monitor calculates lines added/removed by diffing vN vs vN-1.
 
 ### Phase Start
-- [ ] T144 [GIT] Verify working tree is clean before starting Phase 7
-- [ ] T145 [GIT] Pull and rebase on origin/main if needed
-- [ ] T146 [US5] Create retro/P7.md for this phase
+- [x] T144 [GIT] Verify working tree is clean before starting Phase 7
+- [x] T145 [GIT] Pull and rebase on origin/main if needed
+- [x] T146 [US5] Create retro/P7.md for this phase
 
 ### Tests for User Story 5
-- [ ] T147 [GIT] Commit: initialize phase 7 retro
-- [ ] T148 [P] [US5] Unit test for file version parsing (@vN pattern) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T149 [P] [US5] Unit test for line diff calculation in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T150 [P] [US5] Unit test for v1 skip behavior in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T151 [GIT] Commit: add file_history_tracker tests
+- [x] T147 [GIT] Commit: initialize phase 7 retro
+- [x] T148 [P] [US5] Unit test for file version parsing (@vN pattern) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T149 [P] [US5] Unit test for line diff calculation in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T150 [P] [US5] Unit test for v1 skip behavior in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T151 [GIT] Commit: add file_history_tracker tests
 
 ### Implementation for User Story 5
-- [ ] T152 [US5] Add similar crate dependency for line diffs in monitor/Cargo.toml (use devs:rust-dev agent)
-- [ ] T153 [GIT] Commit: add similar crate dependency
-- [ ] T154 [US5] Implement FileVersion struct and parsing in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T155 [GIT] Commit: add FileVersion struct
-- [ ] T156 [US5] Implement file_history_tracker module with directory watching in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T157 [GIT] Commit: implement file_history_tracker directory watching
-- [ ] T158 [US5] Implement async diff operation for vN vs vN-1 in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T159 [GIT] Commit: implement async diff operation
-- [ ] T160 [US5] Implement v1 skip logic (no diff for initial versions) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T161 [GIT] Commit: implement v1 skip logic
-- [ ] T162 [US5] Wire file_history_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [ ] T163 [GIT] Commit: wire file_history_tracker to watcher
-- [ ] T164 [US5] Add 100ms debounce for file-history changes in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [ ] T165 [GIT] Commit: add debounce to file_history_tracker
-- [ ] T166 [US5] Add client store handler for file_change events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T167 [GIT] Commit: add client file_change handler
-- [ ] T168 [US5] Run /sdd:map incremental for Phase 7 changes
-- [ ] T169 [GIT] Commit: update codebase documents for phase 7
-- [ ] T170 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T171 [GIT] Commit: finalize phase 7 retro
+- [x] T152 [US5] Add similar crate dependency for line diffs in monitor/Cargo.toml (use devs:rust-dev agent)
+- [x] T153 [GIT] Commit: add similar crate dependency
+- [x] T154 [US5] Implement FileVersion struct and parsing in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T155 [GIT] Commit: add FileVersion struct
+- [x] T156 [US5] Implement file_history_tracker module with directory watching in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T157 [GIT] Commit: implement file_history_tracker directory watching
+- [x] T158 [US5] Implement async diff operation for vN vs vN-1 in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T159 [GIT] Commit: implement async diff operation
+- [x] T160 [US5] Implement v1 skip logic (no diff for initial versions) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T161 [GIT] Commit: implement v1 skip logic
+- [x] T162 [US5] Wire file_history_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [x] T163 [GIT] Commit: wire file_history_tracker to watcher
+- [x] T164 [US5] Add 100ms debounce for file-history changes in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [x] T165 [GIT] Commit: add debounce to file_history_tracker
+- [x] T166 [US5] Add client store handler for file_change events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T167 [GIT] Commit: add client file_change handler
+- [x] T168 [US5] Run /sdd:map incremental for Phase 7 changes
+- [x] T169 [GIT] Commit: update codebase documents for phase 7
+- [x] T170 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T171 [GIT] Commit: finalize phase 7 retro
 
 ### Phase Completion
 - [ ] T172 [GIT] Push branch to origin (ensure pre-push hooks pass)
