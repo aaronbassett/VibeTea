@@ -498,10 +498,10 @@
 - [x] T266 [GIT] Commit: fix formatting issues (no issues found)
 - [x] T267 Run full test suite: cargo test -p vibetea-monitor --test-threads=1
 - [x] T268 [GIT] Commit: verify test suite passes
-- [ ] T269 Run /sdd:map incremental for Phase 12 changes
-- [ ] T270 [GIT] Commit: update codebase documents for phase 12
-- [ ] T271 Review retro/P12.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T272 [GIT] Commit: finalize phase 12 retro
+- [x] T269 Run /sdd:map incremental for Phase 12 changes (skipped - no major stack changes)
+- [x] T270 [GIT] Commit: update codebase documents for phase 12
+- [x] T271 Review retro/P12.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T272 [GIT] Commit: finalize phase 12 retro
 
 ### Event Pipeline Hardening
 - [x] T272A [P] Implement event coalescing strategy for rapid file changes in monitor/src/sender.rs (use devs:rust-dev agent)
