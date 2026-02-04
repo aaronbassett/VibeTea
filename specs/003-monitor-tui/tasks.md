@@ -315,8 +315,8 @@
 ### Phase Completion
 - [x] T157 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [x] T158 [GIT] Create/update PR to main with phase summary
-- [ ] T159 [GIT] Verify all CI checks pass
-- [ ] T160 [GIT] Report PR ready status
+- [x] T159 [GIT] Verify all CI checks pass
+- [x] T160 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 4 complete - credentials visible for server setup
 
