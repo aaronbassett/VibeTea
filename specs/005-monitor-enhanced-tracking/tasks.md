@@ -437,9 +437,9 @@
 **Independent Test**: Run Claude Code in different project directories, verify monitor identifies active projects.
 
 ### Phase Start
-- [ ] T226 [GIT] Verify working tree is clean before starting Phase 11
-- [ ] T227 [GIT] Pull and rebase on origin/main if needed
-- [ ] T228 [US9] Create retro/P11.md for this phase
+- [x] T226 [GIT] Verify working tree is clean before starting Phase 11
+- [x] T227 [GIT] Pull and rebase on origin/main if needed
+- [x] T228 [US9] Create retro/P11.md for this phase
 
 ### Tests for User Story 9
 - [ ] T229 [GIT] Commit: initialize phase 11 retro
