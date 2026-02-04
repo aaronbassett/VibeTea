@@ -556,6 +556,17 @@ async fn process_stats_event(stats_event: StatsEvent, sender: &mut Sender, sourc
                 EventPayload::ActivityPattern(activity_event),
             )
         }
+        StatsEvent::ModelDistribution(dist_event) => {
+            debug!(
+                model_count = dist_event.model_usage.len(),
+                "Processing model distribution event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::ModelDistribution,
+                EventPayload::ModelDistribution(dist_event),
+            )
+        }
     };
 
     // Queue event for sending

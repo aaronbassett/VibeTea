@@ -60,6 +60,10 @@
 //!                 println!("Activity hours tracked: {}",
 //!                     activity.hour_counts.len());
 //!             }
+//!             StatsEvent::ModelDistribution(dist) => {
+//!                 println!("Models in distribution: {}",
+//!                     dist.model_usage.len());
+//!             }
 //!         }
 //!     }
 //!
@@ -79,7 +83,10 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::types::{ActivityPatternEvent, SessionMetricsEvent, TokenUsageEvent};
+use crate::types::{
+    ActivityPatternEvent, ModelDistributionEvent, SessionMetricsEvent, TokenUsageEvent,
+    TokenUsageSummary,
+};
 use crate::utils::debounce::Debouncer;
 
 /// Default debounce interval for stats file changes in milliseconds.
@@ -175,10 +182,11 @@ pub type Result<T> = std::result::Result<T, StatsTrackerError>;
 
 /// Events emitted by the stats tracker.
 ///
-/// The stats tracker emits three types of events:
+/// The stats tracker emits four types of events:
 /// - [`TokenUsageEvent`] for each model's token consumption
 /// - [`SessionMetricsEvent`] for global session statistics
 /// - [`ActivityPatternEvent`] for hourly activity distribution
+/// - [`ModelDistributionEvent`] for usage breakdown by model
 ///
 /// Callers can pattern match on this enum to handle each event type.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +197,8 @@ pub enum StatsEvent {
     SessionMetrics(SessionMetricsEvent),
     /// Hourly activity distribution event.
     ActivityPattern(ActivityPatternEvent),
+    /// Model distribution event showing usage breakdown.
+    ModelDistribution(ModelDistributionEvent),
 }
 
 /// Internal event used to signal a file change to the async processor.
@@ -496,6 +506,37 @@ async fn emit_stats_events(path: &Path, sender: &mpsc::Sender<StatsEvent>) -> Re
             .map_err(|_| StatsTrackerError::ChannelClosed)?;
     }
 
+    // Emit model distribution event (summary of all models)
+    if !stats.model_usage.is_empty() {
+        let model_usage: HashMap<String, TokenUsageSummary> = stats
+            .model_usage
+            .iter()
+            .map(|(model, tokens)| {
+                (
+                    model.clone(),
+                    TokenUsageSummary {
+                        input_tokens: tokens.input_tokens,
+                        output_tokens: tokens.output_tokens,
+                        cache_read_tokens: tokens.cache_read_input_tokens,
+                        cache_creation_tokens: tokens.cache_creation_input_tokens,
+                    },
+                )
+            })
+            .collect();
+
+        let model_distribution = ModelDistributionEvent { model_usage };
+
+        trace!(
+            model_count = stats.model_usage.len(),
+            "Emitting model distribution event"
+        );
+
+        sender
+            .send(StatsEvent::ModelDistribution(model_distribution))
+            .await
+            .map_err(|_| StatsTrackerError::ChannelClosed)?;
+    }
+
     // Emit token usage events for each model
     for (model, tokens) in stats.model_usage {
         let event = TokenUsageEvent {
@@ -730,8 +771,8 @@ mod tests {
 
         assert_eq!(
             received.len(),
-            4,
-            "Should emit 1 session metrics + 1 activity pattern + 2 token usage events"
+            5,
+            "Should emit 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage events"
         );
 
         // First event should be session metrics
@@ -1001,14 +1042,18 @@ mod tests {
 
         assert_eq!(
             events.len(),
-            4,
-            "Should receive 1 session metrics + 1 activity pattern + 2 token usage events"
+            5,
+            "Should receive 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage events"
         );
 
         // Verify we have the right event types
         let session_metrics_count = events
             .iter()
             .filter(|e| matches!(e, StatsEvent::SessionMetrics(_)))
+            .count();
+        let model_distribution_count = events
+            .iter()
+            .filter(|e| matches!(e, StatsEvent::ModelDistribution(_)))
             .count();
         let activity_pattern_count = events
             .iter()
@@ -1022,6 +1067,10 @@ mod tests {
         assert_eq!(
             activity_pattern_count, 1,
             "Should have 1 activity pattern"
+        );
+        assert_eq!(
+            model_distribution_count, 1,
+            "Should have 1 model distribution"
         );
         assert_eq!(token_usage_count, 2, "Should have 2 token usage events");
     }
@@ -1039,7 +1088,7 @@ mod tests {
         // Call refresh
         tracker.refresh().await.expect("Should refresh");
 
-        // Should receive new events: 1 session metrics + 1 activity pattern + 2 token usage
+        // Should receive new events: 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage
         let mut events = Vec::new();
         while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
             events.push(event);
@@ -1047,8 +1096,8 @@ mod tests {
 
         assert_eq!(
             events.len(),
-            4,
-            "Refresh should emit 1 session metrics + 1 activity pattern + 2 token usage events"
+            5,
+            "Refresh should emit 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage events"
         );
 
         // Verify we have the right event types
