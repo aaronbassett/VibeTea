@@ -292,6 +292,57 @@ mod tests {
 
 Tests modifying environment variables must run with `--test-threads=1` to prevent interference. See `CLAUDE.md` for Phase 3 learning about `EnvGuard` RAII pattern.
 
+### Skill Tracker Tests (Phase 5)
+
+**Pattern: File parsing and event creation tests**
+
+From `monitor/src/trackers/skill_tracker.rs`:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_history_entry_valid() {
+        let line = r#"{"display": "/commit", "timestamp": 1738567268363, "project": "/home/user/project", "sessionId": "abc-123"}"#;
+        let entry = parse_history_entry(line).expect("should parse");
+
+        assert_eq!(entry.display, "/commit");
+        assert_eq!(entry.timestamp, 1738567268363);
+        assert_eq!(entry.project, "/home/user/project");
+        assert_eq!(entry.session_id, "abc-123");
+    }
+
+    #[test]
+    fn parse_history_entry_invalid_json() {
+        let line = "not json";
+        let result = parse_history_entry(line);
+        assert!(matches!(result, Err(HistoryParseError::InvalidJson(_))));
+    }
+
+    #[test]
+    fn create_skill_invocation_event_extracts_skill_name() {
+        let entry = HistoryEntry {
+            display: "/commit -m \"message\"".to_string(),
+            timestamp: 1738567268363,
+            project: "/home/user/project".to_string(),
+            session_id: "abc-123".to_string(),
+        };
+
+        let event = create_skill_invocation_event(&entry).expect("should create event");
+        assert_eq!(event.skill_name, "commit");
+        assert_eq!(event.session_id, "abc-123");
+    }
+}
+```
+
+Key patterns for Phase 5 skill_tracker:
+- **Deterministic timestamps**: Use fixed millisecond values for reproducible tests
+- **Privacy validation**: Verify only skill name extracted, not command arguments
+- **Error cases**: Test missing fields, invalid JSON, malformed entries
+- **Event creation**: Verify timestamp conversion from ms to UTC DateTime
+
 ### Integration Tests
 
 **Strategy for Rust integration tests**:
@@ -319,6 +370,7 @@ Tests modifying environment variables must run with `--test-threads=1` to preven
 | Network | Not mocked; use wiremock (Phase 6+) | Future |
 | Time | Not mocked; use DateTime::new() for fixed times | Test data |
 | Cryptography | Real Ed25519 operations with deterministic seeds | Test setup |
+| File watching | Use real file changes in isolated test directories | Test function |
 
 ## Test Data
 
@@ -359,6 +411,19 @@ fn create_test_keypair(seed: u8) -> (SigningKey, String) {
 }
 ```
 
+### Phase 5 Skill Tracker Fixtures
+
+```rust
+fn create_test_history_entry(display: &str, session_id: &str) -> HistoryEntry {
+    HistoryEntry {
+        display: display.to_string(),
+        timestamp: 1738567268363,  // 2025-02-03T14:34:28Z
+        project: "/home/user/project".to_string(),
+        session_id: session_id.to_string(),
+    }
+}
+```
+
 ## Coverage Requirements
 
 ### Target Coverage
@@ -393,8 +458,8 @@ Critical path tests that verify basic functionality:
 **Rust**:
 - `auth.rs`: Signature verification succeeds with valid data
 - `config.rs`: Configuration loads from environment variables
-- `agent_tracker.rs`: Task tool input parsing works
-- `skill_tracker.rs`: History entry parsing works
+- `agent_tracker.rs`: Task tool input parsing works (Phase 4)
+- `skill_tracker.rs`: History entry parsing works (Phase 5)
 
 ### Regression Tests
 

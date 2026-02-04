@@ -108,14 +108,16 @@ SessionParser.parse_line()
 
 **Pipeline 2: Skill Tracker (history.jsonl → SkillInvocationEvent)**
 ```
-history.jsonl → FileWatcher
+history.jsonl → FileWatcher (notify crate)
   ↓
-WatchEvent (LinesAdded)
+WatchEvent (Create/Modify)
   ↓
-SkillTracker.process_line()
-  ├→ parse_history_entry()
-  ├→ extract_skill_name() (tokenization)
+SkillTracker.process_file_changes()
+  ├→ parse_history_entry() (JSON deserialization)
+  ├→ extract_skill_name() (tokenization from display field)
   └→ SkillInvocationEvent
+  ↓
+Main event loop: sender.queue() + sender.flush()
 ```
 
 **Pipeline 3: Stats Tracker (stats.jsonl → TokenUsageEvent)**
@@ -124,7 +126,7 @@ stats.jsonl → StatsTracker
   ↓
 TokenUsageEvent (token counts by model)
   ↓
-Sender queue
+Main event loop: sender.queue()
 ```
 
 All pipelines feed into the same `sender.queue()` for batching and transmission.
@@ -293,6 +295,7 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Integration**: Spawned as independent async task in `main.rs`; results queued via `sender.queue()`
 - **Output**: `SkillInvocationEvent` → queued by main event loop
 - **Architecture**: Uses `notify` crate for file changes; maintains byte offset for efficient tailing; processes immediately without debounce
+- **Data Source**: `~/.claude/history.jsonl` (append-only format with JSON entries)
 
 ### stats_tracker Module
 

@@ -121,6 +121,7 @@ The authentication flow for event submission (POST /events):
 | Command arguments excluded | Slash command args not transmitted | `skill_tracker.rs:56-68` (extract_skill_name function) |
 | Privacy-first design | Only basename metadata captured, no full paths | `skill_tracker.rs:22-25` |
 | Append-only processing | Tail-like behavior tracks file position | `skill_tracker.rs:81, 480` (offset tracking) |
+| Byte offset tracking | AtomicU64 with SeqCst ordering prevents re-reading | `skill_tracker.rs:405-413` |
 
 ### Data Handling Philosophy
 
@@ -129,6 +130,7 @@ The authentication flow for event submission (POST /events):
 - **No prompt logging**: Prompts are never extracted, parsed, or transmitted to monitoring systems
 - **Type-safe privacy**: Privacy enforcement is built into struct definitions, not runtime validation
 - **Command argument stripping**: Skill invocations capture only the skill name, not the arguments passed to it
+- **Atomic file offset tracking**: Prevents race conditions when tail-reading append-only files
 
 ## Rate Limiting
 

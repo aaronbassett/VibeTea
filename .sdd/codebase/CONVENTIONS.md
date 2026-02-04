@@ -2,7 +2,7 @@
 
 **Purpose**: Document code style, naming conventions, error handling, and common patterns.
 **Generated**: 2026-02-03
-**Last Updated**: 2026-02-03
+**Last Updated**: 2026-02-04
 
 ## Code Style
 
@@ -76,7 +76,7 @@
 | Type | Convention | Example |
 |------|------------|---------|
 | Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs`, `trackers/` |
-| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent` |
+| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent`, `HistoryEntry`, `SkillInvocationEvent` |
 | Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
 
@@ -84,10 +84,10 @@
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()`, `parse_task_tool_use()`, `try_extract_agent_spawn()` |
+| Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()`, `parse_task_tool_use()`, `try_extract_agent_spawn()`, `parse_history_entry()`, `create_skill_invocation_event()` |
 | Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60`, `STATS_DEBOUNCE_MS = 200` |
-| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent` |
-| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command`, `ParsedEventKind` |
+| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent`, `HistoryEntry`, `SkillTracker` |
+| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command`, `ParsedEventKind`, `HistoryParseError`, `SkillTrackerError` |
 | Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()`, `.parse()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
@@ -127,6 +127,8 @@ Client error handling uses:
 | Sender errors | Enum with specific variants | `SenderError::AuthFailed`, `SenderError::RateLimited`, `SenderError::MaxRetriesExceeded` |
 | File watching errors | String-based variants | `MonitorError::Watch(String)` |
 | JSONL parsing errors | String-based variants | `MonitorError::Parse(String)` |
+| History.jsonl parsing (Phase 5) | Enum with specific variants | `HistoryParseError::InvalidJson`, `HistoryParseError::MissingDisplay`, `HistoryParseError::MissingTimestamp` |
+| Skill tracker errors (Phase 5) | Enum with watcher/channel variants | `SkillTrackerError::WatcherError`, `SkillTrackerError::ChannelError` |
 
 ### Error Response Format
 
@@ -220,6 +222,28 @@ pub enum SenderError {
 
     #[error("max retries exceeded after {attempts} attempts")]
     MaxRetriesExceeded { attempts: u32 },
+}
+```
+
+**History Parser Example** (`monitor/src/trackers/skill_tracker.rs` - Phase 5):
+
+```rust
+#[derive(Debug, Error)]
+pub enum HistoryParseError {
+    #[error("invalid JSON: {0}")]
+    InvalidJson(#[from] serde_json::Error),
+
+    #[error("missing required field: display")]
+    MissingDisplay,
+
+    #[error("missing required field: timestamp")]
+    MissingTimestamp,
+
+    #[error("invalid timestamp value")]
+    InvalidTimestamp,
+
+    #[error("missing required field: sessionId")]
+    MissingSessionId,
 }
 ```
 
