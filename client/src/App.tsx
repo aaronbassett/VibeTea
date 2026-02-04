@@ -150,9 +150,14 @@ export default function App() {
   // Main dashboard layout
   return (
     <LazyMotion features={domAnimation}>
-      <div className="min-h-screen bg-gray-900 text-white">
+      <div className="min-h-screen bg-[#131313] text-white relative">
+        {/* Animated background layer with error boundary */}
+        <AnimationErrorBoundary>
+          <AnimatedBackground showGrid showParticles />
+        </AnimationErrorBoundary>
+
         {/* Header */}
-        <header className="sticky top-0 z-10 bg-gray-900/95 backdrop-blur border-b border-gray-800">
+        <header className="sticky top-0 z-10 bg-[#131313]/95 backdrop-blur border-b border-gray-800 relative">
           <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <h1 className="text-xl font-bold">VibeTea Dashboard</h1>
             <div className="flex items-center gap-4">
@@ -171,7 +176,7 @@ export default function App() {
         </header>
 
         {/* Main content */}
-        <main className="max-w-7xl mx-auto p-4">
+        <main className="max-w-7xl mx-auto p-4 relative z-10">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Left column: Sessions and Heatmap */}
             <div className="lg:col-span-1 space-y-6">
