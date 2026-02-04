@@ -519,16 +519,16 @@
 - [x] T256 [GIT] Commit: verify TUI performance settings
 
 ### NO_COLOR Support
-- [ ] T257 Implement NO_COLOR environment variable detection in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T258 [GIT] Commit: add NO_COLOR support
+- [x] T257 Implement NO_COLOR environment variable detection in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T258 [GIT] Commit: add NO_COLOR support
 
 ### Documentation
-- [ ] T259 [P] Update CLAUDE.md with TUI feature documentation
-- [ ] T260 [GIT] Commit: update CLAUDE.md for TUI feature
+- [x] T259 [P] Update CLAUDE.md with TUI feature documentation
+- [x] T260 [GIT] Commit: update CLAUDE.md for TUI feature
 
 ### Run Quickstart Validation
-- [ ] T261 Run quickstart.md validation steps to verify TUI works
-- [ ] T262 [GIT] Commit: verify quickstart validation passes
+- [x] T261 Run quickstart.md validation steps to verify TUI works
+- [x] T262 [GIT] Commit: verify quickstart validation passes
 
 ### Codebase Mapping and Retro
 - [ ] T263 Run /sdd:map incremental for Phase 11 changes
