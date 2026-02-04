@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn render_dashboard_screen_contains_header_title() {
+    fn render_dashboard_screen_contains_header_branding() {
         let mut terminal = create_test_terminal();
         let state = AppState::new();
 
@@ -338,15 +338,18 @@ mod tests {
             .expect("Drawing should not fail");
 
         let buffer = terminal.backend().buffer();
+        // Use full symbol() not just first char to properly capture unicode
         let content: String = buffer
             .content
             .iter()
-            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .map(|cell| cell.symbol())
             .collect();
 
+        // Full logo contains "Monitor" as literal text
+        // Check for either "Monitor" (full logo) or "VibeTea" (compact/text logo)
         assert!(
-            content.contains("VibeTea"),
-            "Dashboard should show VibeTea title in header"
+            content.contains("Monitor") || content.contains("VibeTea"),
+            "Dashboard should show branding in header"
         );
     }
 

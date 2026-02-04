@@ -8,15 +8,17 @@
 //!
 //! - **T121**: Connection status widget displays status with icon and text
 //! - **T123**: Color-blind safe indicators (symbols + colors)
-//! - **T125**: Header widget combines logo placeholder and status
+//! - **T125**: Header widget combines logo and status
 //! - **T127**: Graceful degradation for narrow terminals
+//! - **US8**: Display stylized VibeTea ASCII logo in header
 //!
 //! # Layout Modes
 //!
 //! The header widget adapts based on terminal width:
 //!
-//! - **Wide (>= 80 columns)**: Shows "VibeTea" text on left, connection status on right
-//! - **Narrow (< 80 columns)**: Shows "VibeTea" and status in compact form
+//! - **Wide (>= 80 columns)**: Shows full ASCII art logo on left, connection status on right
+//! - **Medium (>= 30 columns)**: Shows compact logo on left, connection status on right
+//! - **Narrow (< 30 columns)**: Shows text logo and status in compact form
 //!
 //! # Example
 //!
@@ -53,43 +55,41 @@ use ratatui::{
 };
 
 use crate::tui::app::{ConnectionStatus, Symbols, Theme};
+use super::logo::{logo_height, LogoWidget};
 
 /// Width threshold for switching between wide and narrow layouts.
 const WIDE_LAYOUT_THRESHOLD: u16 = 80;
 
-/// Height of the header in both narrow and wide modes.
-///
-/// Currently returns 3 for all widths. This may be increased when
-/// the full ASCII art logo is implemented in US8.
-const HEADER_HEIGHT: u16 = 3;
+/// Minimum height for the header (accounts for border + content).
+const MIN_HEADER_HEIGHT: u16 = 3;
 
 /// Returns the height needed for the header widget.
 ///
-/// This function calculates the required height based on terminal width.
-/// Currently returns a fixed height, but will adapt when the full ASCII
-/// art logo is implemented.
+/// This function calculates the required height based on terminal width,
+/// accounting for the logo height plus borders.
 ///
 /// # Arguments
 ///
-/// * `_area_width` - The available width (used for future logo sizing)
+/// * `area_width` - The available width for determining logo variant
 ///
 /// # Returns
 ///
-/// The number of rows needed for the header.
+/// The number of rows needed for the header, including borders.
 ///
 /// # Example
 ///
 /// ```ignore
 /// use vibetea_monitor::tui::widgets::header_height;
 ///
-/// let height = header_height(80);
-/// assert_eq!(height, 3);
+/// let height = header_height(80);  // Returns 7 (5 for full logo + 2 for borders)
+/// let height = header_height(40);  // Returns 3 (1 for compact logo + 2 for borders)
 /// ```
 #[must_use]
-pub fn header_height(_area_width: u16) -> u16 {
-    // For now, fixed height. When full logo is added in US8,
-    // this will return different values based on width.
-    HEADER_HEIGHT
+pub fn header_height(area_width: u16) -> u16 {
+    // Logo height + 2 for top and bottom borders
+    let logo_h = logo_height(area_width);
+    let total = logo_h + 2;
+    total.max(MIN_HEADER_HEIGHT)
 }
 
 /// Widget for displaying the connection status indicator.
@@ -351,12 +351,10 @@ impl<'a> HeaderWidget<'a> {
 
     /// Renders the header in wide layout mode.
     fn render_wide(&self, area: Rect, buf: &mut Buffer) {
-        // Create a bordered block
+        // Create a bordered block (no title since logo provides branding)
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(self.theme.border)
-            .title("VibeTea")
-            .title_style(self.theme.title);
+            .border_style(self.theme.border);
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -365,44 +363,57 @@ impl<'a> HeaderWidget<'a> {
             return;
         }
 
-        // Split inner area: logo placeholder on left, status on right
+        // Calculate status width: symbol + space + text + padding
+        let status_widget = ConnectionStatusWidget::new(self.status, self.theme, self.symbols);
+        let status_display_width = status_widget.display_width() as u16;
+        // Add some padding for session name if present
+        let session_width = self.session_name.map_or(0, |n| n.len() as u16 + 10);
+        let right_column_width = status_display_width.max(session_width) + 2;
+
+        // Split inner area: logo fills left, status/session on right
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Min(10),    // Logo/branding area
-                Constraint::Length(20), // Status area
+                Constraint::Fill(1),                    // Logo area (fills available space)
+                Constraint::Length(right_column_width), // Status area (fixed width)
             ])
             .split(inner);
 
-        // Render branding text on the left (placeholder until US8 adds full logo)
-        let branding = if let Some(name) = self.session_name {
-            format!("Session: {}", name)
+        // Render the logo on the left
+        let logo_widget = LogoWidget::new(self.theme, self.symbols);
+        logo_widget.render(chunks[0], buf);
+
+        // Render session name and connection status on the right
+        // Stack them vertically: session name on top, status below (or centered if no session)
+        if let Some(name) = self.session_name {
+            // Session name at top of right column
+            let session_text = format!("Session: {}", name);
+            let session_paragraph = Paragraph::new(session_text).style(self.theme.text_secondary);
+            let session_area = Rect::new(chunks[1].x, chunks[1].y, chunks[1].width, 1);
+            session_paragraph.render(session_area, buf);
+
+            // Status below session name (or at bottom if there's room)
+            let status_y = if chunks[1].height > 2 {
+                chunks[1].y + chunks[1].height - 1
+            } else {
+                chunks[1].y + 1
+            };
+            let status_area = Rect::new(chunks[1].x, status_y, chunks[1].width, 1);
+            status_widget.render(status_area, buf);
         } else {
-            String::new()
-        };
-
-        if !branding.is_empty() {
-            let branding_paragraph = Paragraph::new(branding).style(self.theme.text_secondary);
-            branding_paragraph.render(chunks[0], buf);
+            // Just status, vertically centered
+            let status_y = chunks[1].y + chunks[1].height / 2;
+            let status_area = Rect::new(chunks[1].x, status_y, chunks[1].width, 1);
+            status_widget.render(status_area, buf);
         }
-
-        // Render connection status on the right
-        let status_widget = ConnectionStatusWidget::new(self.status, self.theme, self.symbols);
-
-        // Position status in the right chunk, vertically centered
-        let status_y = chunks[1].y + chunks[1].height / 2;
-        let status_area = Rect::new(chunks[1].x, status_y, chunks[1].width, 1);
-        status_widget.render(status_area, buf);
     }
 
     /// Renders the header in narrow layout mode.
     fn render_narrow(&self, area: Rect, buf: &mut Buffer) {
-        // Create a bordered block with compact title
+        // Create a bordered block (no title since logo provides branding)
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(self.theme.border)
-            .title("VibeTea")
-            .title_style(self.theme.title);
+            .border_style(self.theme.border);
 
         let inner = block.inner(area);
         block.render(area, buf);
@@ -411,11 +422,26 @@ impl<'a> HeaderWidget<'a> {
             return;
         }
 
-        // In narrow mode, just show the status right-aligned
+        // Calculate status width for layout
         let status_widget = ConnectionStatusWidget::new(self.status, self.theme, self.symbols);
+        let status_display_width = (status_widget.display_width() as u16).min(inner.width / 2);
 
-        // Render status on the first line of inner area
-        let status_area = Rect::new(inner.x, inner.y, inner.width, 1);
+        // Split: logo on left, status on right
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Fill(1),                    // Logo area
+                Constraint::Length(status_display_width + 1), // Status area
+            ])
+            .split(inner);
+
+        // Render compact/text logo on the left
+        let logo_widget = LogoWidget::new(self.theme, self.symbols);
+        logo_widget.render(chunks[0], buf);
+
+        // Render status on the right, vertically centered
+        let status_y = chunks[1].y + chunks[1].height / 2;
+        let status_area = Rect::new(chunks[1].x, status_y, chunks[1].width, 1);
         status_widget.render(status_area, buf);
     }
 }
@@ -824,20 +850,49 @@ mod tests {
     // ============================================
 
     #[test]
-    fn header_height_returns_correct_value() {
-        // Currently fixed at 3, may change with US8 logo implementation
+    fn header_height_returns_correct_value_for_full_logo() {
+        // Wide terminals get full logo (5 lines) + 2 for borders = 7
+        assert_eq!(header_height(80), 7);
+        assert_eq!(header_height(100), 7);
+        assert_eq!(header_height(120), 7);
+    }
+
+    #[test]
+    fn header_height_returns_correct_value_for_compact_logo() {
+        // Medium terminals get compact logo (1 line) + 2 for borders = 3
         assert_eq!(header_height(40), 3);
-        assert_eq!(header_height(80), 3);
-        assert_eq!(header_height(120), 3);
+        assert_eq!(header_height(50), 3);
+        assert_eq!(header_height(59), 3);
+    }
+
+    #[test]
+    fn header_height_returns_correct_value_for_text_logo() {
+        // Narrow terminals get text logo (1 line) + 2 for borders = 3
+        assert_eq!(header_height(20), 3);
+        assert_eq!(header_height(29), 3);
     }
 
     #[test]
     fn header_height_handles_zero_width() {
+        // Zero width gets text logo, minimum height of 3
         assert_eq!(header_height(0), 3);
     }
 
     #[test]
     fn header_height_handles_very_large_width() {
-        assert_eq!(header_height(1000), 3);
+        // Very large width still uses full logo
+        assert_eq!(header_height(1000), 7);
+    }
+
+    #[test]
+    fn header_height_at_threshold_boundaries() {
+        // At exact threshold for full logo (60)
+        assert_eq!(header_height(60), 7);
+        // Just below threshold for full logo
+        assert_eq!(header_height(59), 3);
+        // At exact threshold for compact logo (30)
+        assert_eq!(header_height(30), 3);
+        // Just below threshold for compact logo
+        assert_eq!(header_height(29), 3);
     }
 }
