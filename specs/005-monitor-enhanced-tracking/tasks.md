@@ -459,8 +459,8 @@
 - [x] T241 [US9] Add client store handler for project_activity events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
 - [x] T242 [GIT] Commit: add client project_activity handler
 - [x] T243 [US9] Run /sdd:map incremental for Phase 11 changes
-- [ ] T244 [GIT] Commit: update codebase documents for phase 11
-- [ ] T245 [US9] Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T244 [GIT] Commit: update codebase documents for phase 11
+- [x] T245 [US9] Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T246 [GIT] Commit: finalize phase 11 retro
 
 ### Phase Completion
