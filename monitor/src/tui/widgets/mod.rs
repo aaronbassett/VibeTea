@@ -41,7 +41,9 @@ pub mod stats_footer;
 pub use credentials::{CredentialsWidget, CREDENTIALS_HEIGHT};
 pub use event_stream::EventStreamWidget;
 pub use header::{header_height, ConnectionStatusWidget, HeaderWidget};
-pub use logo::{logo_height, LogoVariant, LogoWidget, COMPACT_LOGO_HEIGHT, FULL_LOGO_HEIGHT, TEXT_LOGO_HEIGHT};
+pub use logo::{
+    logo_height, LogoVariant, LogoWidget, COMPACT_LOGO_HEIGHT, FULL_LOGO_HEIGHT, TEXT_LOGO_HEIGHT,
+};
 pub use setup_form::{validate_session_name, SetupFormWidget};
 // pub use size_warning::SizeWarningWidget;
 pub use stats_footer::{StatsFooterWidget, STATS_FOOTER_HEIGHT};

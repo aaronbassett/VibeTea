@@ -339,11 +339,7 @@ mod tests {
 
         let buffer = terminal.backend().buffer();
         // Use full symbol() not just first char to properly capture unicode
-        let content: String = buffer
-            .content
-            .iter()
-            .map(|cell| cell.symbol())
-            .collect();
+        let content: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
 
         // Full logo contains "Monitor" as literal text
         // Check for either "Monitor" (full logo) or "VibeTea" (compact/text logo)

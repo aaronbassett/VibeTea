@@ -54,8 +54,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::tui::app::{ConnectionStatus, Symbols, Theme};
 use super::logo::{logo_height, LogoWidget};
+use crate::tui::app::{ConnectionStatus, Symbols, Theme};
 
 /// Width threshold for switching between wide and narrow layouts.
 const WIDE_LAYOUT_THRESHOLD: u16 = 80;
@@ -430,7 +430,7 @@ impl<'a> HeaderWidget<'a> {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Fill(1),                    // Logo area
+                Constraint::Fill(1),                          // Logo area
                 Constraint::Length(status_display_width + 1), // Status area
             ])
             .split(inner);

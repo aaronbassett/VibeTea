@@ -40,11 +40,7 @@
 //! frame.render_widget(widget, logo_area);
 //! ```
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    widgets::Widget,
-};
+use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
 use crate::tui::app::{Symbols, Theme, UNICODE_SYMBOLS};
 
