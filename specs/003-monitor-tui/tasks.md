@@ -430,7 +430,7 @@
 - [x] T211 [US7] Run /sdd:map incremental for Phase 9 changes
 - [x] T212 [GIT] Commit: update codebase documents for phase 9
 - [x] T213 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T214 [GIT] Commit: finalize phase 9 retro
+- [x] T214 [GIT] Commit: finalize phase 9 retro
 
 ### Phase Completion
 - [ ] T215 [GIT] Push branch to origin (ensure pre-push hooks pass)
