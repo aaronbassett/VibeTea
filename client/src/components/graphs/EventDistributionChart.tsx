@@ -372,7 +372,7 @@ export function EventDistributionChart({
     >
       {hasEvents ? (
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+          <PieChart accessibilityLayer>
             {/* Gradient definitions for glow effect */}
             <defs>
               {distribution.map((entry) => (

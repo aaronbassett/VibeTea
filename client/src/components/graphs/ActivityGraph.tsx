@@ -497,6 +497,7 @@ export function ActivityGraph({
           <AreaChart
             data={data as ActivityDataPoint[]}
             margin={{ top: 40, right: 20, left: 0, bottom: 20 }}
+            accessibilityLayer
           >
             {/* Gradient definition for area fill */}
             <defs>
