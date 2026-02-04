@@ -25,8 +25,8 @@
 
 | Package | Version | Purpose | Usage Scope |
 |---------|---------|---------|-------------|
-| @supabase/supabase-js | 2.94.0 | Client authentication and Supabase integration | Client authentication via GitHub OAuth |
-| zustand | 5.0.11 | Client state management | Global app state for auth and UI |
+| @supabase/supabase-js | 2.94.0 | Client authentication and Supabase integration | GitHub OAuth flow, session management, auth state listeners |
+| zustand | 5.0.11 | Client state management | Global app state for auth, events, filters, and WebSocket status |
 | reqwest | 0.12 | HTTP client for Supabase API calls | Server JWT validation and public key fetching |
 | ed25519-dalek | 2.1 | Ed25519 signature verification | Server event validation from monitors |
 | serde/serde_json | 1.0 | Serialization and deserialization | Event serialization, config parsing, API responses |
@@ -46,7 +46,7 @@
 | Environment | Details |
 |-------------|---------|
 | Node.js | 18+ (inferred from package.json target) |
-| Browser | Modern browsers supporting WebSocket, ES2020+ |
+| Browser | Modern browsers supporting WebSocket, ES2020+, localStorage |
 | Tokio async | Single-threaded event loop per worker |
 | Deployment | Docker containers (optimized release builds with LTO) |
 | OS Targets | Linux (primary), macOS (development), Windows (development) |
@@ -62,16 +62,34 @@
 - **base64** 0.22 for token encoding/decoding
 
 ### Session Management
+
+#### Server-Side (Rust)
 - In-memory session store with 5-minute TTL
 - 32-byte random tokens, base64-url encoded (43 characters)
 - Capacity limit of 10,000 concurrent sessions
 - Thread-safe with RwLock-based interior mutability
+- One-time TTL extension for WebSocket connections
+- 30-second grace period for connection closedown
 
-### Styling & UI
+#### Client-Side (React)
+- Supabase session persistence via `@supabase/supabase-js`
+- Auth state listener for real-time session changes (`onAuthStateChange`)
+- Local session state managed in `useAuth` hook with loading state
+- User metadata cached from Supabase (name, email, avatar_url)
+- localStorage integration for token persistence
+
+### Authentication Hooks & Components (Phase 3)
+- **useAuth hook** (`client/src/hooks/useAuth.ts`): Manages Supabase auth state, GitHub OAuth, and session lifecycle
+- **Login page** (`client/src/pages/Login.tsx`): GitHub OAuth entry point with loading and error states
+- **Dashboard page** (`client/src/pages/Dashboard.tsx`): Protected route displaying monitoring dashboard with user info and sign-out
+- **App routing**: Authentication-driven routing based on `useAuth` loading and user state
+
+### UI & Animations
 - Tailwind CSS 4.1.18 with Vite integration
-- Framer Motion 12.31.0 for animations
+- Framer Motion 12.31.0 for Spring animations and page transitions
 - Recharts 3.7.0 for data visualization
 - TanStack React Virtual for list virtualization
+- LazyMotion and domAnimation for animation optimization
 
 ### Testing & Quality
 - Vitest 4.0.18 (client tests)
@@ -92,4 +110,4 @@
 
 ---
 
-*This document captures only what executes. Reflect Phase 2 (Supabase Authentication Foundational) additions including session store, Supabase client, and edge functions.*
+*This document captures only what executes. Reflects Phase 3 (Client Authentication) which adds useAuth hook and page components for GitHub OAuth via Supabase, expanding on Phase 2 foundational auth infrastructure.*

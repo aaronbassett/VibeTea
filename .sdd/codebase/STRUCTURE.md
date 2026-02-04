@@ -58,7 +58,10 @@ VibeTea/
 ├── client/                     # React SPA (dashboard)
 │   ├── src/
 │   │   ├── main.tsx           # ReactDOM entry point
-│   │   ├── App.tsx            # Root component (layout + page state)
+│   │   ├── App.tsx            # Root component with auth routing (Phase 3)
+│   │   ├── pages/             # Page components (Phase 3)
+│   │   │   ├── Login.tsx       # GitHub OAuth login page
+│   │   │   └── Dashboard.tsx   # Main event stream dashboard
 │   │   ├── components/
 │   │   │   ├── ConnectionStatus.tsx   # WebSocket connection indicator
 │   │   │   ├── TokenForm.tsx          # Authentication token input
@@ -66,6 +69,7 @@ VibeTea/
 │   │   │   ├── SessionOverview.tsx    # Active sessions table
 │   │   │   └── Heatmap.tsx           # Activity over time visualization
 │   │   ├── hooks/
+│   │   │   ├── useAuth.ts            # GitHub OAuth authentication hook (Phase 3)
 │   │   │   ├── useWebSocket.ts       # WebSocket connection management
 │   │   │   ├── useEventStore.ts      # Zustand store (state + selectors)
 │   │   │   └── useSessionTimeouts.ts # Session state machine (Active → Inactive → Ended)
@@ -149,7 +153,7 @@ The Monitor now supports four modes:
 - Lines 137-142: Default command handling (TUI is default when no subcommand)
 - Lines 145: `Command::Tui => run_tui()` dispatches to TUI mode
 - TUI provides interactive configuration and real-time event monitoring
-- Headless `run` command remains available for scripting and background monitoring
+- Headless `run` command remains available for scripting/background monitoring
 
 ### `monitor/src/tui/` - Terminal User Interface
 
@@ -281,23 +285,45 @@ HTTP client for Supabase services (JWT validation + public key distribution):
 - `validate_jwt()`: Remote validation via `GET /auth/v1/user` (FR-002)
 - `fetch_public_keys()`: Get keys from edge function (30-second refresh, FR-016)
 
-### `client/src/` - Client Component
+### `client/src/` - Client Component (Phase 3 Updates)
 
-| File | Purpose | Key Types |
-|------|---------|-----------|
-| `App.tsx` | Root layout, token form, conditional rendering | `App` component |
-| `main.tsx` | ReactDOM.createRoot() | — |
-| `components/ConnectionStatus.tsx` | Status badge (connecting/connected/disconnected) | `ConnectionStatus` component |
-| `components/TokenForm.tsx` | Input for auth token, localStorage persistence | `TokenForm` component |
-| `components/EventStream.tsx` | Virtualized list of events with filtering | `EventStream` component |
-| `components/SessionOverview.tsx` | Table of active sessions with stats | `SessionOverview` component |
-| `components/Heatmap.tsx` | Activity heatmap binned by time | `Heatmap` component |
-| `hooks/useWebSocket.ts` | WebSocket lifecycle, reconnection with backoff | `useWebSocket()` hook |
-| `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters | `useEventStore()` hook |
-| `hooks/useSessionTimeouts.ts` | Session state machine (Active → Inactive → Ended) | `useSessionTimeouts()` hook |
-| `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session` |
-| `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
-| `__tests__/` | Vitest unit + integration tests | — |
+| File | Purpose | Key Types | Added In |
+|------|---------|-----------|----------|
+| `App.tsx` | Root layout with auth routing (Phase 3) | `App` component | Phase 3 |
+| `main.tsx` | ReactDOM.createRoot() | — | — |
+| `pages/Login.tsx` | GitHub OAuth login page | `Login` component | Phase 3 |
+| `pages/Dashboard.tsx` | Main event stream dashboard | `Dashboard` component | Phase 3 |
+| `components/ConnectionStatus.tsx` | Status badge (connecting/connected/disconnected) | `ConnectionStatus` component | — |
+| `components/TokenForm.tsx` | Input for auth token, localStorage persistence | `TokenForm` component | — |
+| `components/EventStream.tsx` | Virtualized list of events with filtering | `EventStream` component | — |
+| `components/SessionOverview.tsx` | Table of active sessions with stats | `SessionOverview` component | — |
+| `components/Heatmap.tsx` | Activity heatmap binned by time | `Heatmap` component | — |
+| `hooks/useAuth.ts` | GitHub OAuth authentication hook | `useAuth()` hook, `UseAuthReturn` | Phase 3 |
+| `hooks/useWebSocket.ts` | WebSocket lifecycle, reconnection with backoff | `useWebSocket()` hook | — |
+| `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters | `useEventStore()` hook | — |
+| `hooks/useSessionTimeouts.ts` | Session state machine (Active → Inactive → Ended) | `useSessionTimeouts()` hook | — |
+| `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session` | — |
+| `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` | — |
+| `__tests__/` | Vitest unit + integration tests | — | — |
+
+#### Phase 3 Client Architecture
+
+**New Page-Based Routing Pattern**:
+- `App.tsx` is now a routing component that checks auth state
+- Routes to `<Login />` if user is not authenticated
+- Routes to `<Dashboard />` if user is authenticated
+- Shows loading spinner during initial auth check
+
+**New Pages Directory** (`client/src/pages/`):
+- `Login.tsx` - GitHub OAuth login page (FR-001, FR-002, FR-003)
+- `Dashboard.tsx` - Event stream, heatmap, analytics dashboard
+
+**New useAuth Hook** (`client/src/hooks/useAuth.ts`):
+- Manages Supabase GitHub OAuth authentication
+- Returns: `{ user, session, loading, signInWithGitHub, signOut }`
+- Handles session persistence via Supabase
+- Subscribes to auth state changes
+- Example: `const { user, loading, signInWithGitHub } = useAuth()`
 
 ### `supabase/` - Supabase Backend Infrastructure (Phase 2)
 
@@ -455,30 +481,41 @@ server/src/main.rs
 └── types.rs (Event schema)
 ```
 
-### Client Module
+### Client Module (Phase 3 Updates)
 
 React SPA with these responsibilities:
-1. **Connect** to server via WebSocket
-2. **Manage** application state (Zustand)
-3. **Display** events, sessions, heatmap
-4. **Filter** by session/time range
-5. **Persist** authentication token
+1. **Authenticate** with GitHub OAuth via Supabase (`useAuth` hook)
+2. **Route** to Login or Dashboard based on auth state
+3. **Connect** to server via WebSocket
+4. **Manage** application state (Zustand)
+5. **Display** events, sessions, heatmap
+6. **Filter** by session/time range
+7. **Persist** authentication token
 
-No back-end dependencies (except server WebSocket).
+Architecture:
 
 ```
-client/src/App.tsx (root)
-├── hooks/
-│   ├── useWebSocket.ts (WebSocket, reconnect)
-│   ├── useEventStore.ts (Zustand state)
-│   └── useSessionTimeouts.ts (session state machine)
-├── components/
-│   ├── TokenForm.tsx (auth)
-│   ├── ConnectionStatus.tsx (status badge)
-│   ├── EventStream.tsx (virtualized list)
-│   ├── SessionOverview.tsx (table)
-│   └── Heatmap.tsx (visualization)
-└── types/events.ts (TypeScript interfaces)
+client/src/App.tsx (root with auth routing)
+├── useAuth() → { user, loading, ... }
+├── if (loading) → Spinner
+├── if (!user) → <Login />
+└── else → <Dashboard />
+    ├── pages/Login.tsx
+    │   ├── GitHub sign-in button
+    │   └── useAuth().signInWithGitHub()
+    └── pages/Dashboard.tsx
+        ├── hooks/
+        │   ├── useAuth.ts (authentication)
+        │   ├── useWebSocket.ts (WebSocket, reconnect)
+        │   ├── useEventStore.ts (Zustand state)
+        │   └── useSessionTimeouts.ts (session state machine)
+        ├── components/
+        │   ├── TokenForm.tsx (auth)
+        │   ├── ConnectionStatus.tsx (status badge)
+        │   ├── EventStream.tsx (virtualized list)
+        │   ├── SessionOverview.tsx (table)
+        │   └── Heatmap.tsx (visualization)
+        └── types/events.ts (TypeScript interfaces)
 ```
 
 ### Supabase Backend Module (Phase 2)
@@ -532,9 +569,9 @@ No dependencies on source code (binary-only).
 | **New Supabase function** (Phase 2) | `supabase/functions/<function-name>/` (new directory) | `supabase/functions/webhooks/index.ts` |
 | **New database migration** (Phase 2) | `supabase/migrations/<number>_<name>.sql` (new file) | `supabase/migrations/002_sessions.sql` |
 | **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
+| **New Client page** (Phase 3) | `client/src/pages/<Page>.tsx` | `client/src/pages/Analytics.tsx` |
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
-| **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
 | **GitHub Actions workflow** | `.github/workflows/` (copy ci.yml as template) | `.github/workflows/release.yml` |
 | **GitHub Actions composite action** | `.github/actions/<action-name>/` (new directory) | `.github/actions/notify-slack/action.yml` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
@@ -579,10 +616,19 @@ use vibetea_server::supabase::SupabaseClient;
 **Convention**: Absolute paths from `src/` root via `tsconfig.json` alias or relative imports.
 
 ```typescript
-// In client/src/App.tsx
-import { useWebSocket } from './hooks/useWebSocket';
-import { useEventStore } from './hooks/useEventStore';
-import type { VibeteaEvent } from './types/events';
+// In client/src/App.tsx (Phase 3)
+import { useAuth } from './hooks/useAuth';
+import { Login } from './pages/Login';
+import { Dashboard } from './pages/Dashboard';
+
+// In client/src/pages/Login.tsx (Phase 3)
+import { useAuth } from '../hooks/useAuth';
+import { AnimatedBackground } from '../components/animated/AnimatedBackground';
+
+// In client/src/pages/Dashboard.tsx (Phase 3)
+import { useAuth } from '../hooks/useAuth';
+import { useEventStore } from '../hooks/useEventStore';
+import { EventStream } from '../components/EventStream';
 
 // In client/src/components/EventStream.tsx
 import { useEventStore } from '../hooks/useEventStore';
@@ -594,6 +640,7 @@ import type { Session } from '../types/events';
 - Hooks: camelCase starting with `use` (e.g., `useWebSocket.ts`)
 - Utils: camelCase (e.g., `formatting.ts`)
 - Types: camelCase (e.g., `events.ts`)
+- Pages: PascalCase (e.g., `Login.tsx`, `Dashboard.tsx`)
 
 ### GitHub Actions (YAML)
 
@@ -660,7 +707,8 @@ Files that are auto-generated or should not be manually edited:
 | Category | Pattern | Example |
 |----------|---------|---------|
 | Component files | `PascalCase.tsx` | `EventStream.tsx`, `TokenForm.tsx` |
-| Hook files | `camelCase.ts` | `useWebSocket.ts`, `useEventStore.ts` |
+| Page files | `PascalCase.tsx` | `Login.tsx`, `Dashboard.tsx` |
+| Hook files | `camelCase.ts` | `useWebSocket.ts`, `useAuth.ts` |
 | Utility files | `camelCase.ts` | `formatting.ts` |
 | Type files | `camelCase.ts` | `events.ts` |
 | Constants | `UPPER_SNAKE_CASE` | `TOKEN_STORAGE_KEY`, `MAX_BACKOFF_MS` |
@@ -708,7 +756,7 @@ Files that are auto-generated or should not be manually edited:
 ### Client
 
 ```
-✓ CAN import:     components, hooks, types, utils, React, Zustand, third-party UI libs
+✓ CAN import:     components, hooks, types, utils, React, Zustand, third-party UI libs, @supabase/supabase-js
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
 ```
 

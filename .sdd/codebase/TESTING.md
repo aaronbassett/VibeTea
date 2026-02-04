@@ -98,6 +98,9 @@ client/
 │   │   └── [components].tsx
 │   ├── hooks/
 │   │   └── [hooks].ts
+│   ├── pages/
+│   │   ├── Login.tsx
+│   │   └── Dashboard.tsx
 │   └── [other modules]
 └── vitest.config.ts
 ```
@@ -134,7 +137,7 @@ mod tests {
 #[tokio::test]
 async fn test_validates_jwt() {
     let mock_server = MockServer::start().await;
-    
+
     Mock::given(method("GET"))
         .and(path("/auth/v1/user"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
@@ -143,7 +146,7 @@ async fn test_validates_jwt() {
 
     let client = SupabaseClient::new(mock_server.uri(), "test-key")
         .expect("should create client");
-    
+
     let result = client.validate_jwt("test-jwt").await;
     assert!(result.is_ok());
 }
@@ -194,7 +197,7 @@ fn session_token_not_logged_on_creation() {
         let token = store.create_session("user-123".into(), None).unwrap();
         CAPTURED_TOKENS.with(|t| t.borrow_mut().push(token));
     });
-    
+
     CAPTURED_TOKENS.with(|t| {
         for token in t.borrow().iter() {
             assert!(!logs.contains(token), "Token leaked in logs!");
@@ -222,7 +225,7 @@ describe('EventStream', () => {
     ];
 
     render(<EventStream events={events} />);
-    
+
     expect(screen.getByText(/session/i)).toBeInTheDocument();
   });
 });
@@ -253,6 +256,145 @@ describe('Event Types', () => {
 });
 ```
 
+### TypeScript App Integration Tests (Phase 3)
+
+**Location**: `client/src/__tests__/App.test.tsx` (226 lines)
+
+**Setup Pattern**:
+```typescript
+// Mock localStorage
+const localStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: (key: string) => store[key] ?? null,
+    setItem: (key: string, value: string) => {
+      store[key] = value;
+    },
+    removeItem: (key: string) => {
+      delete store[key];
+    },
+    clear: () => {
+      store = {};
+    },
+  };
+})();
+
+Object.defineProperty(window, 'localStorage', {
+  value: localStorageMock,
+  writable: true,
+});
+
+// Mock WebSocket
+class MockWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+
+  readyState = MockWebSocket.CONNECTING;
+  onopen: ((event: Event) => void) | null = null;
+  // ... other properties
+
+  constructor(_url: string) {
+    setTimeout(() => {
+      this.readyState = MockWebSocket.OPEN;
+      if (this.onopen) {
+        this.onopen(new Event('open'));
+      }
+    }, 0);
+  }
+
+  close() {
+    this.readyState = MockWebSocket.CLOSED;
+    if (this.onclose) {
+      this.onclose(new CloseEvent('close'));
+    }
+  }
+
+  send(_data: string) {
+    // No-op for tests
+  }
+}
+
+Object.defineProperty(window, 'WebSocket', {
+  value: MockWebSocket,
+  writable: true,
+});
+```
+
+**Test Pattern** (Token and rendering):
+```typescript
+describe('App Token Handling', () => {
+  it('renders token form when no token is stored', () => {
+    render(<App />);
+
+    expect(screen.getByRole('img', { name: /vibetea ascii logo/i }))
+      .toBeInTheDocument();
+    expect(screen.getByText(/enter your authentication token/i))
+      .toBeInTheDocument();
+  });
+
+  it('renders dashboard when token exists', () => {
+    localStorage.setItem('vibetea_token', 'test-token-123');
+    render(<App />);
+
+    expect(screen.getByText('VibeTea Dashboard')).toBeInTheDocument();
+    expect(screen.getByText('Sessions')).toBeInTheDocument();
+  });
+
+  it('transitions from token form to dashboard when token is saved', async () => {
+    render(<App />);
+
+    // Initially shows token form
+    expect(screen.getByText(/enter your authentication token/i))
+      .toBeInTheDocument();
+
+    // Enter a token
+    const tokenInput = screen.getByLabelText(/authentication token/i);
+    fireEvent.change(tokenInput, { target: { value: 'new-test-token' } });
+
+    // Submit the form
+    const saveButton = screen.getByRole('button', { name: /save token/i });
+    fireEvent.click(saveButton);
+
+    // Wait for transition to dashboard
+    await waitFor(() => {
+      expect(screen.getByText('Sessions')).toBeInTheDocument();
+    });
+
+    // Token should be in localStorage
+    expect(localStorage.getItem('vibetea_token')).toBe('new-test-token');
+  });
+});
+```
+
+**Test Pattern** (Connection status):
+```typescript
+describe('App Connection Status', () => {
+  it('shows connection status indicator', () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    render(<App />);
+
+    const statusElement = screen.getByRole('status', {
+      name: /connection status/i,
+    });
+    expect(statusElement).toBeInTheDocument();
+  });
+
+  it('initiates connection when token is available', async () => {
+    localStorage.setItem('vibetea_token', 'test-token');
+    render(<App />);
+
+    await waitFor(() => {
+      const state = useEventStore.getState();
+      expect(['connecting', 'connected', 'disconnected']).toContain(
+        state.status
+      );
+    });
+  });
+});
+```
+
 ## Test Categories
 
 ### Unit Tests
@@ -278,10 +420,13 @@ describe('Event Types', () => {
 - API endpoint behavior
 - Database interactions
 - External service integration
+- Application-level flows (token management, auth states)
 
 **Examples in codebase**:
 - `server/tests/auth_privacy_test.rs`: 11 tests for privacy compliance (594 lines)
 - Tests cover JWT validation, session operations, log inspection
+- `client/src/__tests__/App.test.tsx`: 7 tests for app token handling and routing (226 lines)
+- Tests cover token persistence, auth state rendering, WebSocket connection
 
 ### Privacy Compliance Tests
 
@@ -307,6 +452,28 @@ describe('Event Types', () => {
 - Exercise all code paths that touch tokens
 - Assert tokens/JWTs don't appear in captured logs
 
+### Auth State Tests (Phase 3)
+
+**Purpose**: Verify authentication flow and state transitions
+
+**Location**: `client/src/__tests__/App.test.tsx`
+
+**Coverage**:
+1. Token-less state shows login/token form
+2. Token present state shows dashboard
+3. Token form to dashboard transition works
+4. Token update from settings works
+5. Connection status indicator displays
+6. WebSocket connects when token available
+7. Store filter actions work correctly
+
+**Test Approach**:
+- Mock localStorage for token persistence
+- Mock WebSocket for connection state
+- Use React Testing Library to query DOM by ARIA roles
+- Verify render paths based on state
+- Test async transitions with `waitFor`
+
 ## Mocking Strategy
 
 ### Rust HTTP Mocking (wiremock)
@@ -319,7 +486,7 @@ use wiremock::matchers::{method, path, header};
 #[tokio::test]
 async fn test_with_mock() {
     let mock_server = MockServer::start().await;
-    
+
     // Define mock expectation
     Mock::given(method("GET"))
         .and(path("/auth/v1/user"))
@@ -330,11 +497,11 @@ async fn test_with_mock() {
         )
         .mount(&mock_server)
         .await;
-    
+
     // Create client pointing to mock
     let client = SupabaseClient::new(mock_server.uri(), "test-anon-key")
         .expect("should create client");
-    
+
     // Test code using client
     let user = client.validate_jwt("valid-jwt").await.unwrap();
     assert_eq!(user.id, "user-123");
@@ -343,25 +510,35 @@ async fn test_with_mock() {
 
 ### TypeScript Mocking
 
-**Pattern**: React Testing Library with vitest mocks
+**Pattern**: React Testing Library with DOM mocks
 
 ```typescript
-import { vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-describe('Component with API', () => {
-  it('handles API response', async () => {
-    const mockFetch = vi.fn().mockResolvedValue({
-      json: async () => ({ data: 'test' })
+describe('Component with async actions', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('handles form submission', async () => {
+    render(<TokenForm onTokenChange={() => {}} />);
+
+    const input = screen.getByLabelText(/authentication token/i);
+    fireEvent.change(input, { target: { value: 'test-token' } });
+
+    const button = screen.getByRole('button', { name: /save/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(localStorage.getItem('vibetea_token')).toBe('test-token');
     });
-    
-    global.fetch = mockFetch;
-    
-    // test component
-    
-    expect(mockFetch).toHaveBeenCalledWith('/api/events');
   });
 });
 ```
+
+**Global Mocks** (in test setup):
+- `localStorage`: In-memory store for client-side persistence
+- `WebSocket`: Mock connection lifecycle with `CONNECTING`, `OPEN`, `CLOSING`, `CLOSED` states
 
 ## Coverage Goals
 
@@ -385,11 +562,12 @@ describe('Component with API', () => {
 - Utility functions: 90%+
 - Components: Core user-facing components have tests
 - Types: Type validation tests
+- App-level flows: Integration tests for token handling and routing
 
 **Current Coverage**:
 - `events.test.ts`: Event type validation
 - `formatting.test.ts`: Utility function tests
-- `App.test.tsx`: Main component integration test
+- `App.test.tsx`: 7 integration tests covering token handling, auth states, WebSocket connection, and filter operations (226 lines)
 
 ## Test Execution Commands
 
@@ -416,6 +594,9 @@ cargo test --test-threads=1 -- --nocapture
 
 # Client: Watch mode
 npm run test:watch
+
+# Client: With coverage report
+npm test -- --coverage
 
 # All: Pre-commit check
 cd server && cargo test --test-threads=1 && cd ../client && npm test
@@ -459,6 +640,33 @@ fn test_with_env_var() { ... }
 // 2. JWTs not logged during validation
 // 3. Tokens not visible in Debug output
 // 4. No leakage in error messages
+```
+
+### DOM Testing (Phase 3 Learning)
+
+**Best Practices**:
+- Query by ARIA roles when possible (accessibility-first)
+- Use `screen` API instead of container queries (semantic)
+- Use `waitFor` for async state transitions (avoids flaky tests)
+- Mock global APIs (localStorage, WebSocket) at module level
+- Reset mocks and state before each test with `beforeEach`
+
+**Example from codebase**:
+```typescript
+// Good - queries by role and label
+const tokenInput = screen.getByLabelText(/authentication token/i);
+const saveButton = screen.getByRole('button', { name: /save token/i });
+
+// Wait for async state changes
+await waitFor(() => {
+  expect(screen.getByText('Dashboard')).toBeInTheDocument();
+});
+
+// Reset state before test
+beforeEach(() => {
+  localStorage.clear();
+  useEventStore.setState({ status: 'disconnected', events: [] });
+});
 ```
 
 ---

@@ -11,7 +11,7 @@ VibeTea is a distributed event aggregation and broadcast system for AI coding as
 - **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server, with enhanced tracking modules for agent spawns, skill invocations, token usage, activity patterns, model distribution, todo progress, file changes, project activity, and other metrics
 - **Server** (Rust HTTP API) - Central hub that receives events from monitors and broadcasts them to subscribers via WebSocket
 - **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, usage heatmaps, and analytics
-- **Supabase Integration** (Phase 2) - Backend infrastructure for JWT validation, public key management, and future user authentication
+- **Supabase Integration** (Phase 2) - Backend infrastructure for JWT validation, public key management, and user authentication
 
 The system follows a **hub-and-spoke architecture** where the Server acts as a central event bus, decoupling multiple Monitor sources from multiple Client consumers. Events flow unidirectionally: Monitors → Server → Clients, with no persistent storage.
 
@@ -26,6 +26,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **CI/CD Integration** | Environment variable key loading enables monitor deployment in containerized and GitHub Actions environments |
 | **Composite Action** | GitHub Actions workflow integration via reusable composite action for simplified monitor setup |
 | **Supabase Backend** (Phase 2) | Remote JWT validation and public key distribution via edge functions and database |
+| **Page-Based Routing** (Phase 3) | Client uses page components (Login, Dashboard) with auth state-driven routing |
 
 ## Core Components
 
@@ -77,15 +78,22 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 - **Purpose**: Real-time dashboard displaying aggregated event stream from the Server with analytics visualizations
 - **Location**: `client/src/`
 - **Key Responsibilities**:
+  - Authentication via GitHub OAuth through Supabase (`useAuth` hook)
+  - Page-based routing (Login → Dashboard based on auth state)
   - WebSocket connection management with exponential backoff reconnection
   - Event buffering (1000 events max) with FIFO eviction
   - Session state management (Active, Inactive, Ended, Removed)
   - Event filtering (by session ID, time range)
   - Real-time visualization (event list, session overview, heatmap, analytics)
 - **Dependencies**:
+  - Depends on **Supabase** (via `@supabase/supabase-js` for GitHub OAuth)
   - Depends on **Server** (via WebSocket connection to `/ws`)
   - No persistence layer (in-memory Zustand store)
 - **Dependents**: None (consumer component)
+- **Phase 3 Additions**:
+  - `useAuth` hook manages Supabase auth state (user, session, loading)
+  - App.tsx routes to Login or Dashboard based on user state
+  - Dashboard extracted to separate page component for cleaner routing
 
 ### Supabase Infrastructure (Phase 2)
 
@@ -180,6 +188,50 @@ Claude Code → Monitor → Server → Client:
 10. Client receives via useWebSocket hook
 11. Zustand store adds event (FIFO eviction at 1000 limit)
 12. React renders updated event list, session overview, heatmap
+
+### Client Authentication Flow (Phase 3)
+
+Supabase GitHub OAuth → Client → Server:
+1. User visits dashboard, App.tsx checks auth state via `useAuth` hook
+2. If `loading=true`, show loading spinner
+3. If `user=null`, render Login page
+4. Login page displays "Sign in with GitHub" button (FR-001)
+5. User clicks button, `signInWithGitHub()` initiates OAuth via Supabase (FR-002)
+6. GitHub redirects back to app with session token
+7. Supabase stores JWT, `useAuth` hook updates state
+8. App.tsx detects `user` is set, renders Dashboard page
+9. Dashboard connects to WebSocket with session token
+10. Server validates token via Supabase and establishes connection
+
+### Client Page Routing Flow (Phase 3)
+
+```
+App.tsx (Root)
+  ↓
+useAuth() → {user, session, loading}
+  ↓
+if (loading)
+  → Show loading spinner
+else if (!user)
+  → Render <Login />
+else
+  → Render <Dashboard />
+```
+
+**Login Page Flow**:
+- Displays ASCII header, animated background, GitHub sign-in button (FR-001, FR-002)
+- Manages local state: `isSigningIn`, `error`
+- Calls `signInWithGitHub()` on button click
+- Handles errors and shows error message
+- Respects reduced motion preference
+
+**Dashboard Page Flow**:
+- Initialized with `useSessionTimeouts()` for session state management
+- Gets user info from `useAuth()` hook
+- Manages token and WebSocket connection
+- Displays user avatar and name in header
+- Shows sign out button for logout
+- Three-column layout: sessions/heatmap/graphs (left), event stream (right)
 
 ### Supabase Integration Flow (Phase 2)
 
@@ -367,7 +419,7 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 |-------|----------------|------------|---------------|
 | **Monitor** | Observe local activity, preserve privacy, authenticate, track metrics | FileSystem, HTTP client, Crypto, Stats files, history.jsonl, todos/, file history, projects directory | Server internals, other Monitors, network stack details |
 | **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state, Supabase client | File system, external APIs (except Supabase), Client implementation details |
-| **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
+| **Client** | Display, interact, filter, manage WebSocket, authenticate with OAuth | Server WebSocket, Supabase Auth, local storage (token), state store | Server internals, other Clients' state, file system |
 | **GitHub Actions Composite Action** | Download, configure, launch monitor | GitHub releases, environment variables, bash shell | Monitor source code, Server config, Client code |
 | **Supabase Backend** | Store keys, validate JWTs, manage sessions | PostgreSQL database, GitHub OAuth | Monitor/Server/Client code |
 
@@ -410,6 +462,7 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 | `SessionStore` (Phase 2) | Session token management | create_session(), validate_session(), extend_session() |
 | `SessionError` (Phase 2) | Session operation errors | AtCapacity, NotFound, InvalidToken |
 | `PublicKey` (Phase 2) | Database public key record | source_id, public_key |
+| `UseAuthReturn` (Phase 3) | Client auth hook return type | user, session, loading, signInWithGitHub, signOut |
 
 ## Authentication & Authorization
 
@@ -426,21 +479,25 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 - **Timing Attack Prevention**: `subtle::ConstantTimeEq` for signature comparison
 - **Key Tracking**: `KeySource` enum tracks whether keys loaded from file or environment variable (logged at startup for verification)
 
-### Client Authentication (Consumer)
+### Client Authentication (Consumer - Phase 3)
 
-- **Mechanism**: Bearer token (HTTP header) or JWT token (WebSocket upgrade)
-- **Flows**:
-  1. **Static Token Mode** (current): Client obtains token (out-of-band, server-configured)
-     - Token sent in WebSocket upgrade request: `?token=secret`
-     - Server calls `validate_token()` to check token
-     - Invalid/missing tokens rejected with 401 Unauthorized
-  2. **JWT Mode** (Phase 2 foundation):
-     - Client authenticates with GitHub OAuth via Supabase
-     - Supabase issues JWT token
-     - Client sends JWT in WebSocket upgrade: `?token=jwt`
-     - Server calls Supabase `GET /auth/v1/user` to validate JWT
-     - Server creates short-lived session token (5 min TTL) from validated JWT
-     - Session token used for reconnection
+- **Mechanism**: GitHub OAuth via Supabase (JWT token)
+- **Flow**:
+  1. Client visits app, `useAuth` hook initializes
+  2. If no session, user is directed to Login page
+  3. User clicks "Sign in with GitHub" button
+  4. `signInWithGitHub()` initiates Supabase OAuth flow
+   5. GitHub redirects to app with authorization code
+   6. Supabase exchanges code for JWT token
+   7. `useAuth` hook detects session, updates `user` state
+   8. App renders Dashboard page
+   9. Dashboard connects to WebSocket with session token
+- **Security**: Uses `@supabase/supabase-js` for secure OAuth handling
+- **Key Methods**:
+  - `useAuth().signInWithGitHub()`: Initiates OAuth flow (FR-002)
+  - `useAuth().signOut()`: Clears session and revokes token (FR-004)
+  - `useAuth().user`: Currently authenticated user object
+  - `useAuth().loading`: Boolean for initial auth check state
 
 ### Supabase Integration (Phase 2)
 
@@ -471,6 +528,9 @@ GitHub Actions workflow → Monitor (via composite action or manual setup) → S
 ### Client State
 | State Type | Location | Pattern |
 |------------|----------|---------|
+| **Authentication** (Phase 3) | Supabase auth state | Managed by `useAuth` hook, persisted by Supabase |
+| **Auth Loading** (Phase 3) | `useAuth().loading` boolean | true during initial auth check, false after |
+| **Current User** (Phase 3) | `useAuth().user` object | null if not authenticated, User object if authenticated |
 | **Connection Status** | Zustand store | Driven by WebSocket events (connecting, connected, disconnected, reconnecting) |
 | **Event Buffer** | Zustand store (Vec, max 1000) | FIFO eviction when full, newest first |
 | **Sessions** | Zustand store (Map<sessionId, Session>) | Keyed by UUID, state machines (Active → Inactive → Ended → Removed) |
@@ -598,6 +658,7 @@ info!(
 | **Key Management** | Ed25519 key generation, storage, signing, export | `monitor/src/crypto.rs` (with KeySource tracking, memory zeroing, and export support) |
 | **GitHub Actions Integration** | Binary download, env var config, background launch | `.github/actions/vibetea-monitor/action.yml` |
 | **Supabase Integration** (Phase 2) | JWT validation, public key distribution, session management | `server/src/supabase.rs`, `server/src/session.rs`, `supabase/` |
+| **Client Authentication** (Phase 3) | GitHub OAuth via Supabase, page-based routing | `client/src/hooks/useAuth.ts`, `client/src/App.tsx`, `client/src/pages/` |
 
 ## Enhanced Tracking Subsystem (Phase 4-11)
 
