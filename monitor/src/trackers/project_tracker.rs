@@ -1268,7 +1268,8 @@ also not valid
 
     #[test]
     fn extract_session_id_valid_uuid() {
-        let path = Path::new("/projects/-home-user-code/6e45a55c-3124-4cc8-ad85-040a5c316009.jsonl");
+        let path =
+            Path::new("/projects/-home-user-code/6e45a55c-3124-4cc8-ad85-040a5c316009.jsonl");
         let session_id = extract_session_id(path);
         assert_eq!(
             session_id,
@@ -1278,7 +1279,8 @@ also not valid
 
     #[test]
     fn extract_session_id_uppercase_uuid() {
-        let path = Path::new("/projects/-home-user-code/6E45A55C-3124-4CC8-AD85-040A5C316009.jsonl");
+        let path =
+            Path::new("/projects/-home-user-code/6E45A55C-3124-4CC8-AD85-040A5C316009.jsonl");
         let session_id = extract_session_id(path);
         assert_eq!(
             session_id,
@@ -1321,7 +1323,8 @@ also not valid
 
     #[test]
     fn extract_session_id_invalid_non_hex() {
-        let path = Path::new("/projects/-home-user-code/6e45a55c-3124-4cc8-ad85-040a5c31600g.jsonl");
+        let path =
+            Path::new("/projects/-home-user-code/6e45a55c-3124-4cc8-ad85-040a5c31600g.jsonl");
         let session_id = extract_session_id(path);
         assert_eq!(session_id, None);
     }
@@ -1352,8 +1355,7 @@ also not valid
         let err = ProjectTrackerError::ChannelClosed;
         assert_eq!(err.to_string(), "failed to send event: channel closed");
 
-        let err =
-            ProjectTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test/projects"));
+        let err = ProjectTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test/projects"));
         assert_eq!(
             err.to_string(),
             "claude projects directory not found: /test/projects"
@@ -1366,8 +1368,7 @@ also not valid
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("ChannelClosed"));
 
-        let err =
-            ProjectTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test"));
+        let err = ProjectTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test"));
         let debug_str = format!("{:?}", err);
         assert!(debug_str.contains("ClaudeDirectoryNotFound"));
     }
@@ -1384,7 +1385,9 @@ also not valid
 
     #[test]
     fn project_tracker_config_clone() {
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let cloned = config.clone();
         assert!(!cloned.scan_on_init);
     }
@@ -1410,8 +1413,11 @@ also not valid
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let (tx, _rx) = mpsc::channel(100);
-        let config = ProjectTrackerConfig { scan_on_init: false };
-        let result = ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config);
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
+        let result =
+            ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config);
 
         assert!(result.is_ok(), "Should create tracker for valid directory");
         assert_eq!(result.unwrap().projects_dir(), temp_dir.path());
@@ -1422,7 +1428,9 @@ also not valid
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
 
         let (tx, _rx) = mpsc::channel(100);
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
@@ -1444,7 +1452,9 @@ also not valid
         std::fs::create_dir_all(&project_dir).expect("Failed to create project dir");
 
         let (tx, mut rx) = mpsc::channel(100);
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let _tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
@@ -1474,11 +1484,12 @@ also not valid
         let session_id = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
 
         // Create initial session file
-        let session_path =
-            create_test_project(&temp_dir, project_slug, session_id, ACTIVE_SESSION);
+        let session_path = create_test_project(&temp_dir, project_slug, session_id, ACTIVE_SESSION);
 
         let (tx, mut rx) = mpsc::channel(100);
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let _tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
@@ -1498,7 +1509,10 @@ also not valid
 
         let event = result.unwrap().unwrap();
         assert_eq!(event.session_id, session_id);
-        assert!(!event.is_active, "Session should now be inactive (has summary)");
+        assert!(
+            !event.is_active,
+            "Session should now be inactive (has summary)"
+        );
     }
 
     #[tokio::test]
@@ -1535,10 +1549,17 @@ also not valid
             }
         }
 
-        assert_eq!(received_events.len(), 2, "Should receive 2 events from scan");
+        assert_eq!(
+            received_events.len(),
+            2,
+            "Should receive 2 events from scan"
+        );
 
         // Verify we got both sessions
-        let session_ids: Vec<&str> = received_events.iter().map(|e| e.session_id.as_str()).collect();
+        let session_ids: Vec<&str> = received_events
+            .iter()
+            .map(|e| e.session_id.as_str())
+            .collect();
         assert!(session_ids.contains(&session_id_1));
         assert!(session_ids.contains(&session_id_2));
 
@@ -1565,7 +1586,9 @@ also not valid
         std::fs::create_dir_all(&project_dir).expect("Failed to create project dir");
 
         let (tx, mut rx) = mpsc::channel(100);
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let _tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
@@ -1579,7 +1602,10 @@ also not valid
 
         // Should NOT receive any event
         let result = timeout(TokioDuration::from_millis(200), rx.recv()).await;
-        assert!(result.is_err(), "Should not receive event for non-jsonl file");
+        assert!(
+            result.is_err(),
+            "Should not receive event for non-jsonl file"
+        );
     }
 
     #[tokio::test]
@@ -1591,7 +1617,9 @@ also not valid
         std::fs::create_dir_all(&project_dir).expect("Failed to create project dir");
 
         let (tx, mut rx) = mpsc::channel(100);
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let _tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
@@ -1622,7 +1650,9 @@ also not valid
         std::fs::create_dir_all(&project2_dir).expect("Failed to create project2 dir");
 
         let (tx, mut rx) = mpsc::channel(100);
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let _tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
@@ -1729,7 +1759,9 @@ also not valid
 
         let (tx, mut rx) = mpsc::channel(100);
         // Explicitly disable initial scan
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let _tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
@@ -1796,7 +1828,9 @@ also not valid
 
         let (tx, mut rx) = mpsc::channel(100);
         // Start without initial scan
-        let config = ProjectTrackerConfig { scan_on_init: false };
+        let config = ProjectTrackerConfig {
+            scan_on_init: false,
+        };
         let tracker =
             ProjectTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
                 .expect("Should create tracker");
