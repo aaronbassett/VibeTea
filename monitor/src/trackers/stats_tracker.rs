@@ -56,6 +56,10 @@
 //!                 println!("Model: {}, Input: {}",
 //!                     usage.model, usage.input_tokens);
 //!             }
+//!             StatsEvent::ActivityPattern(activity) => {
+//!                 println!("Activity hours tracked: {}",
+//!                     activity.hour_counts.len());
+//!             }
 //!         }
 //!     }
 //!
@@ -75,7 +79,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::types::{SessionMetricsEvent, TokenUsageEvent};
+use crate::types::{ActivityPatternEvent, SessionMetricsEvent, TokenUsageEvent};
 use crate::utils::debounce::Debouncer;
 
 /// Default debounce interval for stats file changes in milliseconds.
@@ -171,9 +175,10 @@ pub type Result<T> = std::result::Result<T, StatsTrackerError>;
 
 /// Events emitted by the stats tracker.
 ///
-/// The stats tracker emits two types of events:
+/// The stats tracker emits three types of events:
 /// - [`TokenUsageEvent`] for each model's token consumption
 /// - [`SessionMetricsEvent`] for global session statistics
+/// - [`ActivityPatternEvent`] for hourly activity distribution
 ///
 /// Callers can pattern match on this enum to handle each event type.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +187,8 @@ pub enum StatsEvent {
     TokenUsage(TokenUsageEvent),
     /// Global session metrics event.
     SessionMetrics(SessionMetricsEvent),
+    /// Hourly activity distribution event.
+    ActivityPattern(ActivityPatternEvent),
 }
 
 /// Internal event used to signal a file change to the async processor.
@@ -443,8 +450,9 @@ async fn process_debounced_events(
 
 /// Reads the stats cache file and emits stats events.
 ///
-/// Emits a [`SessionMetricsEvent`] once per read, followed by a
-/// [`TokenUsageEvent`] for each model in the modelUsage section.
+/// Emits a [`SessionMetricsEvent`] once per read, an [`ActivityPatternEvent`]
+/// for hourly distribution, and a [`TokenUsageEvent`] for each model in the
+/// modelUsage section.
 ///
 /// Includes retry logic in case the file is being written to.
 async fn emit_stats_events(path: &Path, sender: &mpsc::Sender<StatsEvent>) -> Result<()> {
@@ -470,6 +478,23 @@ async fn emit_stats_events(path: &Path, sender: &mpsc::Sender<StatsEvent>) -> Re
         .send(StatsEvent::SessionMetrics(session_metrics))
         .await
         .map_err(|_| StatsTrackerError::ChannelClosed)?;
+
+    // Emit activity pattern event (hourly distribution)
+    if !stats.hour_counts.is_empty() {
+        let activity_pattern = ActivityPatternEvent {
+            hour_counts: stats.hour_counts.clone(),
+        };
+
+        trace!(
+            hour_count = stats.hour_counts.len(),
+            "Emitting activity pattern event"
+        );
+
+        sender
+            .send(StatsEvent::ActivityPattern(activity_pattern))
+            .await
+            .map_err(|_| StatsTrackerError::ChannelClosed)?;
+    }
 
     // Emit token usage events for each model
     for (model, tokens) in stats.model_usage {
@@ -705,8 +730,8 @@ mod tests {
 
         assert_eq!(
             received.len(),
-            3,
-            "Should emit 1 session metrics + 2 token usage events"
+            4,
+            "Should emit 1 session metrics + 1 activity pattern + 2 token usage events"
         );
 
         // First event should be session metrics
@@ -976,8 +1001,8 @@ mod tests {
 
         assert_eq!(
             events.len(),
-            3,
-            "Should receive 1 session metrics + 2 token usage events"
+            4,
+            "Should receive 1 session metrics + 1 activity pattern + 2 token usage events"
         );
 
         // Verify we have the right event types
@@ -985,11 +1010,19 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, StatsEvent::SessionMetrics(_)))
             .count();
+        let activity_pattern_count = events
+            .iter()
+            .filter(|e| matches!(e, StatsEvent::ActivityPattern(_)))
+            .count();
         let token_usage_count = events
             .iter()
             .filter(|e| matches!(e, StatsEvent::TokenUsage(_)))
             .count();
         assert_eq!(session_metrics_count, 1, "Should have 1 session metrics");
+        assert_eq!(
+            activity_pattern_count, 1,
+            "Should have 1 activity pattern"
+        );
         assert_eq!(token_usage_count, 2, "Should have 2 token usage events");
     }
 
@@ -1006,7 +1039,7 @@ mod tests {
         // Call refresh
         tracker.refresh().await.expect("Should refresh");
 
-        // Should receive new events: 1 session metrics + 2 token usage
+        // Should receive new events: 1 session metrics + 1 activity pattern + 2 token usage
         let mut events = Vec::new();
         while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
             events.push(event);
@@ -1014,8 +1047,8 @@ mod tests {
 
         assert_eq!(
             events.len(),
-            3,
-            "Refresh should emit 1 session metrics + 2 token usage events"
+            4,
+            "Refresh should emit 1 session metrics + 1 activity pattern + 2 token usage events"
         );
 
         // Verify we have the right event types

@@ -515,7 +515,7 @@ async fn process_watch_event(
 
 /// Processes a stats event from the stats tracker.
 ///
-/// Handles both [`SessionMetricsEvent`] and [`TokenUsageEvent`] variants.
+/// Handles [`SessionMetricsEvent`], [`TokenUsageEvent`], and [`ActivityPatternEvent`] variants.
 async fn process_stats_event(stats_event: StatsEvent, sender: &mut Sender, source_id: &str) {
     let event = match stats_event {
         StatsEvent::SessionMetrics(metrics) => {
@@ -543,6 +543,17 @@ async fn process_stats_event(stats_event: StatsEvent, sender: &mut Sender, sourc
                 source_id.to_string(),
                 EventType::TokenUsage,
                 EventPayload::TokenUsage(token_event),
+            )
+        }
+        StatsEvent::ActivityPattern(activity_event) => {
+            debug!(
+                hour_count = activity_event.hour_counts.len(),
+                "Processing activity pattern event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::ActivityPattern,
+                EventPayload::ActivityPattern(activity_event),
             )
         }
     };
