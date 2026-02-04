@@ -449,8 +449,8 @@
 - [x] T255 [GIT] Commit: verify bundle size compliance
 - [x] T256 Run quickstart.md validation - verify all setup steps work (use devs:typescript-dev agent)
 - [x] T257 [GIT] Commit: validate quickstart documentation
-- [ ] T258 Update CLAUDE.md with final feature documentation summary
-- [ ] T259 [GIT] Commit: update CLAUDE.md with feature summary
+- [x] T258 Update CLAUDE.md with final feature documentation summary
+- [x] T259 [GIT] Commit: update CLAUDE.md with feature summary
 - [ ] T260 Run /sdd:map incremental for final changes
 - [ ] T261 [GIT] Commit: final codebase document update
 - [ ] T262 Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
