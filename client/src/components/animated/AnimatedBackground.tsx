@@ -24,6 +24,7 @@ import {
 } from 'react';
 
 import { COLORS } from '../../constants/design-tokens';
+import { useIntersectionObserver } from '../../hooks/useIntersectionObserver';
 import { usePageVisibility } from '../../hooks/usePageVisibility';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
@@ -321,6 +322,7 @@ export const AnimatedBackground = memo(function AnimatedBackground({
 }: AnimatedBackgroundProps) {
   const prefersReducedMotion = useReducedMotion();
   const isPageVisible = usePageVisibility();
+  const [containerRef, isInViewport] = useIntersectionObserver<HTMLDivElement>();
   const styleRef = useRef<HTMLStyleElement | null>(null);
 
   // Track viewport dimensions for grid cell calculation
@@ -393,7 +395,8 @@ export const AnimatedBackground = memo(function AnimatedBackground({
   }, [particles]);
 
   // Determine if animations should be paused
-  const isPaused = !isPageVisible || prefersReducedMotion;
+  // Pause when: page is not visible, reduced motion preferred, or element is off-screen
+  const isPaused = !isPageVisible || prefersReducedMotion || !isInViewport;
 
   // If reduced motion is preferred and nothing to show, render nothing
   if (prefersReducedMotion && !showGrid && !showParticles) {
@@ -413,6 +416,7 @@ export const AnimatedBackground = memo(function AnimatedBackground({
 
   return (
     <div
+      ref={containerRef}
       style={styles.container}
       className={containerClassName}
       role="presentation"

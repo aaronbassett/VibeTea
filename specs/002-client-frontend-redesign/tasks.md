@@ -436,8 +436,8 @@
 - [x] T242 [P] Add skeleton loader components for initial data fetch (FR-016) in client/src/components/ (use devs:react-dev agent)
 - [x] T243 [P] Add empty state components with call-to-action text (FR-017) in client/src/components/ (use devs:react-dev agent)
 - [x] T244 [GIT] Commit: add skeleton loaders and empty states
-- [ ] T245 Add Intersection Observer pause for off-screen animated elements (NFR-005) (use devs:react-dev agent)
-- [ ] T246 [GIT] Commit: add intersection observer pause for off-screen elements
+- [x] T245 Add Intersection Observer pause for off-screen animated elements (NFR-005) (use devs:react-dev agent)
+- [x] T246 [GIT] Commit: add intersection observer pause for off-screen elements
 - [ ] T247 [P] Verify max 10 concurrent animations rule (FR-009) across all components (use devs:react-dev agent)
 - [ ] T248 [P] Audit all interactive elements for hover/focus spring feedback compliance (FR-007) (use devs:react-dev agent)
 - [ ] T249 [GIT] Commit: verify animation limits and hover/focus compliance
