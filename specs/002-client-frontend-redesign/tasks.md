@@ -306,8 +306,8 @@
 - [x] T164 [US6] Add ConnectionStatusAnimationState interface to ConnectionStatus.tsx (use devs:typescript-dev agent)
 - [x] T165 [GIT] Commit: add connection animation state interface
 - [x] T166 [US6] Implement glowing green pulse animation for connected state (use devs:react-dev agent)
-- [ ] T167 [GIT] Commit: add connected pulse animation
-- [ ] T168 [US6] Implement animated ring effect for connecting/reconnecting states (use devs:react-dev agent)
+- [x] T167 [GIT] Commit: add connected pulse animation
+- [x] T168 [US6] Implement animated ring effect for connecting/reconnecting states (use devs:react-dev agent)
 - [ ] T169 [GIT] Commit: add connecting ring animation
 - [ ] T170 [US6] Implement distinct warning visual for disconnected state with reconnect option (use devs:react-dev agent)
 - [ ] T171 [GIT] Commit: add disconnected warning visual

@@ -164,6 +164,34 @@ const CONNECTED_PULSE_TRANSITION = {
   ease: 'easeInOut' as const,
 };
 
+/**
+ * Animation configuration for the connecting/reconnecting state ring effect.
+ *
+ * Creates an expanding ring that pulses outward from the indicator dot,
+ * conveying "activity in progress" for connection attempts.
+ */
+const CONNECTING_RING_ANIMATION = {
+  /**
+   * Scale from dot size to expanded ring.
+   * Starts at 1 (same as dot) and expands to 2.5x.
+   */
+  scale: [1, 2.5],
+  /**
+   * Opacity fades out as ring expands.
+   * Creates the effect of the ring dissipating outward.
+   */
+  opacity: [0.8, 0],
+};
+
+/**
+ * Transition configuration for connecting ring animation.
+ */
+const CONNECTING_RING_TRANSITION = {
+  duration: 1.2,
+  repeat: Infinity,
+  ease: 'easeOut' as const,
+};
+
 // -----------------------------------------------------------------------------
 // Component
 // -----------------------------------------------------------------------------
@@ -195,6 +223,7 @@ export function ConnectionStatus({
 
   const config = STATUS_CONFIG[status];
   const isConnected = status === 'connected';
+  const isConnecting = status === 'connecting' || status === 'reconnecting';
 
   return (
     <LazyMotion features={domAnimation}>
@@ -213,6 +242,28 @@ export function ConnectionStatus({
               backgroundColor: COLORS.status.connected,
             }}
           />
+        ) : isConnecting ? (
+          <span
+            className="relative inline-flex h-2.5 w-2.5"
+            aria-hidden="true"
+          >
+            {/* Animated expanding ring */}
+            <m.span
+              className="absolute inset-0 rounded-full"
+              animate={CONNECTING_RING_ANIMATION}
+              transition={CONNECTING_RING_TRANSITION}
+              style={{
+                backgroundColor: COLORS.status.connecting,
+              }}
+            />
+            {/* Static indicator dot */}
+            <span
+              className="relative h-2.5 w-2.5 rounded-full"
+              style={{
+                backgroundColor: COLORS.status.connecting,
+              }}
+            />
+          </span>
         ) : (
           <span
             className={`h-2.5 w-2.5 rounded-full ${config.color}`}
