@@ -441,10 +441,10 @@
 - [x] T247 [P] Verify max 10 concurrent animations rule (FR-009) across all components (use devs:react-dev agent)
 - [x] T248 [P] Audit all interactive elements for hover/focus spring feedback compliance (FR-007) (use devs:react-dev agent)
 - [x] T249 [GIT] Commit: verify animation limits and hover/focus compliance
-- [ ] T250 [P] Add Lighthouse CI configuration to GitHub workflow (CI-001) (use devs:typescript-dev agent)
-- [ ] T251 [P] Add Storybook build step to GitHub workflow (CI-002) (use devs:typescript-dev agent)
-- [ ] T252 [P] Add reduced-motion compliance check to GitHub workflow (CI-003) (use devs:typescript-dev agent)
-- [ ] T253 [GIT] Commit: add CI workflow enhancements
+- [x] T250 [P] Add Lighthouse CI configuration to GitHub workflow (CI-001) (use devs:typescript-dev agent)
+- [x] T251 [P] Add Storybook build step to GitHub workflow (CI-002) (use devs:typescript-dev agent)
+- [x] T252 [P] Add reduced-motion compliance check to GitHub workflow (CI-003) (use devs:typescript-dev agent)
+- [x] T253 [GIT] Commit: add CI workflow enhancements
 - [ ] T254 Run bundle size analysis and verify animation library < 50KB gzipped (NFR-001)
 - [ ] T255 [GIT] Commit: verify bundle size compliance
 - [ ] T256 Run quickstart.md validation - verify all setup steps work (use devs:typescript-dev agent)
