@@ -373,16 +373,16 @@
 **Independent Test**: Use Claude Code at different times, verify monitor captures hourCounts data.
 
 ### Phase Start
-- [ ] T194 [GIT] Verify working tree is clean before starting Phase 9
-- [ ] T195 [GIT] Pull and rebase on origin/main if needed
-- [ ] T196 [US7] Create retro/P9.md for this phase
+- [x] T194 [GIT] Verify working tree is clean before starting Phase 9
+- [x] T195 [GIT] Pull and rebase on origin/main if needed
+- [x] T196 [US7] Create retro/P9.md for this phase
 
 ### Implementation for User Story 7
-- [ ] T197 [GIT] Commit: initialize phase 9 retro
-- [ ] T198 [US7] Implement ActivityPatternEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T199 [GIT] Commit: implement ActivityPatternEvent emission
-- [ ] T200 [US7] Add client store handler for activity_pattern events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T201 [GIT] Commit: add client activity_pattern handler
+- [x] T197 [GIT] Commit: initialize phase 9 retro
+- [x] T198 [US7] Implement ActivityPatternEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T199 [GIT] Commit: implement ActivityPatternEvent emission
+- [x] T200 [US7] Add client store handler for activity_pattern events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T201 [GIT] Commit: add client activity_pattern handler
 - [ ] T202 [US7] Run /sdd:map incremental for Phase 9 changes
 - [ ] T203 [GIT] Commit: update codebase documents for phase 9
 - [ ] T204 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
@@ -405,16 +405,16 @@
 **Independent Test**: Use different models during sessions, verify monitor captures per-model usage.
 
 ### Phase Start
-- [ ] T210 [GIT] Verify working tree is clean before starting Phase 10
-- [ ] T211 [GIT] Pull and rebase on origin/main if needed
-- [ ] T212 [US8] Create retro/P10.md for this phase
+- [x] T210 [GIT] Verify working tree is clean before starting Phase 10
+- [x] T211 [GIT] Pull and rebase on origin/main if needed
+- [x] T212 [US8] Create retro/P10.md for this phase
 
 ### Implementation for User Story 8
-- [ ] T213 [GIT] Commit: initialize phase 10 retro
-- [ ] T214 [US8] Implement ModelDistributionEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T215 [GIT] Commit: implement ModelDistributionEvent emission
-- [ ] T216 [US8] Add client store handler for model_distribution events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T217 [GIT] Commit: add client model_distribution handler
+- [x] T213 [GIT] Commit: initialize phase 10 retro
+- [x] T214 [US8] Implement ModelDistributionEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T215 [GIT] Commit: implement ModelDistributionEvent emission
+- [x] T216 [US8] Add client store handler for model_distribution events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T217 [GIT] Commit: add client model_distribution handler
 - [ ] T218 [US8] Run /sdd:map incremental for Phase 10 changes
 - [ ] T219 [GIT] Commit: update codebase documents for phase 10
 - [ ] T220 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
