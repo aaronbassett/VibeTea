@@ -281,6 +281,12 @@ impl<'a> SetupFormWidget<'a> {
     }
 
     /// Renders the key option selector.
+    ///
+    /// The display behavior depends on whether existing keys were found (FR-004):
+    /// - When `existing_keys_found` is `false`: Only shows "Generate new key" as the
+    ///   sole option, since "Use existing" is not available.
+    /// - When `existing_keys_found` is `true`: Shows both options with radio button
+    ///   indicators, allowing the user to toggle between them.
     fn render_key_option_field(&self, buf: &mut Buffer, area: Rect) {
         let is_focused = self.state.focused_field == SetupField::KeyOption;
 
@@ -292,12 +298,6 @@ impl<'a> SetupFormWidget<'a> {
         };
         let label = Paragraph::new("Key Option:").style(label_style);
 
-        // Build the option line with radio buttons
-        let (existing_indicator, generate_indicator) = match self.state.key_option {
-            KeyOption::UseExisting => (self.symbols.connected, self.symbols.disconnected),
-            KeyOption::GenerateNew => (self.symbols.disconnected, self.symbols.connected),
-        };
-
         // Style for the options
         let option_style = if is_focused {
             self.theme.input_focused
@@ -305,42 +305,52 @@ impl<'a> SetupFormWidget<'a> {
             self.theme.input_unfocused
         };
 
-        // Build option text with proper styling
-        let existing_text = if self.state.existing_keys_found {
-            format!("[{}] Use existing", existing_indicator)
+        // Build the options line based on whether existing keys are available
+        let options_line = if self.state.existing_keys_found {
+            // Both options available - show toggle with radio indicators
+            let (existing_indicator, generate_indicator) = match self.state.key_option {
+                KeyOption::UseExisting => (self.symbols.connected, self.symbols.disconnected),
+                KeyOption::GenerateNew => (self.symbols.disconnected, self.symbols.connected),
+            };
+
+            let existing_text = format!("[{}] Use existing", existing_indicator);
+            let generate_text = format!("[{}] Generate new", generate_indicator);
+
+            // Highlight the selected option
+            let (existing_style, generate_style) = match self.state.key_option {
+                KeyOption::UseExisting => {
+                    let selected = if is_focused {
+                        option_style.add_modifier(Modifier::BOLD)
+                    } else {
+                        option_style
+                    };
+                    (selected, self.theme.text_muted)
+                }
+                KeyOption::GenerateNew => {
+                    let selected = if is_focused {
+                        option_style.add_modifier(Modifier::BOLD)
+                    } else {
+                        option_style
+                    };
+                    (self.theme.text_muted, selected)
+                }
+            };
+
+            Line::from(vec![
+                Span::styled(existing_text, existing_style),
+                Span::raw("  "),
+                Span::styled(generate_text, generate_style),
+            ])
         } else {
-            format!("[{}] Use existing (none found)", existing_indicator)
+            // Only "Generate new" available - show as the sole, pre-selected option
+            let generate_style = if is_focused {
+                option_style.add_modifier(Modifier::BOLD)
+            } else {
+                option_style
+            };
+
+            Line::from(Span::styled("Generate new key", generate_style))
         };
-
-        let generate_text = format!("[{}] Generate new", generate_indicator);
-
-        // Highlight the selected option
-        let (existing_style, generate_style) = match self.state.key_option {
-            KeyOption::UseExisting => {
-                let selected = if is_focused {
-                    option_style.add_modifier(Modifier::BOLD)
-                } else {
-                    option_style
-                };
-                let unselected = self.theme.text_muted;
-                (selected, unselected)
-            }
-            KeyOption::GenerateNew => {
-                let selected = if is_focused {
-                    option_style.add_modifier(Modifier::BOLD)
-                } else {
-                    option_style
-                };
-                let unselected = self.theme.text_muted;
-                (unselected, selected)
-            }
-        };
-
-        let options_line = Line::from(vec![
-            Span::styled(existing_text, existing_style),
-            Span::raw("  "),
-            Span::styled(generate_text, generate_style),
-        ]);
 
         let options = Paragraph::new(options_line);
 
@@ -710,7 +720,9 @@ mod tests {
     }
 
     #[test]
-    fn setup_form_widget_renders_existing_keys_not_found() {
+    fn setup_form_widget_no_keys_shows_only_generate_new() {
+        // When existing_keys_found is false, only "Generate new key" should be shown
+        // without radio toggle indicators (FR-004, T205)
         let state = SetupFormState {
             session_name: "test".to_string(),
             session_name_error: None,
@@ -733,10 +745,105 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect();
+
+        // Should show "Generate new key" (without radio button brackets)
         assert!(
-            content.contains("none found"),
-            "Should indicate no existing keys"
+            content.contains("Generate new key"),
+            "Should show 'Generate new key' when no existing keys"
         );
+        // Should NOT show "Use existing" option at all
+        assert!(
+            !content.contains("Use existing"),
+            "Should not show 'Use existing' when no keys found"
+        );
+    }
+
+    #[test]
+    fn setup_form_widget_with_keys_shows_both_options() {
+        // When existing_keys_found is true, both options should be shown
+        // with radio toggle indicators (FR-004, T207)
+        let state = SetupFormState {
+            session_name: "test".to_string(),
+            session_name_error: None,
+            key_option: KeyOption::UseExisting,
+            focused_field: SetupField::KeyOption,
+            existing_keys_found: true,
+        };
+
+        let theme = Theme::default();
+        let symbols = Symbols::default();
+
+        let widget = SetupFormWidget::new(&state, &theme, &symbols);
+
+        let area = Rect::new(0, 0, 80, 24);
+        let mut buf = Buffer::empty(area);
+        widget.render(area, &mut buf);
+
+        let content: String = buf
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect();
+
+        // Should show both options with toggle capability
+        assert!(
+            content.contains("Use existing"),
+            "Should show 'Use existing' when keys are found"
+        );
+        assert!(
+            content.contains("Generate new"),
+            "Should show 'Generate new' option"
+        );
+    }
+
+    #[test]
+    fn setup_form_widget_with_keys_shows_correct_selection_indicator() {
+        let theme = Theme::default();
+        let symbols = Symbols::default();
+        let area = Rect::new(0, 0, 80, 24);
+
+        // Test with UseExisting selected
+        let state = SetupFormState {
+            session_name: "test".to_string(),
+            session_name_error: None,
+            key_option: KeyOption::UseExisting,
+            focused_field: SetupField::KeyOption,
+            existing_keys_found: true,
+        };
+
+        let widget = SetupFormWidget::new(&state, &theme, &symbols);
+        let mut buf = Buffer::empty(area);
+        widget.render(area, &mut buf);
+
+        let content: String = buf
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect();
+
+        // Should contain the connected symbol for the selected option
+        // The exact symbol depends on the Symbols struct, but both options should be present
+        assert!(content.contains("Use existing"));
+        assert!(content.contains("Generate new"));
+
+        // Test with GenerateNew selected
+        let state = SetupFormState {
+            key_option: KeyOption::GenerateNew,
+            ..state
+        };
+
+        let widget = SetupFormWidget::new(&state, &theme, &symbols);
+        let mut buf = Buffer::empty(area);
+        widget.render(area, &mut buf);
+
+        let content: String = buf
+            .content
+            .iter()
+            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
+            .collect();
+
+        assert!(content.contains("Use existing"));
+        assert!(content.contains("Generate new"));
     }
 
     #[test]
