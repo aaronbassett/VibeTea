@@ -1,12 +1,12 @@
 # External Integrations
 
-**Status**: Phase 6 - GitHub Actions composite action for simplified monitor integration
+**Status**: Phase 11 - Project activity tracking integration via file system watching
 **Last Updated**: 2026-02-04
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4). Can be deployed in GitHub Actions workflows (Phase 5). Integrated via reusable GitHub Actions composite action (Phase 6).
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4). Can be deployed in GitHub Actions workflows (Phase 5). Integrated via reusable GitHub Actions composite action (Phase 6). Now tracks project-level activity via directory scanning (Phase 11).
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization with token-based authentication
 
@@ -14,21 +14,22 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 
 ## File System Integration
 
-### Claude Code JSONL Files
+### Claude Code Session Files (JSONL)
 
 **Source**: `~/.claude/projects/**/*.jsonl`
-**Format**: JSON Lines (one JSON object per line)
+**Format**: JSON Lines (one JSON object per line, append-only)
 **Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents)
 
 **Parser Location**: `monitor/src/parser.rs` (SessionParser, ParsedEvent, ParsedEventKind)
 **Watcher Location**: `monitor/src/watcher.rs` (FileWatcher, WatchEvent)
-**Privacy Pipeline**: `monitor/src/privacy.rs` (PrivacyConfig, PrivacyPipeline, extract_basename)
+**Privacy Pipeline**: `monitor/src/privacy.rs` (PrivacyConfig, PrivacyPipeline)
+**Agent Tracker**: `monitor/src/trackers/agent_tracker.rs` (Task tool agent spawn tracking)
 
 **Privacy-First Approach**:
-- Only metadata extracted: tool names, timestamps, file basenames
-- Never processes code content, prompts, or assistant responses
-- File path parsing for project name extraction (slugified format)
-- All event payloads pass through PrivacyPipeline before transmission
+- Only metadata extracted: tool names, timestamps, file basenames, agent types
+- Never processes code content, prompts, or responses
+- File path parsing for project name extraction
+- All event payloads sanitized through PrivacyPipeline
 
 **Session File Structure**:
 ```
@@ -36,9 +37,10 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 ```
 
 **Supported Event Types** (from Claude Code JSONL):
-| Claude Code Type | Parsed As | VibeTea Event | Fields Extracted |
-|------------------|-----------|---------------|------------------|
-| `assistant` with `tool_use` | Tool invocation | ToolStarted | tool name, context |
+| Claude Code Type | Parsed As | VibeTea Event | Fields |
+|------------------|-----------|---------------|--------|
+| `assistant` with `tool_use` (non-Task) | Tool invocation | ToolStarted | tool name, context |
+| `assistant` with `tool_use` (Task tool) | Agent spawn | AgentSpawned | agent_type, description |
 | `progress` with `PostToolUse` | Tool completion | ToolCompleted | tool name, success |
 | `user` | User activity | Activity | timestamp only |
 | `summary` | Session end marker | Summary | session metadata |
@@ -49,14 +51,418 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - Detects file creation, modification, deletion events
 - Maintains position map for efficient tailing (no re-reading)
 - Emits WatchEvent::FileCreated, WatchEvent::LinesAdded, WatchEvent::FileRemoved
-- Automatic cleanup of removed files from tracking state
 
 **Configuration** (`monitor/src/config.rs`):
 | Variable | Required | Default | Purpose |
 |----------|----------|---------|---------|
-| `VIBETEA_CLAUDE_DIR` | No | ~/.claude | Claude Code directory to monitor |
+| `VIBETEA_CLAUDE_DIR` | No | ~/.claude | Claude directory to monitor |
 | `VIBETEA_BASENAME_ALLOWLIST` | No | - | Comma-separated file extensions to watch |
 | `VIBETEA_BUFFER_SIZE` | No | 1000 | Event buffer capacity |
+
+### Claude Code History File (Phase 5)
+
+**Source**: `~/.claude/history.jsonl`
+**Format**: JSON Lines (one JSON object per line, append-only)
+**Update Mechanism**: File system watcher via `notify` crate
+
+**Skill Tracker Location**: `monitor/src/trackers/skill_tracker.rs` (1837 lines)
+**Tokenizer Location**: `monitor/src/utils/tokenize.rs`
+
+**Purpose**: Real-time tracking of user skill/slash command invocations
+
+**History.jsonl Structure**:
+```json
+{
+  "display": "/commit -m \"fix: update docs\"",
+  "timestamp": 1738567268363,
+  "project": "/home/ubuntu/Projects/VibeTea",
+  "sessionId": "6e45a55c-3124-4cc8-ad85-040a5c316009"
+}
+```
+
+**Fields**:
+- `display`: Command string with arguments (e.g., "/commit -m \"message\"")
+- `timestamp`: Unix milliseconds
+- `project`: Absolute path to project root
+- `sessionId`: UUID of Claude Code session
+
+**Privacy-First Approach**:
+- Only skill name extracted (e.g., "commit" from "/commit -m \"fix\"")
+- Command arguments never transmitted
+- Project path included for context (identifies project, not code)
+
+**Skill Tracker Module** (`monitor/src/trackers/skill_tracker.rs`):
+
+1. **Core Types**:
+   - `SkillInvocationEvent` - Emitted when user invokes a skill
+   - `HistoryEntry` - Parsed entry from history.jsonl
+   - `SkillTracker` - File watcher and parser
+   - `SkillTrackerConfig` - Startup behavior configuration
+
+2. **Parsing Functions**:
+   - `parse_history_entry(line)` - Parses JSON with validation
+   - `parse_history_entries(content)` - Parses multiple lines, lenient
+   - `create_skill_invocation_event(entry)` - Constructs event
+
+3. **File Watching**:
+   - Watches parent directory of history.jsonl
+   - Detects file creation, modification
+   - Maintains atomic byte offset
+   - Handles truncation gracefully
+   - Emits SkillInvocationEvent via mpsc channel
+
+4. **Skill Name Extraction** (`monitor/src/utils/tokenize.rs`):
+   - `extract_skill_name(display)` - Parses from display string
+   - Handles `/commit` → `commit`
+   - Handles `/sdd:plan` → `sdd:plan`
+   - Handles `/review-pr` → `review-pr`
+   - Handles arguments: `/commit -m \"fix\"` → `commit`
+
+**Configuration**:
+- No specific environment variables (uses default ~/.claude)
+- Optional: Extend to support custom history.jsonl paths
+
+**Test Coverage**: 60+ comprehensive tests covering:
+- Parsing (12 tests)
+- Multiple entries (6 tests)
+- Methods (5 tests)
+- Skill extraction (10 tests)
+- Event creation (5 tests)
+- File operations (12+ async tests)
+
+### Claude Code Todo Files (Phase 6)
+
+**Source**: `~/.claude/todos/<session-uuid>-agent-<session-uuid>.json`
+**Format**: JSON Array of todo objects
+**Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents)
+
+**Todo Tracker Location**: `monitor/src/trackers/todo_tracker.rs` (2345 lines)
+**Utility Location**: `monitor/src/utils/debounce.rs`, `monitor/src/utils/session_filename.rs`
+
+**Purpose**: Track todo list progress and detect abandoned tasks per session
+
+**Todo File Structure**:
+```json
+[
+  {
+    "content": "Task description text",
+    "status": "completed",
+    "activeForm": "Completing task..."
+  },
+  {
+    "content": "Another task",
+    "status": "in_progress",
+    "activeForm": "Working on task..."
+  },
+  {
+    "content": "Pending task",
+    "status": "pending",
+    "activeForm": null
+  }
+]
+```
+
+**Fields**:
+- `content`: Task description (never transmitted for privacy)
+- `status`: One of `completed`, `in_progress`, `pending`
+- `activeForm`: Optional active form text shown during task execution
+
+**Privacy-First Approach**:
+- Only status counts extracted: completed, in_progress, pending
+- Task content (`content` field) never read or transmitted
+- Abandonment detection for analysis (did tasks go incomplete?)
+- Session context preserved for correlation
+
+**Todo Tracker Module** (`monitor/src/trackers/todo_tracker.rs`):
+
+1. **Core Types**:
+   - `TodoProgressEvent` - Emitted when todo list changes
+   - `TodoEntry` - Individual todo item
+   - `TodoStatus` - Enum: Completed, InProgress, Pending
+   - `TodoStatusCounts` - Aggregated counts by status
+   - `TodoTracker` - File watcher for todos directory
+   - `TodoTrackerConfig` - Configuration (debounce duration)
+   - `TodoParseError` / `TodoTrackerError` - Comprehensive error types
+
+2. **Parsing Functions**:
+   - `parse_todo_file(content)` - Strict JSON array parsing
+   - `parse_todo_file_lenient(content)` - Lenient parsing, skips invalid entries
+   - `parse_todo_entry(value)` - Single entry validation
+   - `count_todo_statuses(entries)` - Aggregate counts
+   - `extract_session_id_from_filename(path)` - UUID extraction
+
+3. **Abandonment Detection**:
+   - `is_abandoned(counts, session_ended)` - True if session ended with incomplete tasks
+   - `create_todo_progress_event(session_id, counts, abandoned)` - Event construction
+   - Requires explicit session ended tracking via `mark_session_ended()`
+
+4. **File Watching**:
+   - Monitors `~/.claude/todos/` directory (non-recursive)
+   - Detects .json file creation and modification
+   - Validates filename format: `<uuid>-agent-<uuid>.json`
+   - Debounces rapid changes (100ms default)
+   - Uses notify crate for cross-platform compatibility
+   - Maintains RwLock<HashSet> of ended sessions
+   - Lenient parsing handles partially-written files
+
+5. **Session Lifecycle Integration**:
+   - `mark_session_ended(session_id)` - Call when summary event received
+   - `is_session_ended(session_id)` - Query ended status
+   - `clear_session_ended(session_id)` - Reset ended status
+   - Abandonment flag set only if session ended AND incomplete tasks exist
+
+**Configuration**:
+- Default location: `~/.claude/todos/`
+- Debounce interval: 100ms (coalesce rapid writes)
+- No environment variables required (uses `directories` crate)
+
+**Test Coverage**: 100+ comprehensive tests:
+- Filename parsing (8 tests)
+- Status counting (6 tests)
+- Abandonment detection (6 tests)
+- Entry parsing (8 tests)
+- File parsing (8 tests)
+- Lenient parsing (4 tests)
+- Trait implementations (3 tests)
+- Error messages (2 tests)
+- Configuration (2 tests)
+- File operations and async (12+ tests)
+
+**Debouncing Implementation** (`monitor/src/utils/debounce.rs`):
+- Generic `Debouncer<K, V>` for generic key-value coalescing
+- Configurable duration (100ms for todos)
+- mpsc channel based event emission
+- Prevents duplicate processing of rapid file changes
+
+**Filename Parsing** (`monitor/src/utils/session_filename.rs`):
+- `parse_todo_filename(path)` - Extracts session UUID from filename
+- Pattern: `<session-uuid>-agent-<session-uuid>.json`
+- Returns Option<String> with first UUID
+
+### Claude Code Stats Cache (Phase 8, Phase 10)
+
+**Source**: `~/.claude/stats-cache.json`
+**Format**: JSON object with model usage and session metrics
+**Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents)
+
+**Stats Tracker Location**: `monitor/src/trackers/stats_tracker.rs` (1400+ lines)
+
+**Purpose**: Track token usage per model, global session statistics, hourly activity patterns, and model distribution
+
+**Stats Cache File Structure**:
+```json
+{
+  "totalSessions": 150,
+  "totalMessages": 2500,
+  "totalToolUsage": 8000,
+  "longestSession": "00:45:30",
+  "hourCounts": { "0": 10, "1": 5, ..., "23": 50 },
+  "modelUsage": {
+    "claude-sonnet-4-20250514": {
+      "inputTokens": 1500000,
+      "outputTokens": 300000,
+      "cacheReadInputTokens": 800000,
+      "cacheCreationInputTokens": 100000
+    },
+    "claude-opus-4-20250514": {
+      "inputTokens": 500000,
+      "outputTokens": 150000,
+      "cacheReadInputTokens": 200000,
+      "cacheCreationInputTokens": 50000
+    }
+  }
+}
+```
+
+**Fields**:
+- `totalSessions`: Total number of Claude Code sessions
+- `totalMessages`: Total messages across all sessions
+- `totalToolUsage`: Total tool invocations
+- `longestSession`: Duration string (HH:MM:SS format)
+- `hourCounts`: Activity distribution by hour of day (0-23)
+- `modelUsage`: Per-model token consumption with cache metrics
+
+**Privacy-First Approach**:
+- Only aggregate statistics extracted (never session/prompt content)
+- No model-specific information beyond model name
+- Cache metrics only (no raw data)
+- Session context derived from file name parsing only
+
+**Stats Tracker Module** (`monitor/src/trackers/stats_tracker.rs`):
+
+1. **Core Types**:
+   - `StatsEvent` - Enum with variants: `SessionMetrics`, `TokenUsage`, `ActivityPattern` (Phase 10), `ModelDistribution` (Phase 10)
+   - `SessionMetricsEvent` - Global session statistics
+   - `TokenUsageEvent` - Per-model token consumption
+   - `ActivityPatternEvent` (Phase 10) - Hourly activity distribution
+   - `ModelDistributionEvent` (Phase 10) - Per-model usage breakdown
+   - `TokenUsageSummary` (Phase 10) - Token counts for models
+   - `StatsCache` - Deserialized stats-cache.json
+   - `ModelTokens` - Per-model token counts
+   - `StatsTracker` - File watcher for stats-cache.json
+   - `StatsTrackerError` - Comprehensive error types
+
+2. **Parsing Functions**:
+   - `read_stats_with_retry()` - Reads with retry logic (up to 3 attempts)
+   - `read_stats()` - Synchronous file read and parse
+   - `parse_stats_cache()` - Public helper for testing
+   - `emit_stats_events()` - Creates all event types
+
+3. **Event Emission** (Phase 10):
+   - Emits `SessionMetricsEvent` once per stats-cache.json read
+   - Emits `ActivityPatternEvent` containing hourly breakdown (before token events)
+   - Emits `TokenUsageEvent` for each model in modelUsage
+   - Emits `ModelDistributionEvent` with all model aggregations (after token events)
+   - Per-model events include: input tokens, output tokens, cache read tokens, cache creation tokens
+
+4. **Phase 10 Event Details**:
+
+   **ActivityPatternEvent**:
+   - Field: `hour_counts: HashMap<String, u64>`
+   - Source: Direct from stats-cache.json `hourCounts`
+   - Keys: String keys "0" through "23" (for JSON deserialization reliability)
+   - Values: Activity count per hour
+   - Purpose: Real-time hourly distribution visualization
+
+   **ModelDistributionEvent**:
+   - Field: `model_usage: HashMap<String, TokenUsageSummary>`
+   - Source: Aggregated from stats-cache.json `modelUsage`
+   - Maps model names to their complete token breakdown
+   - TokenUsageSummary contains:
+     - `input_tokens: u64`
+     - `output_tokens: u64`
+     - `cache_read_tokens: u64`
+     - `cache_creation_tokens: u64`
+   - Purpose: Model-level usage distribution and cost analysis
+
+5. **File Watching**:
+   - Monitors `~/.claude/stats-cache.json` for changes
+   - 200ms debounce interval to coalesce rapid writes
+   - Handles initial read if file exists on startup
+   - Retries JSON parse with 100ms delays (up to 3 attempts)
+   - Uses notify crate for cross-platform FSEvents/inotify
+   - Graceful degradation if file unavailable
+
+6. **Main Event Loop Integration**:
+   - StatsTracker initialization during startup (optional, warns on failure)
+   - Dedicated channel: `mpsc::channel::<StatsEvent>`
+   - Stats event processing in main select! loop
+   - `process_stats_event()` handler in main.rs converts to Event
+
+**Configuration**:
+- Default location: `~/.claude/stats-cache.json`
+- Debounce interval: 200ms
+- Parse retry delay: 100ms
+- Max retries: 3 attempts
+- No environment variables required (uses `directories` crate)
+
+**Test Coverage**: 60+ comprehensive tests covering:
+- JSON parsing (7 tests)
+- Model token parsing (6 tests)
+- Empty/partial stats (3 tests)
+- Malformed JSON handling (3 tests)
+- Stats event emission (3 tests)
+- Debounce timing (2 tests)
+- Parse retry logic (2 tests)
+- Missing/malformed files (3 tests)
+- Tracker creation (2 tests)
+- Initial read behavior (1 test)
+- Refresh method (1 test)
+- Phase 10: ActivityPatternEvent tests (3 tests)
+- Phase 10: ModelDistributionEvent tests (3 tests)
+- Enum/equality tests (10 tests)
+
+### Claude Code Project Directory (Phase 11)
+
+**Source**: `~/.claude/projects/`
+**Format**: Directory structure with project slugs and session JSONL files
+**Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents/ReadDirectoryChangesW)
+
+**Project Tracker Location**: `monitor/src/trackers/project_tracker.rs` (500+ lines)
+
+**Purpose**: Monitor which projects have active Claude Code sessions and track session completion state
+
+**Directory Structure**:
+```
+~/.claude/projects/
++-- -home-ubuntu-Projects-VibeTea/
+|   +-- 6e45a55c-3124-4cc8-ad85-040a5c316009.jsonl  (active session)
+|   +-- a1b2c3d4-5678-90ab-cdef-1234567890ab.jsonl  (completed session)
++-- -home-ubuntu-Projects-SMILE/
+    +-- 60fc5b5e-a285-4a6d-b9cc-9a315eb90ea8.jsonl
+```
+
+**Project Slug Format**:
+- Absolute paths have forward slashes replaced with dashes
+- `/home/ubuntu/Projects/VibeTea` becomes `-home-ubuntu-Projects-VibeTea`
+- Slug format is set by Claude Code; monitor only reads it
+
+**Session Activity Detection**:
+- A session is **active** if its JSONL file does NOT contain a `{"type": "summary", ...}` event
+- A session is **completed** once a summary event is present
+- Summary events indicate session end markers
+
+**Privacy-First Approach**:
+- Only project paths and session IDs tracked
+- No code content, prompts, or responses
+- No session details beyond activity status
+- Session completion detected via file presence, not content analysis
+
+**Project Tracker Module** (`monitor/src/trackers/project_tracker.rs`):
+
+1. **Core Types**:
+   - `ProjectActivityEvent` - Emitted when project session status changes
+     - `project_path: String` - Absolute path to project
+     - `session_id: String` - Session UUID
+     - `is_active: bool` - True if session has no summary event
+   - `ProjectTracker` - File system watcher for projects directory
+   - `ProjectTrackerConfig` - Tracker configuration
+   - `ProjectTrackerError` - Error handling
+
+2. **Utility Functions**:
+   - `parse_project_slug(slug)` - Converts slug back to absolute path
+   - `has_summary_event(content)` - Detects session completion
+   - `create_project_activity_event()` - Factory for event construction
+
+3. **File Watching**:
+   - Monitors `~/.claude/projects/` recursively
+   - Detects .jsonl file creation and modification
+   - Reads file content to check for summary events
+   - Maintains session state
+   - Emits ProjectActivityEvent via mpsc channel
+
+4. **Features**:
+   - No debouncing needed (project files change infrequently)
+   - Async/await compatible with tokio runtime
+   - Thread-safe via mpsc channels
+   - Graceful error handling and logging
+   - Initial scan option on startup (default: enabled)
+
+5. **Configuration** (`ProjectTrackerConfig`):
+   - `scan_on_init: bool` - Whether to scan all projects on startup
+   - Default: true (scan existing projects)
+   - Useful for initial dashboard population
+
+6. **Error Handling**:
+   - `WatcherInit` - File system watcher setup failures
+   - `Io` - File read/write errors
+   - `ClaudeDirectoryNotFound` - Missing project directory
+   - `ChannelClosed` - Event sender channel unavailable
+
+**Use Cases**:
+- Multi-project activity overview
+- Detect active sessions across projects
+- Monitor completion state changes
+- Project-based filtering in dashboards
+- Correlate tool usage by project
+
+**Test Coverage**: 50+ tests covering:
+- Slug parsing (bidirectional)
+- Summary event detection
+- Event creation and serialization
+- File watching and change detection
+- Error handling and edge cases
+- Async tracker initialization
 
 ## Privacy & Data Sanitization
 
@@ -68,64 +474,70 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 
 1. **PrivacyConfig** - Configuration management
    - Optional extension allowlist (e.g., `.rs`, `.ts`)
-   - Loaded from `VIBETEA_BASENAME_ALLOWLIST` environment variable
-   - Supports comma-separated format: `.rs,.ts,.md` or `rs,ts,md` (auto-dots)
-   - Whitespace-tolerant: ` .rs , .ts ` normalized to `[".rs", ".ts"]`
-   - Empty entries filtered: `.rs,,.ts,,,` becomes `[".rs", ".ts"]`
+   - Loaded from `VIBETEA_BASENAME_ALLOWLIST`
+   - Supports comma-separated format
 
 2. **PrivacyPipeline** - Event sanitization processor
-   - Processes EventPayload before transmission to server
-   - Strips sensitive contexts from dangerous tools
-   - Extracts basenames from file paths
-   - Applies extension allowlist filtering
-   - Neutralizes session summary text
+   - Processes EventPayload before transmission
+   - Strips sensitive contexts
+   - Extracts basenames from paths
+   - Applies extension filtering
+   - Neutralizes summary text
 
 3. **extract_basename()** - Path safety function
-   - Converts full paths to secure basenames
-   - Handles Unix: `/home/user/src/auth.ts` → `auth.ts`
-   - Handles Windows: `C:\Users\user\src\auth.ts` → `auth.ts`
-   - Handles relative: `src/auth.ts` → `auth.ts`
-   - Returns `None` for invalid/empty paths
+   - `/home/user/src/auth.ts` → `auth.ts`
+   - Handles Unix, Windows, relative paths
+   - Returns `None` for invalid paths
 
 **Sensitive Tools** (context always stripped):
-- `Bash` - Commands may contain secrets, passwords, API keys
-- `Grep` - Patterns reveal what user is searching for
-- `Glob` - File patterns reveal project structure
-- `WebSearch` - Queries reveal user intent
-- `WebFetch` - URLs may contain sensitive parameters
+- `Bash` - Commands may contain secrets
+- `Grep` - Patterns reveal search intent
+- `Glob` - Patterns reveal project structure
+- `WebSearch` - Queries reveal intent
+- `WebFetch` - URLs may contain secrets
 
 **Privacy Processing Rules**:
-
 | Payload Type | Processing |
 |--------------|-----------|
-| Session | Pass through (project already sanitized at parse time) |
-| Activity | Pass through unchanged |
-| Tool (sensitive) | Context set to `None` |
-| Tool (other) | Context → basename, apply allowlist, pass if allowed else `None` |
+| Session | Pass through |
+| Activity | Pass through |
+| Tool (sensitive) | Context set to None |
+| Tool (other) | Basename + allowlist filtering |
 | Agent | Pass through unchanged |
-| Summary | Summary text replaced with "Session ended" |
-| Error | Pass through (category already sanitized) |
+| AgentSpawn | Pass through unchanged |
+| SkillInvocation | Pass through unchanged |
+| TodoProgress | Pass through unchanged (only counts) |
+| SessionMetrics | Pass through unchanged (aggregate data) |
+| TokenUsage | Pass through unchanged (aggregate data) |
+| ActivityPattern | Pass through unchanged (hourly counts) |
+| ModelDistribution | Pass through unchanged (model usage) |
+| ProjectActivity | Pass through unchanged (paths & session IDs) |
+| Summary | Text replaced with "Session ended" |
+| Error | Pass through unchanged |
 
 **Extension Allowlist Filtering**:
-- When `VIBETEA_BASENAME_ALLOWLIST` is not set: All extensions allowed
-- When set to `.rs,.ts`: Only `.rs` and `.ts` files transmitted; others filtered to `None`
-- If no extension and allowlist set: Context filtered to `None`
-- Examples:
-  - `file.rs` with allowlist `.rs,.ts` → ALLOWED
-  - `file.py` with allowlist `.rs,.ts` → FILTERED
-  - `Makefile` with allowlist `.rs,.ts` → FILTERED (no extension)
+- Not set: All extensions allowed
+- Set to `.rs,.ts`: Only those extensions transmitted
+- Mismatch: Context filtered to `None`
 
-**Example Privacy Processing**:
-```
-Input:  Tool { context: Some("/home/user/project/src/auth.rs"), tool: "Read", ... }
-Output: Tool { context: Some("auth.rs"), tool: "Read", ... }
+**Todo Privacy**:
+- TodoProgressEvent contains only counts and abandonment flag
+- No task content or descriptions transmitted
+- Counts are aggregate, non-sensitive metadata
 
-Input:  Tool { context: Some("rm -rf /home"), tool: "Bash", ... }
-Output: Tool { context: None, tool: "Bash", ... }  # Sensitive tool
+**Stats Privacy** (Phase 10):
+- SessionMetricsEvent contains only aggregate counts
+- TokenUsageEvent contains per-model consumption metrics
+- ActivityPatternEvent contains hourly distribution (no session data)
+- ModelDistributionEvent contains aggregated usage by model (no session data)
+- No per-session data or user information
+- Cache metrics are transparent usage data
 
-Input:  Tool { context: Some("/home/user/config.py"), tool: "Read", allowlist: [.rs,.ts] }
-Output: Tool { context: None, tool: "Read", ... }  # Filtered by allowlist
-```
+**Project Privacy** (Phase 11):
+- ProjectActivityEvent contains only project path and session ID
+- No project content or code
+- Only session activity status (active/completed)
+- Paths are absolute (user-identified) for context
 
 ### Privacy Test Suite
 
@@ -1074,103 +1486,58 @@ interface TokenFormProps {
 
 ### Monitor → Server (Event Publishing)
 
-**Endpoint**: `https://<server-url>/events`
-**Method**: POST
-**Authentication**: Ed25519 signature in X-Signature header (Phase 6)
-**Content-Type**: application/json
+**Method**: Ed25519 digital signatures
+**Protocol**: HTTPS POST with signed payload
+**Key Management**: Source-specific public key registration
+**Verification**: Constant-time comparison using `subtle` crate
 
-**Flow**:
-1. Monitor watches local JSONL files via file watcher
-2. Parser extracts metadata from new/modified JSONL lines
-3. Events processed through PrivacyPipeline (Phase 5)
-4. Monitor signs event payload with Ed25519 private key (Phase 6)
-5. Monitor POSTs signed event to server with X-Source-ID and X-Signature headers (Phase 6)
-6. Server validates signature against registered public key
-7. Server rate limits based on source ID (100 events/sec default)
-8. Server broadcasts to all connected clients via WebSocket
+**Configuration Location**: `server/src/config.rs`
+- `VIBETEA_PUBLIC_KEYS` - Format: `source1:pubkey1,source2:pubkey2`
+- `VIBETEA_UNSAFE_NO_AUTH` - Dev-only authentication bypass
 
-**Rate Limiting** (`server/src/rate_limit.rs`):
-- Token bucket algorithm per source
-- 100.0 tokens/second refill rate (configurable)
-- 100 token capacity (configurable)
-- Exceeded limit returns 429 Too Many Requests with Retry-After header
-- Automatic cleanup of inactive sources after 60 seconds
+**Signature Verification Process** (`server/src/auth.rs`):
+1. Decode base64 signature from X-Signature header
+2. Decode base64 public key from configuration
+3. Extract Ed25519 VerifyingKey from public key bytes
+4. Verify signature with RFC 8032 compliance
+5. Apply constant-time comparison to prevent timing attacks
 
-**Client Library**: `reqwest` crate (HTTP client)
-**Configuration**: `monitor/src/config.rs`
-- `VIBETEA_SERVER_URL` - Server endpoint (required)
-- `VIBETEA_SOURCE_ID` - Source identifier for event attribution (default: hostname)
-- Uses gethostname crate to get system hostname if not provided
+**Cryptographic Details**:
+- Algorithm: Ed25519 (ECDSA variant)
+- Library: `ed25519-dalek` crate (version 2.1)
+- Key generation: 32-byte seed via OS RNG
+- File permissions: 0600 (private key only)
+- Public key format: Base64-encoded
 
-**Phase 6 Enhancements**:
-- Crypto module signs all events before transmission
-- Sender module handles buffering, retry, rate limiting
-- CLI allows easy key management and monitor startup
+### Server → Client (Event Streaming)
 
-### Server → Client (Event Broadcasting)
+**Method**: Bearer token in WebSocket headers
+**Protocol**: WebSocket upgrade with `Authorization: Bearer <token>`
+**Token Type**: Opaque string (no expiration in Phase 5)
+**Scope**: All clients use the same token (global scope)
 
-**Protocol**: WebSocket (upgraded from HTTP)
-**URL**: `ws://<server-url>/ws` (or `wss://` for HTTPS)
-**Authentication**: Bearer token in upgrade request headers
-**Message Format**: JSON (Event)
+**Configuration Location**: `server/src/config.rs`
+- `VIBETEA_SUBSCRIBER_TOKEN` - Required unless unsafe mode
+- Validated on WebSocket upgrade
+- No token refresh mechanism in Phase 5
 
-**Flow**:
-1. Client initiates WebSocket connection with Bearer token
-2. Server validates token and establishes connection
-3. Server broadcasts events as they arrive from monitors
-4. Optional: Server filters events based on query parameters (source, type, project)
-5. Client processes and stores events in Zustand state via `addEvent()`
-6. Client UI renders session information from state
+**Validation**: Server-side validation only (in-memory)
 
-**Server Broadcasting** (`server/src/broadcast.rs`):
-- EventBroadcaster wraps tokio broadcast channel
-- 1000-event capacity for burst handling
-- Thread-safe, cloneable for sharing across handlers
-- SubscriberFilter enables selective delivery by event type, source, project
+**Future Enhancements**: Per-user tokens, token expiration, refresh tokens
 
-**WebSocket Upgrade** (`server/src/routes.rs`):
-- GET /ws endpoint handles upgrade requests
-- Validates bearer token before upgrade
-- Returns 101 Switching Protocols on success
-- Returns 401 Unauthorized on token validation failure
+## External APIs
 
-**Client-Side Handling** (Phase 7-10):
-- WebSocket proxy configured in `client/vite.config.ts` (target: ws://localhost:8080)
-- State management via `useEventStore` hook (Zustand)
-- Event type guards for safe type access in `client/src/types/events.ts`
-- ConnectionStatus transitions: disconnected → connecting → connected → reconnecting
-- Token management via `TokenForm` component
-- Connection control via `useWebSocket` hook
-- Virtual scrolling display via EventStream component (Phase 8)
-- Session management via SessionOverview component (Phase 10)
+There are no external third-party API integrations in Phase 11. The system is self-contained:
+- All data sources are local files
+- All services are internal (Monitor, Server, Client)
+- No SaaS dependencies or external service calls
 
-**Connection Details**:
-- Address/port: Configured via `PORT` environment variable (default: 8080)
-- Persistent connection model
-- Automatic reconnection with exponential backoff (Phase 7)
-- No message queuing (direct streaming)
-- Events processed with selective subscriptions to prevent unnecessary re-renders
-
-### Monitor → File System (JSONL Watching)
-
-**Target**: `~/.claude/projects/**/*.jsonl`
-**Mechanism**: `notify` crate file system events (inotify/FSEvents)
-**Update Strategy**: Incremental line reading with position tracking
-
-**Flow**:
-1. FileWatcher initialized with watch directory
-2. Recursive file system monitoring begins
-3. File creation detected → WatchEvent::FileCreated emitted
-4. File modification detected → New lines read from position marker
-5. Lines sent in WatchEvent::LinesAdded with accumulated lines
-6. Position marker updated to avoid re-reading
-7. File deletion detected → WatchEvent::FileRemoved emitted, cleanup position state
-
-**Efficiency Features**:
-- Position tracking prevents re-reading file content
-- Only new lines since last position are extracted
-- BufReader with Seek for efficient line iteration
-- Arc<RwLock<>> for thread-safe concurrent access
+**Future Integration Points** (Not Yet Implemented):
+- Cloud storage (S3, GCS) for event archive
+- Monitoring services (Datadog, New Relic)
+- Message queues (Redis, RabbitMQ)
+- Webhooks for external notifications
+- Database persistence (PostgreSQL, etc.)
 
 ## HTTP API Endpoints
 
@@ -1181,8 +1548,8 @@ interface TokenFormProps {
 **Request Headers**:
 | Header | Required | Value |
 |--------|----------|-------|
-| X-Source-ID | Yes | Monitor identifier (non-empty string) |
-| X-Signature | No* | Base64-encoded Ed25519 signature (Phase 6) |
+| X-Source-ID | Yes | Monitor identifier (non-empty) |
+| X-Signature | No* | Base64-encoded Ed25519 signature |
 | Content-Type | Yes | application/json |
 
 *Required unless `VIBETEA_UNSAFE_NO_AUTH=true`
@@ -1192,16 +1559,15 @@ interface TokenFormProps {
 **Response Codes**:
 - 202 Accepted - Events accepted and broadcasted
 - 400 Bad Request - Invalid JSON or malformed events
-- 401 Unauthorized - Missing/empty X-Source-ID or signature verification failed
+- 401 Unauthorized - Invalid X-Source-ID or signature mismatch
 - 429 Too Many Requests - Rate limit exceeded (includes Retry-After header)
 
-**Flow** (`server/src/routes.rs`):
-1. Extract X-Source-ID from headers
-2. Check rate limit for source
-3. If unsafe_no_auth is false, verify X-Signature against public key
-4. Deserialize event(s) from body
-5. Broadcast each event via EventBroadcaster
-6. Return 202 Accepted
+**Rate Limiting** (`server/src/rate_limit.rs`):
+- Token bucket algorithm per source
+- Default: 100 events/second per source
+- Capacity: 100 tokens
+- Exceeds limit: Returns 429 with Retry-After header
+- Cleanup: Stale sources removed after 60 seconds idle
 
 ### GET /ws
 
@@ -1220,14 +1586,13 @@ interface TokenFormProps {
 **WebSocket Messages**: JSON-encoded Event objects (one per message)
 
 **Response Codes**:
-- 101 Switching Protocols - WebSocket upgrade successful
+- 101 Switching Protocols - Upgrade successful
 - 401 Unauthorized - Token validation failed
 
 **Filtering** (`server/src/broadcast.rs`):
-- SubscriberFilter applied if query parameters provided
-- Matches event.event_type against type parameter
-- Matches event.source against source parameter
-- Matches event.payload.project against project parameter
+- Optional SubscriberFilter based on query parameters
+- Matches event type, source, project
+- Enables selective delivery
 
 ### GET /health
 
@@ -1241,7 +1606,137 @@ interface TokenFormProps {
 }
 ```
 
-**Response Code**: 200 OK (always succeeds, no auth required)
+**Response Code**: 200 OK (always succeeds, no auth)
+
+## Network Communication
+
+### Monitor → Server (Event Publishing)
+
+**Endpoint**: `https://<server-url>/events`
+**Method**: POST
+**Content-Type**: application/json
+
+**Flow**:
+1. Monitor watches local JSONL files via file watcher
+2. Parser extracts metadata from new/modified lines
+3. Events processed through PrivacyPipeline
+4. Monitor signs event payload with Ed25519 private key
+5. Monitor POSTs signed event with X-Source-ID and X-Signature headers
+6. Server validates signature against registered public key
+7. Server rate limits based on source ID
+8. Server broadcasts to all connected clients via WebSocket
+
+**Client Library**: `reqwest` (HTTP client)
+
+**Configuration** (`monitor/src/config.rs`):
+- `VIBETEA_SERVER_URL` - Server endpoint (required)
+- `VIBETEA_SOURCE_ID` - Monitor identifier (default: hostname)
+
+**Sender Module** (`monitor/src/sender.rs`):
+- HTTP client with connection pooling (10 max idle)
+- Event buffering with FIFO eviction (1000 events default)
+- Exponential backoff: 1s → 60s with ±25% jitter
+- Rate limit handling: Respects 429 with Retry-After
+- Timeout: 30 seconds per request
+
+### Server → Client (Event Broadcasting)
+
+**Protocol**: WebSocket (upgraded from HTTP)
+**URL**: `ws://<server-url>/ws` (or `wss://` for HTTPS)
+**Authentication**: Bearer token in upgrade request
+**Message Format**: JSON (Event)
+
+**Flow**:
+1. Client initiates WebSocket with Bearer token
+2. Server validates token and establishes connection
+3. Server broadcasts events as they arrive
+4. Optional filtering based on query parameters
+5. Client processes events via Zustand store
+6. Client UI renders session information
+
+**Broadcasting** (`server/src/broadcast.rs`):
+- EventBroadcaster wraps tokio broadcast channel
+- 1000-event capacity for burst handling
+- Thread-safe, cloneable across handlers
+- SubscriberFilter enables selective delivery
+
+**Client-Side Handling**:
+- WebSocket proxy configured in `client/vite.config.ts`
+- State management via `useEventStore` hook (Zustand)
+- Event type guards in `client/src/types/events.ts`
+- ConnectionStatus component for visual feedback
+- useWebSocket hook with auto-reconnect
+
+### Monitor → File System (JSONL, Todo, Stats, & Projects Watching)
+
+**Targets**:
+- `~/.claude/projects/**/*.jsonl` - Session events
+- `~/.claude/projects/` - Project directory scanning (Phase 11)
+- `~/.claude/history.jsonl` - Skill invocations
+- `~/.claude/todos/*.json` - Todo lists
+- `~/.claude/stats-cache.json` - Token/session statistics
+
+**Mechanism**: `notify` crate file system events
+**Update Strategy**: Incremental line reading with position tracking (sessions/history), file debouncing (todos/stats), directory scanning with summary detection (projects)
+
+**Session File Flow**:
+1. FileWatcher initialized with watch directory
+2. Recursive file system monitoring begins
+3. File creation detected → WatchEvent::FileCreated
+4. File modification detected → Read new lines from position
+5. Lines accumulated → WatchEvent::LinesAdded
+6. Position marker updated
+7. File deletion detected → WatchEvent::FileRemoved
+
+**Project Monitoring Flow** (Phase 11):
+1. ProjectTracker initialized with projects directory
+2. Recursive file system monitoring begins
+3. File creation/modification detected
+4. JSONL file read to check for summary events
+5. Session activity status determined
+6. ProjectActivityEvent emitted via mpsc channel
+7. Event sent to server for broadcast
+
+**Skill File Monitoring** (Phase 5):
+1. SkillTracker initialized with history.jsonl path
+2. Watcher monitors parent directory
+3. Modification detected (data changes only)
+4. New entries read from byte offset
+5. Entries parsed → SkillInvocationEvent created
+6. Event emitted via mpsc channel
+7. Byte offset updated
+
+**Todo File Monitoring** (Phase 6):
+1. TodoTracker initialized with todos directory
+2. Watcher monitors `~/.claude/todos/` non-recursively
+3. File creation/modification detected
+4. Filename validated: `<uuid>-agent-<uuid>.json`
+5. File content read as JSON array
+6. Entries parsed and counted (lenient)
+7. Abandonment flag set based on session ended status
+8. TodoProgressEvent emitted via mpsc channel
+9. Changes debounced at 100ms to coalesce rapid writes
+
+**Stats File Monitoring** (Phase 8, Phase 10):
+1. StatsTracker initialized with stats-cache.json path
+2. Watcher monitors `~/.claude/` directory
+3. File creation/modification detected
+4. File content read as JSON object
+5. SessionMetricsEvent created and emitted
+6. ActivityPatternEvent created from hourCounts and emitted (Phase 10)
+7. TokenUsageEvent created for each model
+8. ModelDistributionEvent created from all models and emitted (Phase 10)
+9. Events emitted via mpsc channel
+10. Changes debounced at 200ms to coalesce rapid writes
+
+**Efficiency Features**:
+- Position tracking prevents re-reading (sessions/history)
+- Only new lines since last position extracted
+- BufReader with Seek for efficient iteration
+- Arc<RwLock<>> for thread-safe concurrent access
+- Atomic offset for lock-free reads in skill tracker
+- Debouncing prevents duplicate processing (todos/stats)
+- Summary event detection enables efficient completion tracking (projects)
 
 ## Development & Local Configuration
 
@@ -1249,26 +1744,20 @@ interface TokenFormProps {
 
 **Environment Variables**:
 ```bash
-PORT=8080                                        # Server port
-VIBETEA_PUBLIC_KEYS=localhost:cHVia2V5MQ==      # Monitor public key (base64)
-VIBETEA_SUBSCRIBER_TOKEN=dev-token-secret        # Client WebSocket token
-VIBETEA_UNSAFE_NO_AUTH=false                     # Set true to disable all auth
-RUST_LOG=debug                                   # Logging level
+PORT=8080                                       # Server port
+VIBETEA_PUBLIC_KEYS=localhost:cHVia2V5MQ==     # Monitor public key
+VIBETEA_SUBSCRIBER_TOKEN=dev-token-secret      # Client token
+VIBETEA_UNSAFE_NO_AUTH=false                   # Auth mode
+RUST_LOG=debug                                 # Logging level
 ```
 
 **Unsafe Development Mode**:
 When `VIBETEA_UNSAFE_NO_AUTH=true`:
-- All monitor authentication is bypassed (X-Signature ignored)
-- All client authentication is bypassed (token parameter ignored)
+- All monitor authentication bypassed
+- All client authentication bypassed
 - Suitable for local development only
 - Never use in production
-- Warning logged on startup when enabled
-
-**Validation Behavior**:
-- With unsafe_no_auth=false: Requires both VIBETEA_PUBLIC_KEYS and VIBETEA_SUBSCRIBER_TOKEN
-- With unsafe_no_auth=true: Both auth variables become optional
-- PORT defaults to 8080 if not specified
-- Invalid PORT formats rejected with ParseIntError
+- Warning logged on startup
 
 ### Local Monitor Setup
 
@@ -1315,6 +1804,7 @@ RUST_LOG=debug                                   # Logging level
 - Uses `notify` crate (version 8.0) for cross-platform inotify/FSEvents
 - Optional extension filtering via VIBETEA_BASENAME_ALLOWLIST
 - Phase 4: FileWatcher tracks position to efficiently tail JSONL files
+- Phase 11: ProjectTracker scans project directory for session activity
 
 **JSONL Parsing**:
 - Phase 4: SessionParser extracts metadata from Claude Code JSONL

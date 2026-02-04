@@ -51,6 +51,12 @@ gethostname.workspace = true
 # Async utilities
 futures = "0.3"
 
+# LRU cache for session tracking
+lru = "0.12"
+
+# Line diffing for file history tracking
+similar = "2.6"
+
 [dev-dependencies]
 tokio-test.workspace = true
 tempfile = "3.15"

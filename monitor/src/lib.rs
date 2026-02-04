@@ -25,6 +25,8 @@
 //! - [`privacy`]: Privacy pipeline for sanitizing event payloads
 //! - [`crypto`]: Ed25519 keypair generation and event signing
 //! - [`sender`]: HTTP client with retry, buffering, and rate limiting
+//! - [`trackers`]: Enhanced data tracking modules
+//! - [`utils`]: Shared utilities (debouncing, etc.)
 
 pub mod config;
 pub mod crypto;
@@ -32,7 +34,9 @@ pub mod error;
 pub mod parser;
 pub mod privacy;
 pub mod sender;
+pub mod trackers;
 pub mod types;
+pub mod utils;
 pub mod watcher;
 
 pub use config::Config;
@@ -42,4 +46,5 @@ pub use parser::{ParsedEvent, ParsedEventKind, SessionParser};
 pub use privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
 pub use sender::{RetryPolicy, Sender, SenderConfig, SenderError};
 pub use types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
-pub use watcher::{FileWatcher, WatchEvent, WatcherError};
+pub use utils::{Debouncer, DebouncerError, DEFAULT_DEBOUNCE_MS};
+pub use watcher::{check_inotify_usage, FileWatcher, InotifyUsage, WatchEvent, WatcherError};

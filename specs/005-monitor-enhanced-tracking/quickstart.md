@@ -1,8 +1,8 @@
 # Quickstart: Monitor Enhanced Data Tracking
 
-**Date**: 2026-02-03
+**Date**: 2026-02-04
 **Branch**: `005-monitor-enhanced-tracking`
-**Status**: Phase 1 Design
+**Status**: Phase 12 - Polish & Cross-Cutting Concerns
 
 ## Prerequisites
 
@@ -232,17 +232,178 @@ websocat "ws://localhost:8080/ws?token=YOUR_TOKEN"
 - [ ] Project session activity detected
 - [ ] Client receives and displays new event types
 
+## Event Types
+
+The enhanced tracking feature adds the following event types:
+
+### Token Usage Event (`token_usage`)
+Emitted when stats-cache.json is updated. Tracks per-model token consumption.
+
+```json
+{
+  "type": "token_usage",
+  "payload": {
+    "model": "claude-opus-4-5-20251101",
+    "inputTokens": 100000,
+    "outputTokens": 25000,
+    "cacheReadInputTokens": 50000,
+    "cacheCreationInputTokens": 10000
+  }
+}
+```
+
+### Session Metrics Event (`session_metrics`)
+Global session metrics from stats-cache.json.
+
+```json
+{
+  "type": "session_metrics",
+  "payload": {
+    "totalSessions": 10,
+    "totalMessages": 150,
+    "totalToolUsage": 500,
+    "longestSession": "01:30:00"
+  }
+}
+```
+
+### Activity Pattern Event (`activity_pattern`)
+Hourly activity distribution from stats-cache.json.
+
+```json
+{
+  "type": "activity_pattern",
+  "payload": {
+    "hourCounts": {
+      "9": 20,
+      "10": 35,
+      "11": 40,
+      "14": 25,
+      "15": 30
+    }
+  }
+}
+```
+
+### Model Distribution Event (`model_distribution`)
+Usage distribution across Claude models.
+
+```json
+{
+  "type": "model_distribution",
+  "payload": {
+    "modelUsage": {
+      "claude-opus-4-5-20251101": {
+        "inputTokens": 100000,
+        "outputTokens": 25000,
+        "cacheReadInputTokens": 50000,
+        "cacheCreationInputTokens": 10000
+      }
+    }
+  }
+}
+```
+
+### Agent Spawn Event (`agent_spawn`)
+Emitted when a Task tool agent is spawned from JSONL session files.
+
+```json
+{
+  "type": "agent_spawn",
+  "payload": {
+    "sessionId": "test-session-001",
+    "subagentType": "devs:rust-dev",
+    "description": "Test task"
+  }
+}
+```
+
+### Skill Invocation Event (`skill_invocation`)
+Emitted when a skill/slash command is invoked from history.jsonl.
+
+```json
+{
+  "type": "skill_invocation",
+  "payload": {
+    "sessionId": "test-session-001",
+    "skillName": "commit",
+    "timestamp": 1738567268363,
+    "project": "project"
+  }
+}
+```
+
+### Todo Progress Event (`todo_progress`)
+Emitted when todo files change, tracking completion status.
+
+```json
+{
+  "type": "todo_progress",
+  "payload": {
+    "sessionId": "test-session-001",
+    "completed": 1,
+    "inProgress": 1,
+    "pending": 1,
+    "abandoned": 0
+  }
+}
+```
+
+### File Change Event (`file_change`)
+Emitted when file-history versions are created (v2+).
+
+```json
+{
+  "type": "file_change",
+  "payload": {
+    "sessionId": "test-session-001",
+    "fileBasename": "main.rs",
+    "linesAdded": 10,
+    "linesRemoved": 3,
+    "version": 2
+  }
+}
+```
+
+### Project Activity Event (`project_activity`)
+Emitted when project session activity changes.
+
+```json
+{
+  "type": "project_activity",
+  "payload": {
+    "projectPath": "/home/user/project",
+    "sessionId": "test-session-001",
+    "isActive": true
+  }
+}
+```
+
+## Privacy Guarantees
+
+All events follow **Constitution I: Privacy by Design**:
+
+- **No full file paths**: Only basenames are transmitted
+- **No code content**: File history tracking only sends line counts
+- **No prompts/messages**: Session content is never transmitted
+- **No sensitive data**: Environment variables and secrets are filtered
+
+## Implemented Trackers
+
+| Tracker | File | Data Source | Events |
+|---------|------|-------------|--------|
+| StatsTracker | `stats_tracker.rs` | `stats-cache.json` | token_usage, session_metrics, activity_pattern, model_distribution |
+| SkillTracker | `skill_tracker.rs` | `history.jsonl` | skill_invocation |
+| AgentTracker | `agent_tracker.rs` | Session JSONL files | agent_spawn |
+| TodoTracker | `todo_tracker.rs` | `todos/*.json` | todo_progress |
+| FileHistoryTracker | `file_history_tracker.rs` | `file-history/` | file_change |
+| ProjectTracker | `project_tracker.rs` | `projects/` | project_activity |
+
 ## Next Steps
 
 After setup:
 
-1. Run `/sdd:tasks` to generate implementation tasks
-2. Implement tracker modules in priority order:
-   1. `stats_tracker.rs` (stats-cache.json)
-   2. `skill_tracker.rs` (history.jsonl)
-   3. `agent_tracker.rs` (Task tool parsing)
-   4. `todo_tracker.rs` (todos/*.json)
-   5. `file_history_tracker.rs` (file-history/)
-   6. `project_tracker.rs` (projects/)
-3. Extend client with new event type handlers
-4. Add integration tests for each tracker
+1. Verify all trackers emit events correctly with test data
+2. Check client displays new event types in EventStream
+3. Monitor inotify usage on Linux (warning at 80% limit)
+4. Run full test suite: `cargo test -p vibetea-monitor -- --test-threads=1`

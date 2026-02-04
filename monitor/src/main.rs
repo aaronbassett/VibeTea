@@ -32,7 +32,15 @@ use vibetea_monitor::crypto::{Crypto, KeySource};
 use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
-use vibetea_monitor::types::{Event, EventPayload, EventType, SessionAction, ToolStatus};
+use vibetea_monitor::trackers::file_history_tracker::FileHistoryTracker;
+use vibetea_monitor::trackers::project_tracker::ProjectTracker;
+use vibetea_monitor::trackers::skill_tracker::SkillTracker;
+use vibetea_monitor::trackers::stats_tracker::{StatsEvent, StatsTracker};
+use vibetea_monitor::trackers::todo_tracker::TodoTracker;
+use vibetea_monitor::types::{
+    AgentSpawnEvent, Event, EventPayload, EventType, FileChangeEvent, ProjectActivityEvent,
+    SessionAction, SkillInvocationEvent, TodoProgressEvent, ToolStatus,
+};
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
 /// Default key directory name relative to home.
@@ -293,6 +301,111 @@ async fn run_monitor() -> Result<()> {
         "File watcher initialized"
     );
 
+    // Create channel for stats events (session metrics + token usage) from stats tracker
+    let (stats_tx, mut stats_rx) = mpsc::channel::<StatsEvent>(config.buffer_size);
+
+    // Initialize stats tracker for session metrics and token usage monitoring
+    let _stats_tracker = match StatsTracker::new(stats_tx) {
+        Ok(tracker) => {
+            info!(
+                stats_path = %tracker.stats_path().display(),
+                "Stats tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize stats tracker (token usage tracking disabled)"
+            );
+            None
+        }
+    };
+
+    // Create channel for skill invocation events from skill tracker
+    let (skill_tx, mut skill_rx) = mpsc::channel::<SkillInvocationEvent>(config.buffer_size);
+
+    // Initialize skill tracker for skill/slash command monitoring
+    let _skill_tracker = match SkillTracker::new(skill_tx) {
+        Ok(tracker) => {
+            info!(
+                history_path = %tracker.history_path().display(),
+                "Skill tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize skill tracker (skill invocation tracking disabled)"
+            );
+            None
+        }
+    };
+
+    // Create channel for todo progress events from todo tracker
+    let (todo_tx, mut todo_rx) = mpsc::channel::<TodoProgressEvent>(config.buffer_size);
+
+    // Initialize todo tracker for task list progress monitoring
+    let todo_tracker = match TodoTracker::new(todo_tx) {
+        Ok(tracker) => {
+            info!(
+                todos_dir = %tracker.todos_dir().display(),
+                "Todo tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize todo tracker (todo progress tracking disabled)"
+            );
+            None
+        }
+    };
+
+    // Create channel for file change events from file history tracker
+    let (file_change_tx, mut file_change_rx) = mpsc::channel::<FileChangeEvent>(config.buffer_size);
+
+    // Initialize file history tracker for line change tracking
+    let _file_history_tracker = match FileHistoryTracker::new(file_change_tx) {
+        Ok(tracker) => {
+            info!(
+                file_history_dir = %tracker.root_dir().display(),
+                "File history tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize file history tracker (line change tracking disabled)"
+            );
+            None
+        }
+    };
+
+    // Create channel for project activity events from project tracker
+    let (project_tx, mut project_rx) = mpsc::channel::<ProjectActivityEvent>(config.buffer_size);
+
+    // Initialize project tracker for active project monitoring
+    let _project_tracker = match ProjectTracker::new(project_tx) {
+        Ok(tracker) => {
+            info!(
+                projects_dir = %tracker.projects_dir().display(),
+                "Project tracker initialized"
+            );
+            Some(tracker)
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                "Failed to initialize project tracker (project activity tracking disabled)"
+            );
+            None
+        }
+    };
+
     info!("Monitor running. Press Ctrl+C to stop.");
 
     // Main event loop
@@ -304,12 +417,58 @@ async fn run_monitor() -> Result<()> {
                 break;
             }
 
-            // Process watch events
+            // Process watch events from session JSONL files
             Some(watch_event) = watch_rx.recv() => {
                 process_watch_event(
                     watch_event,
                     &mut session_parsers,
                     &privacy_pipeline,
+                    &mut sender,
+                    &config.source_id,
+                    todo_tracker.as_ref(),
+                ).await;
+            }
+
+            // Process stats events (session metrics + token usage) from stats tracker
+            Some(stats_event) = stats_rx.recv() => {
+                process_stats_event(
+                    stats_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process skill invocation events from skill tracker
+            Some(skill_event) = skill_rx.recv() => {
+                process_skill_invocation_event(
+                    skill_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process todo progress events from todo tracker
+            Some(todo_event) = todo_rx.recv() => {
+                process_todo_progress_event(
+                    todo_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process file change events from file history tracker
+            Some(file_change_event) = file_change_rx.recv() => {
+                process_file_change_event(
+                    file_change_event,
+                    &mut sender,
+                    &config.source_id,
+                ).await;
+            }
+
+            // Process project activity events from project tracker
+            Some(project_event) = project_rx.recv() => {
+                process_project_activity_event(
+                    project_event,
                     &mut sender,
                     &config.source_id,
                 ).await;
@@ -343,6 +502,7 @@ async fn process_watch_event(
     privacy_pipeline: &PrivacyPipeline,
     sender: &mut Sender,
     source_id: &str,
+    todo_tracker: Option<&TodoTracker>,
 ) {
     match watch_event {
         WatchEvent::FileCreated(path) => {
@@ -396,6 +556,20 @@ async fn process_watch_event(
                 let parsed_events = parser.parse_line(&line);
 
                 for parsed_event in parsed_events {
+                    // Check if this is a session end event (Summary)
+                    // Mark session as ended in todo tracker for abandonment detection
+                    if let ParsedEventKind::Summary = &parsed_event.kind {
+                        if let Some(tracker) = todo_tracker {
+                            tracker
+                                .mark_session_ended(&parser.session_id().to_string())
+                                .await;
+                            debug!(
+                                session_id = %parser.session_id(),
+                                "Marked session as ended for todo abandonment detection"
+                            );
+                        }
+                    }
+
                     if let Some(event) = convert_to_event(
                         parsed_event,
                         parser.session_id(),
@@ -428,6 +602,206 @@ async fn process_watch_event(
                 );
             }
         }
+    }
+}
+
+/// Processes a stats event from the stats tracker.
+///
+/// Handles [`SessionMetricsEvent`], [`TokenUsageEvent`], and [`ActivityPatternEvent`] variants.
+async fn process_stats_event(stats_event: StatsEvent, sender: &mut Sender, source_id: &str) {
+    let event = match stats_event {
+        StatsEvent::SessionMetrics(metrics) => {
+            debug!(
+                total_sessions = metrics.total_sessions,
+                total_messages = metrics.total_messages,
+                total_tool_usage = metrics.total_tool_usage,
+                longest_session = %metrics.longest_session,
+                "Processing session metrics event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::SessionMetrics,
+                EventPayload::SessionMetrics(metrics),
+            )
+        }
+        StatsEvent::TokenUsage(token_event) => {
+            debug!(
+                model = %token_event.model,
+                input_tokens = token_event.input_tokens,
+                output_tokens = token_event.output_tokens,
+                "Processing token usage event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::TokenUsage,
+                EventPayload::TokenUsage(token_event),
+            )
+        }
+        StatsEvent::ActivityPattern(activity_event) => {
+            debug!(
+                hour_count = activity_event.hour_counts.len(),
+                "Processing activity pattern event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::ActivityPattern,
+                EventPayload::ActivityPattern(activity_event),
+            )
+        }
+        StatsEvent::ModelDistribution(dist_event) => {
+            debug!(
+                model_count = dist_event.model_usage.len(),
+                "Processing model distribution event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::ModelDistribution,
+                EventPayload::ModelDistribution(dist_event),
+            )
+        }
+    };
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush stats events, will retry later");
+    }
+}
+
+/// Processes a skill invocation event from the skill tracker.
+async fn process_skill_invocation_event(
+    skill_event: SkillInvocationEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        skill_name = %skill_event.skill_name,
+        session_id = %skill_event.session_id,
+        project = %skill_event.project,
+        "Processing skill invocation event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::SkillInvocation,
+        EventPayload::SkillInvocation(skill_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush skill invocation events, will retry later");
+    }
+}
+
+/// Processes a todo progress event from the todo tracker.
+async fn process_todo_progress_event(
+    todo_event: TodoProgressEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        session_id = %todo_event.session_id,
+        completed = todo_event.completed,
+        pending = todo_event.pending,
+        in_progress = todo_event.in_progress,
+        abandoned = todo_event.abandoned,
+        "Processing todo progress event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::TodoProgress,
+        EventPayload::TodoProgress(todo_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush todo progress events, will retry later");
+    }
+}
+
+/// Processes a file change event from the file history tracker.
+async fn process_file_change_event(
+    file_change_event: FileChangeEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        session_id = %file_change_event.session_id,
+        file_hash = %file_change_event.file_hash,
+        version = file_change_event.version,
+        lines_added = file_change_event.lines_added,
+        lines_removed = file_change_event.lines_removed,
+        "Processing file change event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::FileChange,
+        EventPayload::FileChange(file_change_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush file change events, will retry later");
+    }
+}
+
+/// Processes a project activity event from the project tracker.
+async fn process_project_activity_event(
+    project_event: ProjectActivityEvent,
+    sender: &mut Sender,
+    source_id: &str,
+) {
+    debug!(
+        project_path = %project_event.project_path,
+        session_id = %project_event.session_id,
+        is_active = project_event.is_active,
+        "Processing project activity event"
+    );
+
+    // Convert to a full Event
+    let event = Event::new(
+        source_id.to_string(),
+        EventType::ProjectActivity,
+        EventPayload::ProjectActivity(project_event),
+    );
+
+    // Queue event for sending
+    let evicted = sender.queue(event);
+    if evicted > 0 {
+        warn!(evicted, "Buffer overflow, events evicted");
+    }
+
+    // Try to flush buffered events
+    if let Err(e) = sender.flush().await {
+        warn!(error = %e, "Failed to flush project activity events, will retry later");
     }
 }
 
@@ -489,6 +863,19 @@ fn convert_to_event(
                 session_id,
                 summary: format!("Session ended for {}", project),
             },
+        ),
+
+        ParsedEventKind::AgentSpawned {
+            agent_type,
+            description,
+        } => (
+            EventType::AgentSpawn,
+            EventPayload::AgentSpawn(AgentSpawnEvent {
+                session_id: session_id.to_string(),
+                agent_type,
+                description,
+                timestamp: parsed.timestamp,
+            }),
         ),
     };
 
