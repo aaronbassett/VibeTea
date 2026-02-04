@@ -260,9 +260,9 @@
 **Purpose**: Final cleanup and validation
 
 ### Phase Start
-- [ ] T099 [GIT] Verify working tree is clean before starting Phase 7
-- [ ] T100 [GIT] Pull and rebase on origin/main if needed
-- [ ] T101 Create retro/P7.md for this phase
+- [x] T099 [GIT] Verify working tree is clean before starting Phase 7
+- [x] T100 [GIT] Pull and rebase on origin/main if needed
+- [x] T101 Create retro/P7.md for this phase
 - [ ] T102 [GIT] Commit: initialize phase 7 retro
 
 ### Polish Tasks
