@@ -282,7 +282,7 @@
 - [x] T114 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [x] T115 [GIT] Create/update PR to main with final summary
 - [x] T116 [GIT] Verify all CI checks pass
-- [ ] T117 [GIT] Report PR ready status
+- [x] T117 [GIT] Report PR ready status
 
 ---
 
