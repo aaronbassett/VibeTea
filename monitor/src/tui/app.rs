@@ -1289,6 +1289,30 @@ impl AppState {
     pub fn handle_resize(&mut self, _width: u16, height: u16) {
         self.dashboard.scroll.update_visible_height(height as usize);
     }
+
+    /// Sets the connection status to the specified value.
+    ///
+    /// Updates the dashboard's connection status, which is displayed in the
+    /// header widget to show the current server connection state (FR-012).
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - The new connection status
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{AppState, ConnectionStatus};
+    ///
+    /// let mut state = AppState::new();
+    /// assert_eq!(state.dashboard.connection_status, ConnectionStatus::Disconnected);
+    ///
+    /// state.set_connection_status(ConnectionStatus::Connected);
+    /// assert_eq!(state.dashboard.connection_status, ConnectionStatus::Connected);
+    /// ```
+    pub fn set_connection_status(&mut self, status: ConnectionStatus) {
+        self.dashboard.connection_status = status;
+    }
 }
 
 // =============================================================================
@@ -3352,6 +3376,24 @@ mod tests {
         state.handle_resize(80, 30);
         // With 20 events and 30 visible, max offset is 0
         assert_eq!(state.dashboard.scroll.offset(), 0);
+    }
+
+    #[test]
+    fn app_state_set_connection_status_updates_dashboard() {
+        let mut state = AppState::new();
+        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Disconnected);
+
+        state.set_connection_status(ConnectionStatus::Connecting);
+        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Connecting);
+
+        state.set_connection_status(ConnectionStatus::Connected);
+        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Connected);
+
+        state.set_connection_status(ConnectionStatus::Error);
+        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Error);
+
+        state.set_connection_status(ConnectionStatus::Disconnected);
+        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Disconnected);
     }
 
     // =============================================================================
