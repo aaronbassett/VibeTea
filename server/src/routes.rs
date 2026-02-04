@@ -644,6 +644,8 @@ mod tests {
             subscriber_token: None,
             port: 8080,
             unsafe_no_auth: true,
+            supabase_url: None,
+            supabase_anon_key: None,
         }
     }
 
@@ -657,6 +659,8 @@ mod tests {
             subscriber_token: Some("test-token".to_string()),
             port: 8080,
             unsafe_no_auth: false,
+            supabase_url: Some("https://test.supabase.co".to_string()),
+            supabase_anon_key: Some("test-anon-key".to_string()),
         }
     }
 
