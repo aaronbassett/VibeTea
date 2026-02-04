@@ -263,31 +263,53 @@ function formatHourLabel(hour: number): string {
 
 /**
  * View toggle buttons for switching between 7-day and 30-day views.
+ * Uses spring-based hover/focus feedback per FR-007.
  */
 function ViewToggle({
   viewDays,
   onViewChange,
+  prefersReducedMotion,
 }: {
   readonly viewDays: ViewDays;
   readonly onViewChange: (days: ViewDays) => void;
+  readonly prefersReducedMotion: boolean;
 }) {
+  // Spring-based hover animation (FR-007)
+  const getHoverProps = (isSelected: boolean) =>
+    prefersReducedMotion
+      ? undefined
+      : {
+          scale: 1.05,
+          boxShadow: isSelected
+            ? '0 0 12px 2px rgba(59, 130, 246, 0.4)'
+            : '0 0 8px 2px rgba(156, 163, 175, 0.3)',
+          transition: SPRING_CONFIGS.gentle,
+        };
+
+  const tapProps = prefersReducedMotion ? undefined : { scale: 0.95 };
+
   return (
     <div className="flex gap-1" role="group" aria-label="View range selector">
-      {VIEW_OPTIONS.map((days) => (
-        <button
-          key={days}
-          type="button"
-          onClick={() => onViewChange(days)}
-          className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
-            viewDays === days
-              ? 'bg-blue-600 text-white'
-              : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-          }`}
-          aria-pressed={viewDays === days}
-        >
-          {days} Days
-        </button>
-      ))}
+      {VIEW_OPTIONS.map((days) => {
+        const isSelected = viewDays === days;
+        return (
+          <m.button
+            key={days}
+            type="button"
+            onClick={() => onViewChange(days)}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900 ${
+              isSelected
+                ? 'bg-blue-600 text-white'
+                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+            }`}
+            aria-pressed={isSelected}
+            whileHover={getHoverProps(isSelected)}
+            whileTap={tapProps}
+          >
+            {days} Days
+          </m.button>
+        );
+      })}
     </div>
   );
 }
@@ -427,6 +449,7 @@ function getGlowStyles(intensity: number): React.CSSProperties {
 
 /**
  * Individual heatmap cell component.
+ * Uses spring-based hover feedback per FR-007.
  * Respects prefers-reduced-motion by showing static glow and disabling transitions.
  */
 function HeatmapCellComponent({
@@ -470,25 +493,30 @@ function HeatmapCellComponent({
     }
   };
 
-  // Disable CSS transitions when reduced motion is preferred
-  const transitionClass = prefersReducedMotion
-    ? ''
-    : 'transition-all duration-200';
+  // Spring-based hover animation (FR-007)
+  const hoverProps = prefersReducedMotion
+    ? undefined
+    : {
+        scale: 1.15,
+        boxShadow: `0 0 8px 2px ${COLORS.grid.glow}60`,
+        transition: SPRING_CONFIGS.gentle,
+      };
 
-  // Disable scale animation on hover when reduced motion is preferred
-  const hoverClass = prefersReducedMotion ? '' : 'hover:scale-110';
+  const tapProps = prefersReducedMotion ? undefined : { scale: 0.9 };
 
   return (
-    <div
+    <m.div
       role="gridcell"
       tabIndex={0}
       aria-label={ariaLabel}
-      className={`aspect-square rounded-sm cursor-pointer ${transitionClass} ${hoverClass} focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset`}
+      className="aspect-square rounded-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset"
       style={{ backgroundColor, ...glowStyles }}
       onMouseEnter={(e) => onHover(cell, e)}
       onMouseLeave={onLeave}
       onClick={() => onClick(cell)}
       onKeyDown={handleKeyDown}
+      whileHover={hoverProps}
+      whileTap={tapProps}
     />
   );
 }
@@ -815,7 +843,7 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
       {/* Header with title and view toggle */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-100">Activity</h2>
-        <ViewToggle viewDays={viewDays} onViewChange={handleViewChange} />
+        <ViewToggle viewDays={viewDays} onViewChange={handleViewChange} prefersReducedMotion={prefersReducedMotion} />
       </div>
 
       {/* Heatmap grid or empty state */}

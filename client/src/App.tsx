@@ -5,8 +5,11 @@
  * with event stream, session overview, activity heatmap, and connection status.
  */
 
-import { LazyMotion, domAnimation } from 'framer-motion';
+import { LazyMotion, domAnimation, m } from 'framer-motion';
 import { useCallback, useEffect, useState } from 'react';
+
+import { SPRING_CONFIGS } from './constants/design-tokens';
+import { useReducedMotion } from './hooks/useReducedMotion';
 
 import { AnimatedBackground } from './components/animated/AnimatedBackground';
 import { ASCIIHeader } from './components/animated/ASCIIHeader';
@@ -42,6 +45,9 @@ function hasStoredToken(): boolean {
 export default function App() {
   // Initialize session timeout checking at root level
   useSessionTimeouts();
+
+  // Respect user's reduced motion preference (FR-008)
+  const prefersReducedMotion = useReducedMotion();
 
   // Track whether user has a token saved
   const [hasToken, setHasToken] = useState<boolean>(() => hasStoredToken());
@@ -172,13 +178,23 @@ export default function App() {
             <div className="flex items-center gap-4">
               <ConnectionStatus showLabel />
               {!isConnected && status === 'disconnected' && (
-                <button
+                <m.button
                   type="button"
                   onClick={connect}
-                  className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                  className="px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+                  whileHover={
+                    prefersReducedMotion
+                      ? undefined
+                      : {
+                          scale: 1.05,
+                          boxShadow: '0 0 12px 2px rgba(59, 130, 246, 0.4)',
+                          transition: SPRING_CONFIGS.gentle,
+                        }
+                  }
+                  whileTap={prefersReducedMotion ? undefined : { scale: 0.95 }}
                 >
                   Connect
-                </button>
+                </m.button>
               )}
             </div>
           </div>
@@ -254,14 +270,20 @@ export default function App() {
                             Session:{' '}
                             {sessions.get(filters.sessionId)?.project ??
                               filters.sessionId.slice(0, 8)}
-                            <button
+                            <m.button
                               type="button"
                               onClick={() => setSessionFilter(null)}
-                              className="ml-1 hover:text-purple-200"
+                              className="ml-1 hover:text-purple-200 focus:outline-none focus:ring-1 focus:ring-purple-400 rounded-sm"
                               aria-label="Clear session filter"
+                              whileHover={
+                                prefersReducedMotion
+                                  ? undefined
+                                  : { scale: 1.2, transition: SPRING_CONFIGS.gentle }
+                              }
+                              whileTap={prefersReducedMotion ? undefined : { scale: 0.9 }}
                             >
                               &times;
-                            </button>
+                            </m.button>
                           </span>
                         )}
                         {filters.timeRange !== null && (
@@ -280,23 +302,35 @@ export default function App() {
                               hour: '2-digit',
                               minute: '2-digit',
                             })}
-                            <button
+                            <m.button
                               type="button"
                               onClick={() => setTimeRangeFilter(null)}
-                              className="ml-1 hover:text-cyan-200"
+                              className="ml-1 hover:text-cyan-200 focus:outline-none focus:ring-1 focus:ring-cyan-400 rounded-sm"
                               aria-label="Clear time range filter"
+                              whileHover={
+                                prefersReducedMotion
+                                  ? undefined
+                                  : { scale: 1.2, transition: SPRING_CONFIGS.gentle }
+                              }
+                              whileTap={prefersReducedMotion ? undefined : { scale: 0.9 }}
                             >
                               &times;
-                            </button>
+                            </m.button>
                           </span>
                         )}
-                        <button
+                        <m.button
                           type="button"
                           onClick={clearFilters}
-                          className="text-xs text-gray-400 hover:text-gray-200"
+                          className="text-xs text-gray-400 hover:text-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-400 rounded px-1"
+                          whileHover={
+                            prefersReducedMotion
+                              ? undefined
+                              : { scale: 1.05, transition: SPRING_CONFIGS.gentle }
+                          }
+                          whileTap={prefersReducedMotion ? undefined : { scale: 0.95 }}
                         >
                           Clear all
-                        </button>
+                        </m.button>
                       </div>
                     )}
                   </div>

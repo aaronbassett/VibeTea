@@ -438,9 +438,9 @@
 - [x] T244 [GIT] Commit: add skeleton loaders and empty states
 - [x] T245 Add Intersection Observer pause for off-screen animated elements (NFR-005) (use devs:react-dev agent)
 - [x] T246 [GIT] Commit: add intersection observer pause for off-screen elements
-- [ ] T247 [P] Verify max 10 concurrent animations rule (FR-009) across all components (use devs:react-dev agent)
-- [ ] T248 [P] Audit all interactive elements for hover/focus spring feedback compliance (FR-007) (use devs:react-dev agent)
-- [ ] T249 [GIT] Commit: verify animation limits and hover/focus compliance
+- [x] T247 [P] Verify max 10 concurrent animations rule (FR-009) across all components (use devs:react-dev agent)
+- [x] T248 [P] Audit all interactive elements for hover/focus spring feedback compliance (FR-007) (use devs:react-dev agent)
+- [x] T249 [GIT] Commit: verify animation limits and hover/focus compliance
 - [ ] T250 [P] Add Lighthouse CI configuration to GitHub workflow (CI-001) (use devs:typescript-dev agent)
 - [ ] T251 [P] Add Storybook build step to GitHub workflow (CI-002) (use devs:typescript-dev agent)
 - [ ] T252 [P] Add reduced-motion compliance check to GitHub workflow (CI-003) (use devs:typescript-dev agent)

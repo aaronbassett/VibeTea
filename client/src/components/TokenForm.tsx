@@ -7,6 +7,10 @@
 
 import type { ChangeEvent, FormEvent } from 'react';
 import { useCallback, useEffect, useState } from 'react';
+import { LazyMotion, domAnimation, m } from 'framer-motion';
+
+import { SPRING_CONFIGS } from '../constants/design-tokens';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -79,6 +83,9 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
     hasStoredToken() ? 'saved' : 'not-saved'
   );
 
+  // Respect user's reduced motion preference (FR-008)
+  const prefersReducedMotion = useReducedMotion();
+
   // Update status when localStorage changes from another tab/window
   useEffect(() => {
     const handleStorageChange = (event: StorageEvent) => {
@@ -136,65 +143,84 @@ export function TokenForm({ onTokenChange, className = '' }: TokenFormProps) {
   const isSaved = status === 'saved';
   const canSave = tokenInput.trim() !== '';
 
+  // Spring-based hover animations (FR-007)
+  const getButtonHoverProps = (isDisabled: boolean) =>
+    prefersReducedMotion || isDisabled
+      ? undefined
+      : {
+          scale: 1.02,
+          boxShadow: '0 0 12px 2px rgba(217, 119, 87, 0.3)',
+          transition: SPRING_CONFIGS.gentle,
+        };
+
+  const getButtonTapProps = (isDisabled: boolean) =>
+    prefersReducedMotion || isDisabled ? undefined : { scale: 0.98 };
+
   return (
-    <div className={`w-full max-w-md ${className}`}>
-      <form onSubmit={handleSave} className="space-y-4">
-        <div>
-          <label
-            htmlFor="token-input"
-            className="block text-sm font-medium text-[#f5f5f5] mb-2"
-          >
-            Authentication Token
-          </label>
-          <input
-            id="token-input"
-            type="password"
-            value={tokenInput}
-            onChange={handleInputChange}
-            placeholder={
-              isSaved ? 'Enter new token to update' : 'Enter your token'
-            }
-            autoComplete="off"
-            className="w-full px-4 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg text-[#f5f5f5] placeholder-[#6b6b6b] focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:border-transparent"
-            aria-describedby="token-status"
-          />
-        </div>
+    <LazyMotion features={domAnimation}>
+      <div className={`w-full max-w-md ${className}`}>
+        <form onSubmit={handleSave} className="space-y-4">
+          <div>
+            <label
+              htmlFor="token-input"
+              className="block text-sm font-medium text-[#f5f5f5] mb-2"
+            >
+              Authentication Token
+            </label>
+            <input
+              id="token-input"
+              type="password"
+              value={tokenInput}
+              onChange={handleInputChange}
+              placeholder={
+                isSaved ? 'Enter new token to update' : 'Enter your token'
+              }
+              autoComplete="off"
+              className="w-full px-4 py-2 bg-[#1a1a1a] border border-[#2a2a2a] rounded-lg text-[#f5f5f5] placeholder-[#6b6b6b] hover:border-[#d97757]/50 focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:border-transparent transition-colors"
+              aria-describedby="token-status"
+            />
+          </div>
 
-        <div
-          id="token-status"
-          className="flex items-center gap-2"
-          role="status"
-          aria-live="polite"
-        >
-          <span
-            className={`h-2 w-2 rounded-full ${
-              isSaved ? 'bg-[#4ade80]' : 'bg-[#6b6b6b]'
-            }`}
-            aria-hidden="true"
-          />
-          <span className="text-sm text-[#a0a0a0]">
-            {isSaved ? 'Token saved' : 'No token saved'}
-          </span>
-        </div>
+          <div
+            id="token-status"
+            className="flex items-center gap-2"
+            role="status"
+            aria-live="polite"
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                isSaved ? 'bg-[#4ade80]' : 'bg-[#6b6b6b]'
+              }`}
+              aria-hidden="true"
+            />
+            <span className="text-sm text-[#a0a0a0]">
+              {isSaved ? 'Token saved' : 'No token saved'}
+            </span>
+          </div>
 
-        <div className="flex gap-3">
-          <button
-            type="submit"
-            disabled={!canSave}
-            className="flex-1 px-4 py-2 bg-[#d97757] hover:bg-[#e89a7a] disabled:bg-[#242424] disabled:text-[#6b6b6b] disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:ring-offset-2 focus:ring-offset-[#131313]"
-          >
-            Save Token
-          </button>
-          <button
-            type="button"
-            onClick={handleClear}
-            disabled={!isSaved}
-            className="px-4 py-2 bg-[#242424] hover:bg-[#2a2a2a] disabled:bg-[#1a1a1a] disabled:text-[#6b6b6b] disabled:cursor-not-allowed text-[#f5f5f5] font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:ring-offset-2 focus:ring-offset-[#131313]"
-          >
-            Clear
-          </button>
-        </div>
-      </form>
-    </div>
+          <div className="flex gap-3">
+            <m.button
+              type="submit"
+              disabled={!canSave}
+              className="flex-1 px-4 py-2 bg-[#d97757] hover:bg-[#e89a7a] disabled:bg-[#242424] disabled:text-[#6b6b6b] disabled:cursor-not-allowed text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:ring-offset-2 focus:ring-offset-[#131313]"
+              whileHover={getButtonHoverProps(!canSave)}
+              whileTap={getButtonTapProps(!canSave)}
+            >
+              Save Token
+            </m.button>
+            <m.button
+              type="button"
+              onClick={handleClear}
+              disabled={!isSaved}
+              className="px-4 py-2 bg-[#242424] hover:bg-[#2a2a2a] disabled:bg-[#1a1a1a] disabled:text-[#6b6b6b] disabled:cursor-not-allowed text-[#f5f5f5] font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-[#d97757] focus:ring-offset-2 focus:ring-offset-[#131313]"
+              whileHover={getButtonHoverProps(!isSaved)}
+              whileTap={getButtonTapProps(!isSaved)}
+            >
+              Clear
+            </m.button>
+          </div>
+        </form>
+      </div>
+    </LazyMotion>
   );
 }

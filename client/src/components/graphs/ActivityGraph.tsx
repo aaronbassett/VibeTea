@@ -354,7 +354,7 @@ interface TimeRangeToggleProps {
  * Segmented control for selecting the time range.
  *
  * Displays a pill-shaped toggle with 1h, 6h, and 24h options.
- * Uses spring animation for the selection indicator (respects reduced motion).
+ * Uses spring animation for the selection indicator and hover feedback (FR-007).
  * Fully keyboard accessible with proper focus states.
  */
 function TimeRangeToggle({
@@ -416,6 +416,18 @@ function TimeRangeToggle({
     }
   };
 
+  // Spring-based hover animation for unselected options (FR-007)
+  const getHoverProps = (isSelected: boolean, isDisabled: boolean) =>
+    prefersReducedMotion || isDisabled || isSelected
+      ? undefined
+      : {
+          scale: 1.1,
+          transition: SPRING_CONFIGS.gentle,
+        };
+
+  const getTapProps = (isDisabled: boolean) =>
+    prefersReducedMotion || isDisabled ? undefined : { scale: 0.95 };
+
   return (
     <LazyMotion features={domAnimation}>
       <div
@@ -458,7 +470,7 @@ function TimeRangeToggle({
           const isDisabled = onTimeRangeChange === undefined;
 
           return (
-            <button
+            <m.button
               key={range}
               type="button"
               role="radio"
@@ -468,7 +480,7 @@ function TimeRangeToggle({
               tabIndex={isSelected ? 0 : -1}
               onClick={() => handleOptionClick(range)}
               onKeyDown={(e) => handleKeyDown(e, index)}
-              className="relative z-10 px-3 py-1 text-xs font-medium rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+              className="relative z-10 px-3 py-1 text-xs font-medium rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
               style={{
                 color: isSelected ? COLORS.text.primary : COLORS.text.secondary,
                 // Focus ring uses the accent color
@@ -476,9 +488,11 @@ function TimeRangeToggle({
                 '--tw-ring-color': COLORS.accent.orange,
                 '--tw-ring-offset-color': COLORS.background.tertiary,
               }}
+              whileHover={getHoverProps(isSelected, isDisabled)}
+              whileTap={getTapProps(isDisabled)}
             >
               {TIME_RANGE_LABELS[range]}
-            </button>
+            </m.button>
           );
         })}
       </div>

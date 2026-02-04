@@ -330,20 +330,36 @@ function EventRow({
 
 /**
  * Button to jump back to the latest events.
+ * Uses spring-based hover/focus feedback per FR-007.
  */
 function JumpToLatestButton({
   onClick,
   newEventCount,
+  prefersReducedMotion,
 }: {
   readonly onClick: () => void;
   readonly newEventCount: number;
+  readonly prefersReducedMotion: boolean;
 }) {
+  // Spring-based hover animation (FR-007)
+  const hoverProps = prefersReducedMotion
+    ? undefined
+    : {
+        scale: 1.05,
+        boxShadow: '0 0 16px 4px rgba(59, 130, 246, 0.4)',
+        transition: SPRING_CONFIGS.gentle,
+      };
+
+  const tapProps = prefersReducedMotion ? undefined : { scale: 0.95 };
+
   return (
-    <button
+    <m.button
       type="button"
       onClick={onClick}
-      className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-full shadow-lg transition-all focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
+      className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-full shadow-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 focus:ring-offset-gray-900"
       aria-label={`Jump to latest events. ${newEventCount} new events available.`}
+      whileHover={hoverProps}
+      whileTap={tapProps}
     >
       <svg
         className="w-4 h-4"
@@ -365,7 +381,7 @@ function JumpToLatestButton({
           {newEventCount > 99 ? '99+' : newEventCount}
         </span>
       )}
-    </button>
+    </m.button>
   );
 }
 
@@ -673,6 +689,7 @@ export function EventStream({ className = '' }: EventStreamProps) {
         <JumpToLatestButton
           onClick={handleJumpToLatest}
           newEventCount={newEventCount}
+          prefersReducedMotion={prefersReducedMotion}
         />
       )}
     </div>
