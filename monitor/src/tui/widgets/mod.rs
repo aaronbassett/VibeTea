@@ -34,7 +34,7 @@ pub mod event_stream;
 pub mod header;
 pub mod logo;
 pub mod setup_form;
-// pub mod size_warning;
+pub mod size_warning;
 pub mod stats_footer;
 
 // Re-exports will be added as modules are implemented
@@ -45,5 +45,8 @@ pub use logo::{
     logo_height, LogoVariant, LogoWidget, COMPACT_LOGO_HEIGHT, FULL_LOGO_HEIGHT, TEXT_LOGO_HEIGHT,
 };
 pub use setup_form::{validate_session_name, SetupFormWidget};
-// pub use size_warning::SizeWarningWidget;
+pub use size_warning::{
+    check_terminal_size, get_terminal_size_status, SizeWarningWidget, TerminalSizeStatus,
+    MIN_TERMINAL_HEIGHT, MIN_TERMINAL_WIDTH,
+};
 pub use stats_footer::{StatsFooterWidget, STATS_FOOTER_HEIGHT};
