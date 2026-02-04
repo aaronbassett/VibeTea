@@ -483,20 +483,20 @@
 - [x] T253 Create retro/P12.md for this phase
 
 ### Implementation
-- [ ] T254 [GIT] Commit: initialize phase 12 retro
-- [ ] T255 [P] Add integration test for all trackers in monitor/src/tests/enhanced_tracking_test.rs (use devs:rust-dev agent)
+- [x] T254 [GIT] Commit: initialize phase 12 retro
+- [x] T255 [P] Add integration test for all trackers in monitor/src/tests/enhanced_tracking_test.rs (use devs:rust-dev agent)
 - [ ] T256 [GIT] Commit: add integration test for all trackers
-- [ ] T257 [P] Add privacy compliance tests - verify no code/prompts transmitted in monitor/src/tests/privacy_test.rs (use devs:rust-dev agent)
+- [x] T257 [P] Add privacy compliance tests - verify no code/prompts transmitted in monitor/src/tests/privacy_test.rs (use devs:rust-dev agent)
 - [ ] T258 [GIT] Commit: add privacy compliance tests
-- [ ] T259 [P] Add inotify limit warning (80% threshold) in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [x] T259 [P] Add inotify limit warning (80% threshold) in monitor/src/watcher.rs (use devs:rust-dev agent)
 - [ ] T260 [GIT] Commit: add inotify limit warning
-- [ ] T261 [P] Update quickstart.md with all new event types in specs/005-monitor-enhanced-tracking/quickstart.md
+- [x] T261 [P] Update quickstart.md with all new event types in specs/005-monitor-enhanced-tracking/quickstart.md
 - [ ] T262 [GIT] Commit: update quickstart.md
-- [ ] T263 Run cargo clippy and fix any warnings in monitor crate
+- [x] T263 Run cargo clippy and fix any warnings in monitor crate
 - [ ] T264 [GIT] Commit: fix clippy warnings
-- [ ] T265 Run cargo fmt --check and fix any formatting issues
+- [x] T265 Run cargo fmt --check and fix any formatting issues
 - [ ] T266 [GIT] Commit: fix formatting issues
-- [ ] T267 Run full test suite: cargo test -p vibetea-monitor --test-threads=1
+- [x] T267 Run full test suite: cargo test -p vibetea-monitor --test-threads=1
 - [ ] T268 [GIT] Commit: verify test suite passes
 - [ ] T269 Run /sdd:map incremental for Phase 12 changes
 - [ ] T270 [GIT] Commit: update codebase documents for phase 12
