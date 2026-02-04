@@ -449,9 +449,9 @@
 **Independent Test**: Start monitor, verify ASCII art logo appears in header area
 
 ### Phase Start
-- [ ] T219 [GIT] Verify working tree is clean before starting Phase 10
-- [ ] T220 [GIT] Pull and rebase on origin/main if needed
-- [ ] T221 [US8] Create retro/P10.md for this phase
+- [x] T219 [GIT] Verify working tree is clean before starting Phase 10
+- [x] T220 [GIT] Pull and rebase on origin/main if needed
+- [x] T221 [US8] Create retro/P10.md for this phase
 - [ ] T222 [GIT] Commit: initialize phase 10 retro
 
 ### Logo Widget
