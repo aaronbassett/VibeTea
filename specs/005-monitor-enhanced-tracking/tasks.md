@@ -461,7 +461,7 @@
 - [x] T243 [US9] Run /sdd:map incremental for Phase 11 changes
 - [x] T244 [GIT] Commit: update codebase documents for phase 11
 - [x] T245 [US9] Review retro/P11.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T246 [GIT] Commit: finalize phase 11 retro
+- [x] T246 [GIT] Commit: finalize phase 11 retro
 
 ### Phase Completion
 - [ ] T247 [GIT] Push branch to origin (ensure pre-push hooks pass)
