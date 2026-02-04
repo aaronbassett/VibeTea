@@ -27,21 +27,21 @@
 **Purpose**: Initialize Supabase project structure and local development environment
 
 ### Phase Start
-- [ ] T001 [GIT] Verify on feature branch 001-supabase-persistence and working tree is clean
-- [ ] T002 [GIT] Pull and rebase on origin/main if needed
+- [x] T001 [GIT] Verify on feature branch 001-supabase-persistence and working tree is clean
+- [x] T002 [GIT] Pull and rebase on origin/main if needed
 
 ### Implementation
-- [ ] T003 Initialize Supabase project with `supabase init` in repository root
-- [ ] T004 [GIT] Commit: initialize supabase project
-- [ ] T005 [P] Create supabase/.env.local with template configuration per quickstart.md (include all env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VIBETEA_SUBSCRIBER_TOKEN, VIBETEA_PUBLIC_KEYS)
-- [ ] T006 [P] Create monitor/.env.local with VIBETEA_SUPABASE_URL and VIBETEA_SUPABASE_BATCH_INTERVAL_SECS; update client/.env.local with VITE_SUPABASE_URL placeholder
-- [ ] T007 [GIT] Commit: add environment configuration templates
+- [x] T003 Initialize Supabase project with `supabase init` in repository root
+- [x] T004 [GIT] Commit: initialize supabase project
+- [x] T005 [P] Create supabase/.env.local with template configuration per quickstart.md (include all env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, VIBETEA_SUBSCRIBER_TOKEN, VIBETEA_PUBLIC_KEYS)
+- [x] T006 [P] Create monitor/.env.local with VIBETEA_SUPABASE_URL and VIBETEA_SUPABASE_BATCH_INTERVAL_SECS; update client/.env.local with VITE_SUPABASE_URL placeholder
+- [x] T007 [GIT] Commit: add environment configuration templates
 
 ### Phase Completion
-- [ ] T008 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T009 [GIT] Create/update PR to main with phase summary
-- [ ] T010 [GIT] Verify all CI checks pass
-- [ ] T011 [GIT] Report PR ready status
+- [x] T008 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T009 [GIT] Create/update PR to main with phase summary
+- [x] T010 [GIT] Verify all CI checks pass
+- [x] T011 [GIT] Report PR ready status
 
 ---
 
@@ -52,31 +52,31 @@
 **CRITICAL**: No user story work can begin until this phase is complete
 
 ### Phase Start
-- [ ] T012 [GIT] Verify working tree is clean before starting Phase 2
-- [ ] T013 [GIT] Pull and rebase on origin/main if needed
+- [x] T012 [GIT] Verify working tree is clean before starting Phase 2
+- [x] T013 [GIT] Pull and rebase on origin/main if needed
 
 ### Implementation
-- [ ] T014 Create retro/P2.md for this phase
-- [ ] T015 [GIT] Commit: initialize phase 2 retro
-- [ ] T016 Create database migration supabase/migrations/20260203000000_create_events_table.sql with events table, indexes, and RLS per data-model.md
-- [ ] T017 [GIT] Commit: add events table migration
-- [ ] T018 [P] Create bulk_insert_events PostgreSQL function in supabase/migrations/20260203000001_create_functions.sql per data-model.md
-- [ ] T019 [P] Create get_hourly_aggregates PostgreSQL function in supabase/migrations/20260203000001_create_functions.sql per data-model.md
-- [ ] T020 [GIT] Commit: add database functions for bulk insert and aggregation
-- [ ] T021 Add HourlyAggregate type to client/src/types/events.ts per data-model.md (use devs:typescript-dev agent)
-- [ ] T022 [GIT] Commit: add HourlyAggregate type
-- [ ] T023 Create shared Ed25519 signature verification utility in supabase/functions/_shared/auth.ts per research.md (use devs:typescript-dev agent)
-- [ ] T024 [GIT] Commit: add shared auth utility for edge functions
-- [ ] T025 Run codebase mapping for Phase 2 changes (/sdd:map incremental)
-- [ ] T026 [GIT] Commit: update codebase documents for phase 2
-- [ ] T027 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T028 [GIT] Commit: finalize phase 2 retro
+- [x] T014 Create retro/P2.md for this phase
+- [x] T015 [GIT] Commit: initialize phase 2 retro
+- [x] T016 Create database migration supabase/migrations/20260203000000_create_events_table.sql with events table, indexes, and RLS per data-model.md
+- [x] T017 [GIT] Commit: add events table migration
+- [x] T018 [P] Create bulk_insert_events PostgreSQL function in supabase/migrations/20260203000001_create_functions.sql per data-model.md
+- [x] T019 [P] Create get_hourly_aggregates PostgreSQL function in supabase/migrations/20260203000001_create_functions.sql per data-model.md
+- [x] T020 [GIT] Commit: add database functions for bulk insert and aggregation
+- [x] T021 Add HourlyAggregate type to client/src/types/events.ts per data-model.md (use devs:typescript-dev agent)
+- [x] T022 [GIT] Commit: add HourlyAggregate type
+- [x] T023 Create shared Ed25519 signature verification utility in supabase/functions/_shared/auth.ts per research.md (use devs:typescript-dev agent)
+- [x] T024 [GIT] Commit: add shared auth utility for edge functions
+- [x] T025 Run codebase mapping for Phase 2 changes (/sdd:map incremental)
+- [x] T026 [GIT] Commit: update codebase documents for phase 2
+- [x] T027 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T028 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
-- [ ] T029 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T030 [GIT] Create/update PR to main with phase summary
-- [ ] T031 [GIT] Verify all CI checks pass
-- [ ] T032 [GIT] Report PR ready status
+- [x] T029 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T030 [GIT] Create/update PR to main with phase summary
+- [x] T031 [GIT] Verify all CI checks pass
+- [x] T032 [GIT] Report PR ready status
 
 **Checkpoint**: Foundation ready - database schema, functions, and shared types are in place
 
@@ -93,45 +93,45 @@
 **Dependencies**: T023-T024 (shared auth utility) MUST be complete before edge function scaffolds
 
 ### Phase Start
-- [ ] T033 [GIT] Verify working tree is clean before starting Phase 3
-- [ ] T034 [GIT] Pull and rebase on origin/main if needed
+- [x] T033 [GIT] Verify working tree is clean before starting Phase 3
+- [x] T034 [GIT] Pull and rebase on origin/main if needed
 
 ### Implementation
-- [ ] T035 [US4] Create retro/P3.md for this phase
-- [ ] T036 [GIT] Commit: initialize phase 3 retro
-- [ ] T037 [P] [US4] Create ingest edge function scaffold in supabase/functions/ingest/index.ts with Deno imports; imports _shared/auth.ts (blockedBy: T024) (use devs:typescript-dev agent)
-- [ ] T038 [P] [US4] Create query edge function scaffold in supabase/functions/query/index.ts with Deno imports; imports _shared/auth.ts (blockedBy: T024) (use devs:typescript-dev agent)
-- [ ] T039 [GIT] Commit: scaffold edge function structures
-- [ ] T040 Add deno test configuration to CI workflow in .github/workflows/ci.yml (moved from Phase 1 - edge functions now exist)
-- [ ] T041 [GIT] Commit: add edge function tests to CI
-- [ ] T042 [P] [US4] Implement Ed25519 signature verification in ingest edge function per ingest.yaml contract (use devs:typescript-dev agent)
-- [ ] T043 [P] [US4] Implement bearer token validation in query edge function per query.yaml contract (use devs:typescript-dev agent)
-- [ ] T044 [GIT] Commit: implement authentication for both edge functions
-- [ ] T045 [US4] Add request body validation to ingest edge function (max 1000 events, event schema validation, eventType→event_type field mapping) per ingest.yaml (use devs:typescript-dev agent)
-- [ ] T046 [GIT] Commit: add ingest request validation
-- [ ] T047 [US4] Add query parameter validation to query edge function (days must be 7 or 30) per query.yaml (use devs:typescript-dev agent)
-- [ ] T048 [GIT] Commit: add query parameter validation
-- [ ] T049 [US4] Add error response handling to both edge functions per contracts (use devs:typescript-dev agent)
-- [ ] T050 [GIT] Commit: add error response handling
-- [ ] T051 [US4] Wire ingest edge function to database - implement bulk_insert_events RPC call (blockedBy: T020) (use devs:typescript-dev agent)
-- [ ] T052 [GIT] Commit: wire ingest to database
-- [ ] T053 [US4] Wire query edge function to database - implement get_hourly_aggregates RPC call (blockedBy: T019) (use devs:typescript-dev agent)
-- [ ] T054 [GIT] Commit: wire query to database
-- [ ] T055 [P] [US4] Create unit tests for ingest auth in supabase/functions/ingest/index.test.ts (use devs:typescript-dev agent)
-- [ ] T056 [P] [US4] Create unit tests for query auth in supabase/functions/query/index.test.ts (use devs:typescript-dev agent)
-- [ ] T057 [GIT] Commit: add edge function auth tests
-- [ ] T058 [US4] Create integration test verifying RLS denies direct database access (validates SC-003) in supabase/functions/_tests/rls.test.ts (use devs:typescript-dev agent)
-- [ ] T059 [GIT] Commit: add RLS negative test
-- [ ] T060 [US4] Run codebase mapping for Phase 3 changes (/sdd:map incremental)
-- [ ] T061 [GIT] Commit: update codebase documents for phase 3
-- [ ] T062 [US4] Review retro/P3.md and extract critical learnings to CLAUDE.md (security patterns take priority)
-- [ ] T063 [GIT] Commit: finalize phase 3 retro
+- [x] T035 [US4] Create retro/P3.md for this phase
+- [x] T036 [GIT] Commit: initialize phase 3 retro
+- [x] T037 [P] [US4] Create ingest edge function scaffold in supabase/functions/ingest/index.ts with Deno imports; imports _shared/auth.ts (blockedBy: T024) (use devs:typescript-dev agent)
+- [x] T038 [P] [US4] Create query edge function scaffold in supabase/functions/query/index.ts with Deno imports; imports _shared/auth.ts (blockedBy: T024) (use devs:typescript-dev agent)
+- [x] T039 [GIT] Commit: scaffold edge function structures
+- [x] T040 Add deno test configuration to CI workflow in .github/workflows/ci.yml (moved from Phase 1 - edge functions now exist)
+- [x] T041 [GIT] Commit: add edge function tests to CI
+- [x] T042 [P] [US4] Implement Ed25519 signature verification in ingest edge function per ingest.yaml contract (use devs:typescript-dev agent)
+- [x] T043 [P] [US4] Implement bearer token validation in query edge function per query.yaml contract (use devs:typescript-dev agent)
+- [x] T044 [GIT] Commit: implement authentication for both edge functions
+- [x] T045 [US4] Add request body validation to ingest edge function (max 1000 events, event schema validation, eventType→event_type field mapping) per ingest.yaml (use devs:typescript-dev agent)
+- [x] T046 [GIT] Commit: add ingest request validation
+- [x] T047 [US4] Add query parameter validation to query edge function (days must be 7 or 30) per query.yaml (use devs:typescript-dev agent)
+- [x] T048 [GIT] Commit: add query parameter validation
+- [x] T049 [US4] Add error response handling to both edge functions per contracts (use devs:typescript-dev agent)
+- [x] T050 [GIT] Commit: add error response handling
+- [x] T051 [US4] Wire ingest edge function to database - implement bulk_insert_events RPC call (blockedBy: T020) (use devs:typescript-dev agent)
+- [x] T052 [GIT] Commit: wire ingest to database
+- [x] T053 [US4] Wire query edge function to database - implement get_hourly_aggregates RPC call (blockedBy: T019) (use devs:typescript-dev agent)
+- [x] T054 [GIT] Commit: wire query to database
+- [x] T055 [P] [US4] Create unit tests for ingest auth in supabase/functions/ingest/index.test.ts (use devs:typescript-dev agent)
+- [x] T056 [P] [US4] Create unit tests for query auth in supabase/functions/query/index.test.ts (use devs:typescript-dev agent)
+- [x] T057 [GIT] Commit: add edge function auth tests
+- [x] T058 [US4] Create integration test verifying RLS denies direct database access (validates SC-003) in supabase/functions/_tests/rls.test.ts (use devs:typescript-dev agent)
+- [x] T059 [GIT] Commit: add RLS negative test
+- [x] T060 [US4] Run codebase mapping for Phase 3 changes (/sdd:map incremental)
+- [x] T061 [GIT] Commit: update codebase documents for phase 3
+- [x] T062 [US4] Review retro/P3.md and extract critical learnings to CLAUDE.md (security patterns take priority)
+- [x] T063 [GIT] Commit: finalize phase 3 retro
 
 ### Phase Completion
-- [ ] T064 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T065 [GIT] Create/update PR to main with phase summary
-- [ ] T066 [GIT] Verify all CI checks pass
-- [ ] T067 [GIT] Report PR ready status
+- [x] T064 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T065 [GIT] Create/update PR to main with phase summary
+- [x] T066 [GIT] Verify all CI checks pass
+- [x] T067 [GIT] Report PR ready status
 
 **Checkpoint**: Edge functions fully functional with auth and database wiring; RLS blocks direct access; service role bypasses RLS
 
@@ -146,41 +146,41 @@
 **Dependencies**: Phase 3 MUST be complete (ingest edge function with database wiring ready)
 
 ### Phase Start
-- [ ] T068 [GIT] Verify working tree is clean before starting Phase 4
-- [ ] T069 [GIT] Pull and rebase on origin/main if needed
+- [x] T068 [GIT] Verify working tree is clean before starting Phase 4
+- [x] T069 [GIT] Pull and rebase on origin/main if needed
 
 ### Implementation
-- [ ] T070 [US2] Create retro/P4.md for this phase
-- [ ] T071 [GIT] Commit: initialize phase 4 retro
-- [ ] T072 [US2] Add PersistenceConfig struct to monitor/src/config.rs with VIBETEA_SUPABASE_URL, VIBETEA_SUPABASE_BATCH_INTERVAL_SECS, and VIBETEA_SUPABASE_RETRY_LIMIT (use devs:rust-dev agent)
-- [ ] T073 [GIT] Commit: add persistence configuration
-- [ ] T074 [US2] Create persistence module scaffold in monitor/src/persistence.rs with EventBatcher struct (use devs:rust-dev agent)
-- [ ] T075 [GIT] Commit: scaffold persistence module
-- [ ] T076 [US2] Add pub mod persistence to monitor/src/lib.rs
-- [ ] T077 [GIT] Commit: export persistence module
-- [ ] T078 [US2] Implement event buffering in EventBatcher with max 1000 events limit per FR-002/FR-010 (use devs:rust-dev agent)
-- [ ] T079 [GIT] Commit: implement event buffering
-- [ ] T080 [US2] Implement batch submission with Ed25519 signing using existing key pair; JSON serializes eventType field (use devs:rust-dev agent)
-- [ ] T081 [GIT] Commit: implement signed batch submission
-- [ ] T082 [US2] Implement retry logic with exponential backoff (1s, 2s, 4s; max 3 retries per FR-015) per spec edge cases (use devs:rust-dev agent)
-- [ ] T083 [GIT] Commit: implement retry logic
-- [ ] T084 [US2] Implement batch interval timer using tokio - sends batch when interval elapses OR 1000 events queued (use devs:rust-dev agent)
-- [ ] T085 [GIT] Commit: implement batch interval timer
-- [ ] T086 [US2] Initialize persistence in monitor/src/main.rs if VIBETEA_SUPABASE_URL is configured (use devs:rust-dev agent)
-- [ ] T087 [GIT] Commit: initialize persistence in monitor main
-- [ ] T088 [P] [US2] Create unit tests for EventBatcher in monitor/src/persistence.rs with mocked HTTP (use devs:rust-dev agent)
-- [ ] T089 [P] [US2] Create integration test for batch submission in supabase/functions/ingest/index.test.ts (use devs:typescript-dev agent)
-- [ ] T090 [GIT] Commit: add persistence tests
-- [ ] T091 [US2] Run codebase mapping for Phase 4 changes (/sdd:map incremental)
-- [ ] T092 [GIT] Commit: update codebase documents for phase 4
-- [ ] T093 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T094 [GIT] Commit: finalize phase 4 retro
+- [x] T070 [US2] Create retro/P4.md for this phase
+- [x] T071 [GIT] Commit: initialize phase 4 retro
+- [x] T072 [US2] Add PersistenceConfig struct to monitor/src/config.rs with VIBETEA_SUPABASE_URL, VIBETEA_SUPABASE_BATCH_INTERVAL_SECS, and VIBETEA_SUPABASE_RETRY_LIMIT (use devs:rust-dev agent)
+- [x] T073 [GIT] Commit: add persistence configuration
+- [x] T074 [US2] Create persistence module scaffold in monitor/src/persistence.rs with EventBatcher struct (use devs:rust-dev agent)
+- [x] T075 [GIT] Commit: scaffold persistence module
+- [x] T076 [US2] Add pub mod persistence to monitor/src/lib.rs
+- [x] T077 [GIT] Commit: export persistence module
+- [x] T078 [US2] Implement event buffering in EventBatcher with max 1000 events limit per FR-002/FR-010 (use devs:rust-dev agent)
+- [x] T079 [GIT] Commit: implement event buffering
+- [x] T080 [US2] Implement batch submission with Ed25519 signing using existing key pair; JSON serializes eventType field (use devs:rust-dev agent)
+- [x] T081 [GIT] Commit: implement signed batch submission
+- [x] T082 [US2] Implement retry logic with exponential backoff (1s, 2s, 4s; max 3 retries per FR-015) per spec edge cases (use devs:rust-dev agent)
+- [x] T083 [GIT] Commit: implement retry logic
+- [x] T084 [US2] Implement batch interval timer using tokio - sends batch when interval elapses OR 1000 events queued (use devs:rust-dev agent)
+- [x] T085 [GIT] Commit: implement batch interval timer
+- [x] T086 [US2] Initialize persistence in monitor/src/main.rs if VIBETEA_SUPABASE_URL is configured (use devs:rust-dev agent)
+- [x] T087 [GIT] Commit: initialize persistence in monitor main
+- [x] T088 [P] [US2] Create unit tests for EventBatcher in monitor/src/persistence.rs with mocked HTTP (use devs:rust-dev agent)
+- [x] T089 [P] [US2] Create integration test for batch submission in supabase/functions/ingest/index.test.ts (use devs:typescript-dev agent)
+- [x] T090 [GIT] Commit: add persistence tests
+- [x] T091 [US2] Run codebase mapping for Phase 4 changes (/sdd:map incremental)
+- [x] T092 [GIT] Commit: update codebase documents for phase 4
+- [x] T093 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T094 [GIT] Commit: finalize phase 4 retro
 
 ### Phase Completion
-- [ ] T095 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T096 [GIT] Create/update PR to main with phase summary
-- [ ] T097 [GIT] Verify all CI checks pass
-- [ ] T098 [GIT] Report PR ready status
+- [x] T095 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T096 [GIT] Create/update PR to main with phase summary
+- [x] T097 [GIT] Verify all CI checks pass
+- [x] T098 [GIT] Report PR ready status
 
 **Checkpoint**: Monitor batches and persists events; events visible in Supabase database via edge function
 
@@ -195,20 +195,20 @@
 **Dependencies**: Phase 3 MUST be complete (query edge function with database wiring ready)
 
 ### Phase Start
-- [ ] T099 [GIT] Verify working tree is clean before starting Phase 5
-- [ ] T100 [GIT] Pull and rebase on origin/main if needed
+- [x] T099 [GIT] Verify working tree is clean before starting Phase 5
+- [x] T100 [GIT] Pull and rebase on origin/main if needed
 
 ### Implementation
-- [ ] T101 [US3] Create retro/P5.md for this phase
-- [ ] T102 [GIT] Commit: initialize phase 5 retro
-- [ ] T103 [US3] Add query integration test verifying aggregation returns HourlyAggregate[] (sorted DESC by date/hour) in supabase/functions/query/index.test.ts (use devs:typescript-dev agent)
-- [ ] T104 [GIT] Commit: add query integration test
-- [ ] T105 [US3] Extend EventStore in client/src/store/eventStore.ts with historicData state per data-model.md (use devs:typescript-dev agent)
-- [ ] T106 [GIT] Commit: add historic data to event store
-- [ ] T107 [US3] Implement fetchHistoricData action in EventStore with bearer token auth (use devs:typescript-dev agent)
-- [ ] T108 [GIT] Commit: implement fetch historic data action
-- [ ] T109 [US3] Create useHistoricData hook in client/src/hooks/useHistoricData.ts with 5-minute stale-while-revalidate caching per research.md (use devs:typescript-dev agent)
-- [ ] T110 [GIT] Commit: create useHistoricData hook
+- [x] T101 [US3] Create retro/P5.md for this phase
+- [x] T102 [GIT] Commit: initialize phase 5 retro
+- [x] T103 [US3] Add query integration test verifying aggregation returns HourlyAggregate[] (sorted DESC by date/hour) in supabase/functions/query/index.test.ts (use devs:typescript-dev agent)
+- [x] T104 [GIT] Commit: add query integration test
+- [x] T105 [US3] Extend EventStore in client/src/store/eventStore.ts with historicData state per data-model.md (use devs:typescript-dev agent)
+- [x] T106 [GIT] Commit: add historic data to event store
+- [x] T107 [US3] Implement fetchHistoricData action in EventStore with bearer token auth (use devs:typescript-dev agent)
+- [x] T108 [GIT] Commit: implement fetch historic data action
+- [x] T109 [US3] Create useHistoricData hook in client/src/hooks/useHistoricData.ts with 5-minute stale-while-revalidate caching per research.md (use devs:typescript-dev agent)
+- [x] T110 [GIT] Commit: create useHistoricData hook
 - [ ] T111 [P] [US3] Create MSW handlers for query edge function in client mocks (use devs:typescript-dev agent)
 - [ ] T112 [P] [US3] Create unit tests for useHistoricData hook (use devs:typescript-dev agent)
 - [ ] T113 [GIT] Commit: add client historic data tests
