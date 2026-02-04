@@ -484,10 +484,11 @@ mod tests {
     #[test]
     fn terminal_size_status_is_clone_and_copy() {
         let status = get_terminal_size_status(80, 24);
-        let cloned = status.clone();
-        let copied = status;
-        assert_eq!(status, cloned);
-        assert_eq!(status, copied);
+        // Use Copy trait directly - don't use clone() on Copy types
+        let copied1 = status;
+        let copied2 = status;
+        assert_eq!(status, copied1);
+        assert_eq!(status, copied2);
     }
 
     // =========================================================================
