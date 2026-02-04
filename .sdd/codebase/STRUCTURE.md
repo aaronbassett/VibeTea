@@ -1,7 +1,7 @@
 # Project Structure
 
 > **Purpose**: Document directory layout, module boundaries, and where to add new code.
-> **Generated**: 2026-02-04
+> **Generated**: 2026-02-03
 > **Last Updated**: 2026-02-04
 
 ## Directory Layout
@@ -10,13 +10,13 @@
 VibeTea/
 ├── monitor/                    # Rust CLI for watching Claude Code sessions
 │   ├── src/
-│   │   ├── main.rs            # Entry point, CLI commands (init, run)
+│   │   ├── main.rs            # Entry point, CLI commands (init, run, export-key)
 │   │   ├── lib.rs             # Module exports
 │   │   ├── config.rs          # Environment configuration loading
 │   │   ├── watcher.rs         # File system watcher (inotify/FSEvents/ReadDirectoryChangesW)
 │   │   ├── parser.rs          # Claude Code JSONL parsing
 │   │   ├── privacy.rs         # Event payload sanitization
-│   │   ├── crypto.rs          # Ed25519 keypair generation/management
+│   │   ├── crypto.rs          # Ed25519 keypair generation/management with key loading strategies and export
 │   │   ├── sender.rs          # HTTP client with retry and buffering
 │   │   ├── types.rs           # Event type definitions
 │   │   ├── error.rs           # Error types
@@ -34,7 +34,9 @@ VibeTea/
 │   │       └── tokenize.rs    # Skill name extraction (Phase 5)
 │   ├── tests/
 │   │   ├── privacy_test.rs    # Privacy filtering tests
-│   │   └── sender_recovery_test.rs  # Retry logic tests
+│   │   ├── sender_recovery_test.rs  # Retry logic tests
+│   │   ├── env_key_test.rs    # Environment variable key loading tests
+│   │   └── key_export_test.rs # export-key command integration tests (Phase 4)
 │   └── Cargo.toml
 │
 ├── server/                     # Rust HTTP server (event hub)
@@ -80,6 +82,17 @@ VibeTea/
 │   ├── package.json
 │   └── tsconfig.json
 │
+├── .github/
+│   ├── actions/
+│   │   └── vibetea-monitor/           # Composite GitHub Action (Phase 6)
+│   │       └── action.yml             # Action definition for simplified monitor setup
+│   ├── workflows/
+│   │   ├── ci.yml                    # Primary CI workflow (tests, linting, build)
+│   │   └── ci-with-monitor.yml       # Example workflow with VibeTea monitoring (Phase 5)
+│   ├── ISSUE_TEMPLATE/
+│   ├── CODEOWNERS
+│   └── PULL_REQUEST_TEMPLATE.md
+│
 ├── discovery/                  # AI assistant discovery module (future expansion)
 │   └── src/
 │
@@ -102,12 +115,12 @@ VibeTea/
 
 | File | Purpose | Key Types |
 |------|---------|-----------|
-| `main.rs` | CLI entry (init/run commands), signal handling, tracker initialization | `Cli`, `Command` |
+| `main.rs` | CLI entry (init/run/export-key commands), signal handling | `Cli`, `Command` |
 | `config.rs` | Load from env vars: `VIBETEA_*` | `Config` |
 | `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` and `~/.claude/history.jsonl` | `FileWatcher`, `WatchEvent` |
 | `parser.rs` | Parse JSONL, extract Session/Activity/Tool/Agent events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
-| `crypto.rs` | Ed25519 keypair (generate, load, save) | `Crypto` |
+| `crypto.rs` | Ed25519 keypair with dual loading strategy (env var + file fallback) and key export | `Crypto`, `KeySource`, `CryptoError` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
 | `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent`, `TodoProgressEvent` |
 | `error.rs` | Error types | `MonitorError`, custom errors |
@@ -121,6 +134,57 @@ VibeTea/
 | `utils/debounce.rs` | Event debouncing to coalesce rapid changes | `Debouncer`, `DebouncerError` |
 | `utils/session_filename.rs` | Parsing session identifiers from filenames | `parse_todo_filename()`, `parse_project_filename()` |
 | `utils/tokenize.rs` (Phase 5) | Skill name extraction | `extract_skill_name()` |
+
+### Crypto Module Details (`monitor/src/crypto.rs`)
+
+The crypto module provides Ed25519 key management with flexible loading strategies and export support:
+
+| Method | Purpose | Returns |
+|--------|---------|---------|
+| `Crypto::generate()` | Generate new Ed25519 keypair using OS RNG | `Crypto` instance |
+| `Crypto::load_from_env()` | Load 32-byte seed from `VIBETEA_PRIVATE_KEY` env var | `(Crypto, KeySource::EnvironmentVariable)` |
+| `Crypto::load_with_fallback(dir)` | Try env var first, fallback to file if not set | `(Crypto, KeySource)` |
+| `Crypto::load(dir)` | Load from file only (`dir/key.priv`) | `Crypto` instance |
+| `Crypto::save(dir)` | Save keypair to files (mode 0600/0644) | `Result<()>` |
+| `Crypto::public_key_base64()` | Get public key as base64 (RFC 4648) | `String` |
+| `Crypto::public_key_fingerprint()` | Get first 8 chars of public key (for logging) | `String` |
+| `Crypto::seed_base64()` | Export seed as base64 (for `VIBETEA_PRIVATE_KEY` and `export-key`) | `String` |
+| `Crypto::sign(message)` | Sign message, return base64 signature | `String` |
+| `Crypto::sign_raw(message)` | Sign message, return raw 64-byte signature | `[u8; 64]` |
+
+**Key Loading Behavior:**
+- `load_with_fallback()` used in `monitor/src/main.rs` at startup (see lines 222-226)
+- `load()` used in `run_export_key()` for filesystem-only export (see lines 189-193)
+- Environment variable `VIBETEA_PRIVATE_KEY` contains base64-encoded 32-byte Ed25519 seed
+- Whitespace trimming applied before base64 decoding
+- If env var set but invalid: error immediately (no fallback to file)
+- If env var not set: load from `VIBETEA_KEY_PATH/key.priv` (default `~/.vibetea/key.priv`)
+- Returns `KeySource` enum indicating origin (for logging)
+
+**Memory Safety:**
+- All intermediate key buffers zeroed via `zeroize` crate
+- Seed arrays zeroed immediately after `SigningKey` creation
+- Error paths also zero buffers before returning errors
+- Marked with FR-020 comments for security audit
+
+### Monitor CLI Commands
+
+The Monitor now supports three subcommands:
+
+| Command | File Location | Purpose | Arguments |
+|---------|---|---------|-----------|
+| `init` | `monitor/src/main.rs:138-178` | Generate Ed25519 keypair | `--force` (optional) |
+| `export-key` | `monitor/src/main.rs:180-202` | Export private key for CI/CD | `--path <DIR>` (optional, defaults to `~/.vibetea`) |
+| `run` | `monitor/src/main.rs:204-337` | Start monitor daemon | (none, requires `VIBETEA_SERVER_URL`) |
+
+**Phase 4 Addition: export-key Command**
+- Lines 101-109: CLI definition (ExportKey struct)
+- Lines 180-202: Implementation (run_export_key function)
+- Supports `--path` argument for custom key directory
+- Falls back to `VIBETEA_KEY_PATH` or `~/.vibetea` if not specified
+- Outputs only base64 seed to stdout (no diagnostics)
+- All errors go to stderr
+- Exit code 0 on success, 1 on configuration error
 
 ### `server/src/` - Server Component
 
@@ -153,6 +217,67 @@ VibeTea/
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
 
+### `.github/actions/vibetea-monitor/` - GitHub Actions Composite Action (Phase 6)
+
+| File | Purpose | Configuration |
+|------|---------|----------------|
+| `action.yml` | Action metadata, inputs, outputs, steps | Defines monitor download, env setup, startup logic |
+
+**action.yml Details:**
+- **Name**: "VibeTea Monitor"
+- **Description**: Start VibeTea monitor to track Claude Code events during GitHub Actions workflows
+- **Branding**: Icon "activity", color "green"
+- **Inputs** (see lines 24-46):
+  - `server-url` (required): VibeTea server URL
+  - `private-key` (required): Base64-encoded Ed25519 private key
+  - `source-id` (optional): Custom event source identifier
+  - `version` (optional): Monitor version (default: "latest")
+  - `shutdown-timeout` (optional): Graceful shutdown timeout (default: "5" seconds)
+- **Outputs** (see lines 48-55):
+  - `monitor-pid`: Process ID from `steps.start-monitor.outputs.pid`
+  - `monitor-started`: Success flag from `steps.start-monitor.outputs.started`
+- **Steps** (see lines 59-167):
+  - Step 1 (lines 61-87): Download VibeTea Monitor binary via curl
+  - Step 2 (lines 90-144): Start monitor in background with environment variables
+  - Step 3 (lines 150-166): Save cleanup configuration and document graceful shutdown pattern
+
+**Key Design Features:**
+- Non-blocking: Gracefully skips if binary download fails (workflow continues)
+- Composable: Single action can be used in multiple workflows
+- Idempotent: Outputs indicate success/failure for conditional steps
+- Self-documenting: Prints cleanup instructions for manual SIGTERM handling
+
+### `.github/workflows/` - GitHub Actions Integration (Phase 5 & 6)
+
+| File | Purpose | Usage | Added In |
+|------|---------|-------|----------|
+| `ci.yml` | Primary CI workflow | Runs on push/PR, tests + lint + build | Phase 1 |
+| `ci-with-monitor.yml` | Example workflow with manual monitor setup | Template for tracking Claude Code events in CI | Phase 5 |
+
+**ci.yml Details:**
+- Lines 1-11: Workflow metadata and triggers
+- Lines 14-51: Rust job (tests with `--test-threads=1` for env var safety)
+- Lines 53-100: Client job (TypeScript tests, lint, format, build)
+
+**ci-with-monitor.yml Details (Phase 5):**
+- Lines 16-24: Workflow trigger (manual via `workflow_dispatch`)
+- Lines 34-39: Environment variables (private key, server URL, source ID)
+- Lines 46-57: Download VibeTea monitor binary from GitHub releases
+- Lines 60-70: Start monitor in background before CI steps
+- Lines 91-101: CI steps (formatting, linting, tests, build)
+- Lines 105-113: Graceful shutdown with SIGTERM
+
+**Using the Composite Action (Phase 6):**
+Instead of manual binary download, workflows can use:
+```yaml
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "github-${{ github.repository }}-${{ github.run_id }}"
+    version: "latest"
+```
+
 ## Module Boundaries
 
 ### Monitor Module
@@ -160,50 +285,27 @@ VibeTea/
 Self-contained CLI with these responsibilities:
 1. **Watch** files via `FileWatcher` (both session JSONL and history.jsonl and todos/ directory and stats-cache.json)
 2. **Parse** JSONL via `SessionParser`
-3. **Extract enhanced events** via `trackers` (agent spawns, skill invocations, token usage, session metrics, activity patterns, model distribution, todo progress, file changes)
-4. **Filter** events via `PrivacyPipeline`
-5. **Sign** events via `Crypto`
-6. **Send** to server via `Sender`
+3. **Filter** events via `PrivacyPipeline`
+4. **Sign** events via `Crypto` (with dual-source key loading and export)
+5. **Send** to server via `Sender`
+6. **Export** keys via `export-key` command
 
 No cross-dependencies with Server or Client.
 
 ```
 monitor/src/main.rs
-├── config.rs (load env)
-├── watcher.rs → sender.rs
-│   ├─ session JSONL files
-│   ├─ history.jsonl (Phase 5)
-│   ├─ stats-cache.json (Phase 8-10)
-│   ├─ todos/ directory (Phase 6)
-│   └─ project files (Phase 8+)
-│   ↓
-├── parser.rs → trackers/
-│   ├→ agent_tracker.rs (detect Task tool_use)
-│   └→ privacy.rs
-│   ↓
-├── trackers/skill_tracker.rs (Phase 5)
-│   ├→ parse_history_entry()
-│   ├→ extract_skill_name() (from utils/tokenize.rs)
-│   └→ create_skill_invocation_event()
-│   ↓
-├── trackers/stats_tracker.rs (Phase 8-10)
-│   ├→ read_stats_with_retry()
-│   ├→ emit_stats_events() [emits SessionMetricsEvent + ActivityPatternEvent + ModelDistributionEvent + TokenUsageEvent for each model]
-│   └→ uses utils/debounce.rs for 200ms debouncing
-│   ↓
-├── trackers/todo_tracker.rs (Phase 6)
-│   ├→ parse_todo_file()
-│   ├→ count_todo_statuses()
-│   ├→ is_abandoned()
-│   └→ mark_session_ended() (integration with session summary events)
-│   ↓
-├── trackers/file_history_tracker.rs (Phase 8+)
-│   ├→ compute_line_deltas()
-│   └→ hash_file_path() (privacy)
-│   ↓
-├── sender.rs (HTTP, retry, buffering)
-│   ├── crypto.rs (sign events)
-│   └── types.rs (Event schema)
+├── Command::Init → run_init()
+├── Command::ExportKey → run_export_key()
+├── Command::Run → run_monitor()
+│   ├── config.rs (load env)
+│   ├── crypto.rs (load keys from env var OR file, track KeySource)
+│   ├── watcher.rs → sender.rs
+│   │   ↓
+│   ├── parser.rs → privacy.rs
+│   │   ↓
+│   └── sender.rs (HTTP, retry, buffering)
+│       ├── crypto.rs (sign events)
+│       └── types.rs (Event schema)
 ```
 
 ### Server Module
@@ -253,21 +355,40 @@ client/src/App.tsx (root)
 └── types/events.ts (TypeScript interfaces with Phase 9-10 payload types)
 ```
 
+### GitHub Actions Composite Action Module (Phase 6)
+
+Thin wrapper around monitor binary with these responsibilities:
+1. **Download** monitor binary from GitHub releases
+2. **Configure** environment variables
+3. **Start** monitor in background
+4. **Report** status and process ID
+
+No dependencies on source code (binary-only).
+
+```
+.github/actions/vibetea-monitor/action.yml
+├── Inputs: server-url, private-key, source-id, version, shutdown-timeout
+├── Step 1: Download binary (curl)
+├── Step 2: Start monitor with env vars
+├── Step 3: Document cleanup pattern
+└── Outputs: monitor-pid, monitor-started
+```
+
 ## Where to Add New Code
 
 | If you're adding... | Put it in... | Example |
 |---------------------|--------------|---------|
 | **New Monitor command** | `monitor/src/main.rs` (add to `Command` enum) | `Command::Status` |
 | **New Monitor feature** | `monitor/src/<feature>.rs` (new module) | `monitor/src/compression.rs` |
-| **New tracker module** | `monitor/src/trackers/<tracker>.rs` (new module) + export in `trackers/mod.rs` | `monitor/src/trackers/project_tracker.rs` for project tracking |
-| **New event extraction** | `monitor/src/trackers/` or enhance `monitor/src/parser.rs` | Add new `ParsedEventKind` variant |
-| **New utility function** | `monitor/src/utils/<category>.rs` for Rust utilities | `monitor/src/utils/hashing.rs` |
+| **New key loading method** | `monitor/src/crypto.rs` (add method to `Crypto`) | `Crypto::load_from_stdin()` |
 | **New Server endpoint** | `server/src/routes.rs` (add route handler) | `POST /events/:id/ack` |
 | **New Server middleware** | `server/src/routes.rs` or `server/src/` (new module) | `server/src/middleware.rs` |
 | **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
 | **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
+| **GitHub Actions workflow** | `.github/workflows/` (copy ci.yml as template) | `.github/workflows/release.yml` |
+| **GitHub Actions composite action** | `.github/actions/<action-name>/` (new directory) | `.github/actions/notify-slack/action.yml` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
 | **Tests** | Colocate with source: `file.rs` → internal `#[cfg(test)] mod tests`, Server/Monitor integration tests in `tests/` | — |
 
@@ -280,6 +401,7 @@ client/src/App.tsx (root)
 ```rust
 // In monitor/src/main.rs
 use vibetea_monitor::config::Config;
+use vibetea_monitor::crypto::{Crypto, KeySource};
 use vibetea_monitor::watcher::FileWatcher;
 use vibetea_monitor::sender::Sender;
 use vibetea_monitor::types::Event;
@@ -326,13 +448,39 @@ import type { Session } from '../types/events';
 - Utils: camelCase (e.g., `formatting.ts`)
 - Types: camelCase (e.g., `events.ts`)
 
+### GitHub Actions (YAML)
+
+**Convention**: Single file per action (action.yml in directory)
+
+```yaml
+# .github/actions/<action-name>/action.yml
+name: 'Action Name'
+description: 'Action description'
+inputs:
+  input-name:
+    description: 'Input description'
+    required: true
+outputs:
+  output-name:
+    description: 'Output description'
+    value: ${{ steps.<step-id>.outputs.<output-field> }}
+runs:
+  using: 'composite'
+  steps:
+    - run: echo "Hello"
+      shell: bash
+```
+
 ## Entry Points
 
 | Component | File | Launch Command |
 |-----------|------|-----------------|
 | **Monitor** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- run` |
+| **Monitor (init)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- init` |
+| **Monitor (export-key)** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- export-key` |
 | **Server** | `server/src/main.rs` | `cargo run -p vibetea-server` |
 | **Client** | `client/src/main.tsx` | `npm run dev` (from `client/`) |
+| **GitHub Actions** | `.github/actions/vibetea-monitor/action.yml` | `uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main` |
 
 ## Generated/Auto-Configured Files
 
@@ -351,11 +499,12 @@ Files that are auto-generated or should not be manually edited:
 
 | Category | Pattern | Example |
 |----------|---------|---------|
-| Module names | `snake_case` | `parser.rs`, `privacy.rs`, `agent_tracker.rs`, `skill_tracker.rs`, `stats_tracker.rs`, `todo_tracker.rs`, `file_history_tracker.rs` |
-| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent`, `TodoProgressEvent`, `FileChangeEvent` |
-| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()`, `parse_task_tool_use()`, `extract_skill_name()`, `count_todo_statuses()`, `emit_stats_events()` |
-| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX`, `DEFAULT_CHANNEL_CAPACITY`, `DEFAULT_DEBOUNCE_MS`, `STATS_DEBOUNCE_MS` |
-| Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs`, `agent_tracker` has internal test module, `todo_tracker` has extensive test module, `stats_tracker` has comprehensive test module |
+| Module names | `snake_case` | `parser.rs`, `privacy.rs` |
+| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload` |
+| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()` |
+| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX` |
+| Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs` |
+| Enum variants | `PascalCase` | `KeySource::EnvironmentVariable`, `KeySource::File` |
 
 ### TypeScript Components and Functions
 
@@ -368,13 +517,24 @@ Files that are auto-generated or should not be manually edited:
 | Constants | `UPPER_SNAKE_CASE` | `TOKEN_STORAGE_KEY`, `MAX_BACKOFF_MS` |
 | Test files | `__tests__/{name}.test.ts` | `__tests__/formatting.test.ts` |
 
+### YAML (GitHub Actions)
+
+| Category | Pattern | Example |
+|----------|---------|---------|
+| Workflow names | `kebab-case` | `ci.yml`, `ci-with-monitor.yml` |
+| Job names | `kebab-case` | `rust-tests`, `client-tests` |
+| Action names | `PascalCase` | `Install Rust toolchain` |
+| Step IDs | `kebab-case` | `download-binary`, `start-monitor` |
+| Input names | `kebab-case` | `server-url`, `private-key` |
+| Output names | `kebab-case` | `monitor-pid`, `monitor-started` |
+
 ## Dependency Boundaries (Import Rules)
 
 ### Monitor
 
 ```
-✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, trackers, utils, error
-✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, chrono, directories
+✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, error
+✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest, zeroize
 ✗ CANNOT import:  server modules, client code
 ```
 
@@ -393,121 +553,59 @@ Files that are auto-generated or should not be manually edited:
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
 ```
 
-## Enhanced Tracking Subsystem (Phase 4-10)
+### GitHub Actions Composite Action
 
-### Adding a New Tracker Module
-
-To add a new tracker (e.g., `project_tracker` for project tracking):
-
-1. **Create the module**: `monitor/src/trackers/project_tracker.rs`
-2. **Export it**: Add `pub mod project_tracker;` to `monitor/src/trackers/mod.rs`
-3. **Define extraction functions**: `parse_<source>()`, `create_<event>()`
-4. **Integrate with main loop**: Spawn async task in `main.rs` or call from parser
-5. **Add event type**: New `EventPayload` and `EventType` variants in `monitor/src/types.rs` and `server/src/types.rs`
-6. **Write tests**: Include comprehensive test module in the tracker
-7. **Update documentation**: Add section to ARCHITECTURE.md and STRUCTURE.md
-
-Example structure:
-```rust
-// monitor/src/trackers/project_tracker.rs
-use crate::types::ProjectActivityEvent;
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct ProjectEntry { ... }
-
-pub fn parse_project_entry(line: &str) -> Result<ProjectEntry, ParseError> { ... }
-
-pub fn create_project_event(...) -> ProjectActivityEvent { ... }
-
-#[cfg(test)]
-mod tests { ... }
+```
+✓ CAN use:       bash, curl, standard CLI tools, GitHub context variables
+✗ CANNOT depend: source code, runtime binaries (except downloaded releases)
 ```
 
-### stats_tracker Module (Phase 8-10) - Concrete Example
+## Test Organization
 
-The stats_tracker demonstrates the full pattern for a new tracker with multi-event emission:
+### Monitor Tests
 
-1. **Location**: `monitor/src/trackers/stats_tracker.rs`
-2. **Data Source**: `~/.claude/stats-cache.json` (JSON file with global metrics)
-3. **File Watching**: Uses `notify` crate for file monitoring with directory watch
-4. **Entry Point**: Spawned as async task in `main.rs` via `StatsTracker::new()`
-5. **Event Types**: Emits four variants via `StatsEvent` enum:
-   - `SessionMetricsEvent`: Global counters (total_sessions, total_messages, total_tool_usage, longest_session)
-   - `ActivityPatternEvent`: Hourly distribution (hour_counts: HashMap<String, u64>) - Phase 9
-   - `ModelDistributionEvent`: Per-model summary (model_usage: HashMap<String, TokenUsageSummary>) - Phase 10
-   - `TokenUsageEvent`: Per-model token usage (model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
-6. **Helper Types**: Uses `StatsCache` and `ModelTokens` for JSON deserialization
-7. **Privacy**: Extracts only aggregated metrics; no code or personal data
-8. **Processing**:
-   - Debounced at 200ms to coalesce rapid file updates
-   - Emits one `SessionMetricsEvent` per file read (global metrics)
-   - Emits one `ActivityPatternEvent` per file read (if hourCounts non-empty)
-   - Emits one `ModelDistributionEvent` per file read (if modelUsage non-empty)
-   - Emits one `TokenUsageEvent` per model in modelUsage section
-9. **Error Handling**: Includes retry logic (up to 3 retries with 100ms delays) for file read failures
+Located in `monitor/tests/` with `serial_test` crate for environment variable safety:
 
-Key architectural patterns:
-- **File watching**: Non-recursive directory watch, single file matching, filtering
-- **Debouncing**: Coalesces rapid writes using `Debouncer<PathBuf, FileChangeEvent>`
-- **Multi-event emission**: Single `emit_stats_events()` call produces four event types sequentially
-- **Retry logic**: Handles file mid-write scenarios with exponential delays
-- **Async processing**: Spawned as background task, events sent via channel
-- **Privacy preservation**: No code or personal information exposed
-- **Testing**: Extensive unit tests covering parsing, event emission, debouncing, retries, and integration scenarios
+| File | Purpose | Key Pattern | Added In |
+|------|---------|-------------|----------|
+| `env_key_test.rs` | Environment variable key loading (FR-001 through FR-028) | `#[test] #[serial]` | Phase 3 |
+| `key_export_test.rs` | export-key command integration tests (FR-003, FR-023, FR-026, FR-027, FR-028) | `#[test] #[serial]` | Phase 4 |
+| `privacy_test.rs` | Privacy filtering validation | — | Phase 1 |
+| `sender_recovery_test.rs` | Retry logic and buffering | — | Phase 1 |
 
-### Phase 9-10 Updates: ActivityPatternEvent and ModelDistributionEvent
+**Test Coverage by Phase 4:**
+- `roundtrip_generate_export_command_import_sign_verify()` - Full round-trip via export-key
+- `roundtrip_export_command_signatures_are_identical()` - Ed25519 determinism verification
+- `export_key_output_format_base64_with_single_newline()` - Output format validation
+- `export_key_output_is_valid_base64_32_bytes()` - Base64 decoding verification
+- `export_key_diagnostics_go_to_stderr()` - Separation of concerns (stdout/stderr)
+- `export_key_error_messages_go_to_stderr()` - Error output routing
+- `export_key_exit_code_success()` - Exit code 0 on success
+- `export_key_exit_code_missing_key_file()` - Exit code 1 on missing key
+- `export_key_exit_code_nonexistent_path()` - Exit code 1 on invalid path
+- `export_key_handles_path_with_spaces()` - Edge case support
+- `export_key_suitable_for_piping()` - CI/CD integration support
+- `export_key_reads_from_key_priv_file()` - Correct file reading
 
-Phase 9 introduced `ActivityPatternEvent` (Phase 9) for hourly activity distribution:
-- Extracted from `hourCounts` field in stats-cache.json
-- Emitted once per stats file read (if non-empty)
-- Client handler in `EventStream.tsx` shows hour count summary
+**Important**: Tests modifying environment variables MUST use `#[serial]` from `serial_test` crate or run with `cargo test --workspace --test-threads=1` to prevent interference.
 
-Phase 10 introduced `ModelDistributionEvent` (Phase 10) for model usage summary:
-- Extracted from `modelUsage` field in stats-cache.json
-- Converted from `HashMap<String, ModelTokens>` to `HashMap<String, TokenUsageSummary>`
-- Emitted once per stats file read (if non-empty)
-- Client handler in `EventStream.tsx` shows model count summary
+### Server Tests
 
-Both events:
-- Are emission order: SessionMetrics → ActivityPattern → ModelDistribution → TokenUsage (per model)
-- Provide different aggregation levels for flexible client-side visualizations
-- Maintain backward compatibility (token_usage events unaffected)
-- Share 200ms debounce window for efficiency
+Located in `server/tests/`:
 
-### todo_tracker Module (Phase 6) - Concrete Example
+| File | Purpose |
+|------|---------|
+| `unsafe_mode_test.rs` | Auth bypass mode validation |
 
-The todo_tracker demonstrates the full pattern for a new tracker with session lifecycle integration:
+### Client Tests
 
-1. **Location**: `monitor/src/trackers/todo_tracker.rs`
-2. **Data Source**: `~/.claude/todos/<session-uuid>-agent-<session-uuid>.json` (JSON array files)
-3. **File Watching**: Uses `notify` crate for directory monitoring
-4. **Entry Point**: Spawned as async task in `main.rs` via `TodoTracker::new()`
-5. **Event Type**: `TodoProgressEvent` (session_id, completed, in_progress, pending, abandoned)
-6. **Helper Utilities**: Uses `parse_todo_filename()` from `utils/session_filename.rs`
-7. **Privacy**: Extracts only status counts; task content never transmitted
-8. **Processing**:
-   - Debounced at 100ms to coalesce rapid status updates
-   - Session lifecycle tracking via `mark_session_ended()` for abandonment detection
-9. **Session Integration**: Requires coordination with main event loop to detect session summaries
+Located in `client/src/__tests__/`:
 
-Key architectural patterns:
-- **File watching**: Non-recursive directory watch, JSON file detection, filtering
-- **Debouncing**: Coalesces rapid writes using `Debouncer<PathBuf, PathBuf>`
-- **State management**: Maintains `Arc<RwLock<HashSet<String>>>` of ended sessions
-- **Async processing**: Spawned as background task, events sent via channel
-- **Privacy preservation**: Lenient parsing for corrupted/partial files, never exposing task content
-- **Testing**: Extensive unit tests covering parsing, counting, abandonment, integration scenarios
-
-### Key Design Principles for Trackers
-
-- **Privacy-first**: Extract only metadata, never code or sensitive content
-- **Modular**: Each tracker is independent and can be disabled
-- **Testable**: Include comprehensive unit tests with realistic file examples
-- **Integrated**: Feed results into the same `sender.queue()` for consistency
-- **Documented**: Include module doc comments with Format, Privacy, Architecture, Example sections
-- **Independent Data Source**: Each tracker watches its own file(s)
-- **Async Task Pattern**: Trackers run as concurrent async tasks, not inline in parser
-- **Session Aware**: When appropriate, trackers should integrate with session lifecycle events
+| File | Purpose |
+|------|---------|
+| `App.test.tsx` | Integration tests |
+| `events.test.ts` | Event parsing/filtering |
+| `formatting.test.ts` | Utility function tests |
 
 ---
 

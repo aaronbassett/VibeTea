@@ -1,28 +1,77 @@
 # Testing Strategy
 
-> **Purpose**: Document test frameworks, patterns, organization, and coverage requirements.
-> **Generated**: 2026-02-04
-> **Last Updated**: 2026-02-04
+**Purpose**: Document test frameworks, patterns, organization, and coverage requirements.
+**Generated**: 2026-02-03
+**Last Updated**: 2026-02-04
 
 ## Test Frameworks
 
-| Type | Framework | Configuration | Location |
-|------|-----------|----------------|----------|
-| Unit (TypeScript) | Vitest | `client/vite.config.ts` | `client/src/__tests__/` |
-| Unit (Rust) | Built-in (cargo test) | `Cargo.toml` | `src/` (co-located) |
-| Integration (Rust) | Built-in (cargo test) | `Cargo.toml` | `src/` (co-located) |
-| E2E | None planned | N/A | N/A |
+### TypeScript/Client
+
+| Type | Framework | Configuration | Status |
+|------|-----------|---------------|--------|
+| Unit | Vitest | Inline in `vite.config.ts` | Ready |
+| Integration | Vitest | Inline in `vite.config.ts` | Ready |
+| Component | Vitest + React Testing Library (planned) | TBD | Not started |
+| E2E | Not selected | TBD | Not started |
+
+### Rust/Server
+
+| Type | Framework | Configuration | Status |
+|------|-----------|---------------|--------|
+| Unit | Rust built-in | `#[cfg(test)]` inline | In use |
+| Integration | Rust built-in | `tests/` directory | In use |
+| E2E | Not selected | TBD | Not started |
+
+### Rust/Monitor
+
+| Type | Framework | Configuration | Status |
+|------|-----------|---------------|--------|
+| Unit | Rust built-in | `#[cfg(test)]` inline | In use |
+| Integration | Rust built-in | `tests/` directory with `serial_test` crate | In use (Phase 11+) |
+| CLI | Subprocess-based binary execution | `tests/` with `std::process::Command` | In use (Phase 12) |
+| E2E | Not selected | TBD | Not started |
+
+### GitHub Actions
+
+| Type | Framework | Configuration | Status |
+|------|-----------|---------------|--------|
+| Composite Action | YAML-based action composition | `.github/actions/vibetea-monitor/action.yml` | In use (Phase 6) |
+| Workflow Integration | Example workflows with monitoring | `.github/workflows/ci-with-monitor.yml` | Available |
 
 ### Running Tests
 
-| Command | Purpose | Environment |
-|---------|---------|-------------|
-| `npm test` | Run all TypeScript unit tests (watch mode available) | Client |
-| `npm run test:watch` | Run TypeScript tests in watch mode | Client |
-| `cargo test --workspace` | Run all Rust tests | Server + Monitor |
-| `cargo test --workspace --test-threads=1` | Run Rust tests serially (required for env var tests) | Server + Monitor |
-| `cargo test -p vibetea-server` | Run server tests only | Server |
-| `cargo test -p vibetea-monitor` | Run monitor tests only | Monitor |
+#### TypeScript/Client
+
+| Command | Purpose |
+|---------|---------|
+| `npm test` | Run all unit tests once |
+| `npm run test:watch` | Run tests in watch mode (re-run on file changes) |
+| `npm run typecheck` | Run TypeScript type checking |
+| `npm run format:check` | Check code formatting without fixing |
+| `npm run lint` | Run ESLint |
+
+#### Rust/Server and Monitor
+
+| Command | Purpose |
+|---------|---------|
+| `cargo test` | Run all tests in the workspace |
+| `cargo test --lib` | Run library unit tests only |
+| `cargo test --test '*'` | Run integration tests only |
+| `cargo test -- --nocapture` | Run tests with println output |
+| `cargo test -- --test-threads=1` | Run tests sequentially (prevents env var interference) |
+| `cargo test -p vibetea-monitor privacy` | Run privacy module tests |
+| `cargo test --test privacy_test` | Run privacy integration tests |
+| `cargo test --test env_key_test` | Run environment key loading tests (Phase 11, 21 tests) |
+| `cargo test --test key_export_test` | Run export-key CLI tests (Phase 12, 12 tests) |
+| `cargo test -p vibetea-monitor crypto` | Run crypto module tests |
+| `cargo test -p vibetea-monitor sender` | Run sender module tests |
+
+**Important**: Monitor tests run with `--test-threads=1` in CI to prevent environment variable interference:
+
+```bash
+cargo test --package vibetea-monitor -- --test-threads=1
+```
 
 ## Test Organization
 
@@ -72,15 +121,74 @@ monitor/src/
     └── stats_tracker.rs   # Token usage tracking (Phase 8-10) with 40+ tests
 ```
 
-**Test organization strategy**: Co-located `#[cfg(test)] mod tests` blocks at end of each module file.
+### Rust/Monitor Directory Structure
+
+```
+monitor/
+├── src/
+│   ├── config.rs               # Config module with inline tests
+│   ├── error.rs                # Error module with inline tests
+│   ├── types.rs                # Types module with inline tests
+│   ├── watcher.rs              # File watching implementation
+│   ├── parser.rs               # JSONL parser implementation
+│   ├── privacy.rs              # Privacy pipeline with 38 inline unit tests
+│   ├── crypto.rs               # Ed25519 crypto operations with 14 inline unit tests
+│   ├── sender.rs               # HTTP sender with 8 inline unit tests
+│   ├── lib.rs                  # Library entrypoint
+│   └── main.rs                 # Binary entrypoint (CLI)
+└── tests/
+    ├── env_key_test.rs         # 21 integration tests for env var key loading (Phase 11)
+    ├── privacy_test.rs         # 17 integration tests for privacy compliance
+    ├── sender_recovery_test.rs # Integration tests for error recovery
+    └── key_export_test.rs      # 12 integration tests for export-key subcommand (Phase 12, 698 lines)
+```
+
+### GitHub Actions Composite Action Structure (Phase 6)
+
+```
+.github/
+└── actions/
+    └── vibetea-monitor/
+        └── action.yml          # Composite action for monitor deployment
+```
+
+The action (`action.yml`) is a reusable GitHub Actions artifact that encapsulates:
+- Binary download from releases
+- Environment variable configuration
+- Monitor startup and graceful shutdown
+- Output parameters for downstream steps
+
+### Test File Location Strategy
+
+**TypeScript**: Co-located tests in `__tests__/` directory
+
+| Source File | Test File |
+|-------------|-----------|
+| `src/types/events.ts` | `src/__tests__/events.test.ts` |
+| `src/hooks/useEventStore.ts` | `src/__tests__/useEventStore.test.ts` (planned) |
+| `src/hooks/useWebSocket.ts` | `src/__tests__/useWebSocket.test.ts` (planned) |
+| `src/hooks/useSessionTimeouts.ts` | `src/__tests__/useSessionTimeouts.test.ts` (planned) |
+| `src/components/ConnectionStatus.tsx` | `src/__tests__/ConnectionStatus.test.tsx` (planned) |
+| `src/components/TokenForm.tsx` | `src/__tests__/TokenForm.test.tsx` (planned) |
+| `src/components/EventStream.tsx` | `src/__tests__/EventStream.test.tsx` (planned) |
+| `src/components/Heatmap.tsx` | `src/__tests__/Heatmap.test.tsx` (planned) |
+| `src/components/SessionOverview.tsx` | `src/__tests__/SessionOverview.test.tsx` (planned) |
+| `src/utils/formatting.ts` | `src/__tests__/formatting.test.ts` |
+| `src/App.tsx` | `src/__tests__/App.test.tsx` (planned) |
+
+**Rust**:
+- Unit tests inline in same module (`#[cfg(test)] mod tests`)
+- Integration tests in separate files in `tests/` directory with `_test.rs` suffix
+
+**GitHub Actions**:
+- Composite action stored in `.github/actions/{action-name}/action.yml`
+- Example workflows stored in `.github/workflows/{workflow-name}.yml`
 
 ## Test Patterns
 
 ### TypeScript Unit Tests
 
 **Pattern: Describe/It structure with Arrange/Act/Assert**
-
-From `client/src/__tests__/events.test.ts`:
 
 ```typescript
 import { describe, it, expect } from 'vitest';
@@ -111,590 +219,544 @@ describe('Event Types', () => {
 });
 ```
 
-**Pattern: Mocking browser APIs**
+### Integration Tests - Environment Variable Handling (Rust - Phase 11)
 
-From `client/src/__tests__/App.test.tsx`:
+New integration test pattern for environment variable loading with proper test isolation:
 
-```typescript
-// Mock localStorage
-const localStorageMock = (() => {
-  let store: Record<string, string> = {};
-  return {
-    getItem: (key: string) => store[key] ?? null,
-    setItem: (key: string, value: string) => { store[key] = value; },
-    removeItem: (key: string) => { delete store[key]; },
-    clear: () => { store = {}; },
-  };
-})();
+#### File: `monitor/tests/env_key_test.rs` (21 tests)
 
-Object.defineProperty(window, 'localStorage', {
-  value: localStorageMock,
-  writable: true,
-});
+```rust
+//! Integration tests for environment variable key loading.
+//!
+//! These tests verify FR-001 (load Ed25519 private key from `VIBETEA_PRIVATE_KEY` env var),
+//! FR-002 (env var takes precedence over file), FR-004 (clear error messages),
+//! FR-005 (whitespace trimming), FR-021 (standard Base64 RFC 4648),
+//! FR-022 (validate 32-byte key length), and FR-027/FR-028 (round-trip verification).
+//!
+//! # Important Notes
+//!
+//! These tests modify environment variables and MUST be run with `--test-threads=1`
+//! or use the `serial_test` crate to prevent interference between tests.
 
-// Mock WebSocket
-class MockWebSocket {
-  static readonly CONNECTING = 0;
-  static readonly OPEN = 1;
-  // ... other properties
-  constructor(_url: string) {
-    setTimeout(() => {
-      this.readyState = MockWebSocket.OPEN;
-      if (this.onopen) this.onopen(new Event('open'));
-    }, 0);
-  }
+use base64::prelude::*;
+use ed25519_dalek::Verifier;
+use serial_test::serial;
+use std::env;
+use tempfile::TempDir;
+use vibetea_monitor::crypto::{Crypto, KeySource};
+
+// =============================================================================
+// Test Helpers
+// =============================================================================
+
+/// Environment variable name for the private key.
+const ENV_VAR_NAME: &str = "VIBETEA_PRIVATE_KEY";
+
+/// RAII guard that saves and restores an environment variable.
+struct EnvGuard {
+    name: String,
+    original: Option<String>,
 }
 
-Object.defineProperty(window, 'WebSocket', {
-  value: MockWebSocket,
-  writable: true,
-});
+impl EnvGuard {
+    fn new(name: &str) -> Self {
+        let original = env::var(name).ok();
+        Self {
+            name: name.to_string(),
+            original,
+        }
+    }
+
+    fn set(&self, value: &str) {
+        env::set_var(&self.name, value);
+    }
+
+    fn remove(&self) {
+        env::remove_var(&self.name);
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(val) => env::set_var(&self.name, val),
+            None => env::remove_var(&self.name),
+        }
+    }
+}
+
+// =============================================================================
+// FR-001: Load Ed25519 private key seed from VIBETEA_PRIVATE_KEY env var
+// =============================================================================
+
+/// Verifies that a valid base64-encoded 32-byte seed can be loaded from
+/// the `VIBETEA_PRIVATE_KEY` environment variable.
+///
+/// FR-001: Load Ed25519 private key seed from `VIBETEA_PRIVATE_KEY` env var
+/// as base64-encoded string.
+#[test]
+#[serial]
+fn load_valid_base64_key_from_env() {
+    let guard = EnvGuard::new(ENV_VAR_NAME);
+    // Set env var and test loading...
+}
 ```
 
-**Pattern: Component testing with state management**
+Key patterns in integration tests:
 
-From `client/src/__tests__/App.test.tsx`:
+1. **RAII Pattern**: `EnvGuard` automatically restores environment variables on drop
+2. **#[serial] Macro**: Ensures sequential test execution to prevent interference
+3. **Module-level organization**: Tests grouped by feature requirement (FR-###)
+4. **Clear documentation**: Each test documents which requirements it verifies
+5. **Test helpers**: Centralized helper functions at top of file
 
-```typescript
-beforeEach(() => {
-  localStorage.clear();
-  useEventStore.setState({
-    status: 'disconnected',
-    events: [],
-    sessions: new Map(),
-    filters: { sessionId: null, timeRange: null },
-  });
-});
+### Integration Tests - CLI Command Execution (Rust - Phase 12)
 
-describe('App Token Handling', () => {
-  it('renders token form when no token is stored', () => {
-    render(<App />);
-    expect(screen.getByText('VibeTea Dashboard')).toBeInTheDocument();
-    expect(
-      screen.getByText(/enter your authentication token/i)
-    ).toBeInTheDocument();
-  });
+New CLI testing pattern for subprocess-based command testing:
 
-  it('transitions from token form to dashboard when token is saved', async () => {
-    render(<App />);
+#### File: `monitor/tests/key_export_test.rs` (12 tests, 698 lines)
 
-    const tokenInput = screen.getByLabelText(/authentication token/i);
-    fireEvent.change(tokenInput, { target: { value: 'new-test-token' } });
+```rust
+//! Integration tests for the `export-key` subcommand.
+//!
+//! These tests verify the following requirements:
+//!
+//! - **FR-003**: Monitor MUST provide `export-key` subcommand to output ONLY the base64-encoded
+//!   private key followed by a single newline (no additional text), enabling direct piping to
+//!   clipboard or secret management tools.
+//!
+//! - **FR-023**: All diagnostic and error messages from `export-key` MUST go to stderr; only the
+//!   key itself goes to stdout.
+//!
+//! - **FR-026**: Exit codes: 0 for success, 1 for configuration error (invalid env var, missing
+//!   key), 2 for runtime error.
+//!
+//! - **FR-027**: Integration tests MUST verify that a key exported with `export-key` can be loaded
+//!   via `VIBETEA_PRIVATE_KEY`.
+//!
+//! - **FR-028**: Integration tests MUST verify round-trip: generate key, export, load from env var,
+//!   verify signing produces valid signatures.
+//!
+//! # Important Notes
+//!
+//! These tests modify environment variables and MUST be run with `--test-threads=1`
+//! or use the `serial_test` crate to prevent interference between tests.
 
-    const saveButton = screen.getByRole('button', { name: /save token/i });
-    fireEvent.click(saveButton);
+use base64::prelude::*;
+use ed25519_dalek::Verifier;
+use serial_test::serial;
+use std::env;
+use std::process::Command;
+use tempfile::TempDir;
+use vibetea_monitor::crypto::Crypto;
 
-    await waitFor(() => {
-      expect(screen.getByText('Sessions')).toBeInTheDocument();
-    });
+// =============================================================================
+// Test Helpers
+// =============================================================================
 
-    expect(localStorage.getItem('vibetea_token')).toBe('new-test-token');
-  });
-});
+/// Environment variable name for the private key.
+const ENV_VAR_NAME: &str = "VIBETEA_PRIVATE_KEY";
+
+/// Exit code for successful execution.
+const EXIT_SUCCESS: i32 = 0;
+
+/// Exit code for configuration errors (invalid env var, missing key).
+const EXIT_CONFIG_ERROR: i32 = 1;
+
+/// Exit code for runtime errors.
+#[allow(dead_code)]
+const EXIT_RUNTIME_ERROR: i32 = 2;
+
+/// RAII guard that saves and restores an environment variable.
+struct EnvGuard {
+    name: String,
+    original: Option<String>,
+}
+
+impl EnvGuard {
+    fn new(name: &str) -> Self {
+        let original = env::var(name).ok();
+        Self {
+            name: name.to_string(),
+            original,
+        }
+    }
+
+    fn set(&self, value: &str) {
+        env::set_var(&self.name, value);
+    }
+
+    fn remove(&self) {
+        env::remove_var(&self.name);
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(val) => env::set_var(&self.name, val),
+            None => env::remove_var(&self.name),
+        }
+    }
+}
+
+/// Builds and returns the path to the vibetea-monitor binary.
+fn get_monitor_binary_path() -> String {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let target_dir = std::path::Path::new(manifest_dir)
+        .parent()
+        .expect("Should have parent directory")
+        .join("target")
+        .join("debug")
+        .join("vibetea-monitor");
+    target_dir.to_string_lossy().to_string()
+}
+
+/// Runs the vibetea-monitor export-key command with the given path.
+fn run_export_key_command(key_path: &std::path::Path) -> std::process::Output {
+    Command::new(get_monitor_binary_path())
+        .arg("export-key")
+        .arg("--path")
+        .arg(key_path.to_string_lossy().as_ref())
+        .output()
+        .expect("Failed to execute vibetea-monitor binary")
+}
+
+// =============================================================================
+// FR-027/FR-028: Round-trip verification with export-key command
+// =============================================================================
+
+/// Verifies the complete round-trip using the export-key command:
+/// 1. Generate key with `Crypto::generate()`
+/// 2. Save key to file
+/// 3. Export via `export-key` command
+/// 4. Load via `VIBETEA_PRIVATE_KEY` environment variable
+/// 5. Sign and verify
+///
+/// **Covers:** FR-003, FR-027, FR-028
+#[test]
+#[serial]
+fn roundtrip_generate_export_command_import_sign_verify() {
+    let guard = EnvGuard::new(ENV_VAR_NAME);
+    guard.remove();
+
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+    // Step 1 & 2: Generate and save keypair
+    let original_crypto = Crypto::generate();
+    original_crypto
+        .save(temp_dir.path())
+        .expect("Failed to save keypair");
+    let original_pubkey = original_crypto.public_key_base64();
+
+    // Step 3: Export via export-key command
+    let output = run_export_key_command(temp_dir.path());
+
+    // Step 4: Command should succeed with exit code 0
+    assert!(
+        output.status.success(),
+        "export-key should exit with code 0, got: {:?}\nstderr: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Step 5: Verify exported key matches original seed and can be loaded
+    let exported_key =
+        String::from_utf8(output.stdout.clone()).expect("stdout should be valid UTF-8");
+    let exported_key_trimmed = exported_key.trim();
+
+    let original_seed = original_crypto.seed_base64();
+    assert_eq!(
+        exported_key_trimmed, original_seed,
+        "Exported key should match the original seed"
+    );
+
+    guard.set(exported_key_trimmed);
+    let result = Crypto::load_from_env();
+    assert!(result.is_ok(), "Should load exported key from env var");
+
+    let (loaded_crypto, _) = result.unwrap();
+    let loaded_pubkey = loaded_crypto.public_key_base64();
+    assert_eq!(original_pubkey, loaded_pubkey);
+}
+
+/// Verifies that signatures from the original key and the key loaded via
+/// export-key are identical (Ed25519 is deterministic).
+///
+/// **Covers:** FR-027, FR-028
+#[test]
+#[serial]
+fn roundtrip_export_command_signatures_are_identical() {
+    // ... test code
+}
 ```
 
-**Pattern: Utility function testing**
+Test organization in key_export_test.rs (12 tests total):
 
-From `client/src/__tests__/formatting.test.ts`:
+1. **Round-trip tests** (2 tests):
+   - `roundtrip_generate_export_command_import_sign_verify` - Full cycle verification
+   - `roundtrip_export_command_signatures_are_identical` - Deterministic signing
 
-```typescript
-describe('formatTimestamp', () => {
-  it('formats a valid RFC 3339 timestamp to HH:MM:SS', () => {
-    const timestamp = '2026-02-02T14:30:45Z';
-    const date = new Date(timestamp);
-    const expected = [
-      String(date.getHours()).padStart(2, '0'),
-      String(date.getMinutes()).padStart(2, '0'),
-      String(date.getSeconds()).padStart(2, '0'),
-    ].join(':');
+2. **Output format tests** (2 tests):
+   - `export_key_output_format_base64_with_single_newline` - Exact format (base64 + \n)
+   - `export_key_output_is_valid_base64_32_bytes` - Base64 validity and length
 
-    expect(formatTimestamp(timestamp)).toBe(expected);
-  });
+3. **Stream separation tests** (2 tests):
+   - `export_key_diagnostics_go_to_stderr` - Diagnostics on stderr only
+   - `export_key_error_messages_go_to_stderr` - Error messages on stderr only
 
-  it('returns fallback for invalid timestamp', () => {
-    expect(formatTimestamp('not-a-date')).toBe('--:--:--');
-  });
+4. **Error handling tests** (3 tests):
+   - Missing key error with exit code 1
+   - Error message clarity tests
+   - Path argument validation
 
-  it('returns fallback for empty string', () => {
-    expect(formatTimestamp('')).toBe('--:--:--');
-  });
-});
-```
+5. **Default path behavior** (1 test):
+   - Uses default key directory when no --path provided
 
-**Pattern: Event handler testing for new event types (Phase 9-10)**
+Key conventions in CLI testing:
+- **Subprocess execution**: Tests spawn the actual binary using `Command::new()`
+- **Exit code validation**: Tests verify expected exit codes (0 success, 1 config error, 2 runtime error)
+- **Output stream separation**: Verify output goes to correct stream (stdout for data, stderr for diagnostics)
+- **Format validation**: Tests verify output format exactly (e.g., base64 key + single newline)
+- **Base64 validation**: Exported keys are verified to decode to exactly 32 bytes
+- **Round-trip verification**: Keys exported via command can be loaded and used for signing
 
-From `EventStream.tsx` `getEventDescription()` function (Phase 9-10):
+### Integration Tests - Privacy Compliance (Rust)
 
-```typescript
-/**
- * Test that ActivityPattern events are described correctly.
- * Phase 9: Hourly activity distribution events.
- */
-describe('getEventDescription', () => {
-  it('describes activity_pattern events with hour count', () => {
-    const event: VibeteaEvent<'activity_pattern'> = {
-      id: 'evt_test_activity123456789',
-      source: 'monitor',
-      timestamp: new Date().toISOString(),
-      type: 'activity_pattern',
-      payload: {
-        hourCounts: {
-          '9': 50,
-          '14': 100,
-          '17': 75,
-        },
-      },
+File: `monitor/tests/privacy_test.rs` (17 tests)
+
+Tests verify privacy guarantees across different event types and sensitive tools:
+
+```rust
+//! Privacy compliance test suite for VibeTea Monitor.
+//!
+//! These tests validate Constitution I (Privacy by Design) by ensuring
+//! no sensitive data is ever present in processed events.
+
+use std::collections::HashSet;
+use uuid::Uuid;
+use vibetea_monitor::privacy::{extract_basename, PrivacyConfig, PrivacyPipeline};
+use vibetea_monitor::types::{EventPayload, SessionAction, ToolStatus};
+
+#[test]
+fn no_full_paths_in_tool_events() {
+    let pipeline = PrivacyPipeline::new(PrivacyConfig::new(None));
+
+    let payload = EventPayload::Tool {
+        session_id: Uuid::nil(),
+        tool: "Read".to_string(),
+        status: ToolStatus::Completed,
+        context: Some("/home/user/projects/secret/src/auth.rs".to_string()),
+        project: Some("my-project".to_string()),
     };
 
     const description = getEventDescription(event);
     expect(description).toBe('Activity pattern: 3 hours tracked');
   });
 
-  /**
-   * Test that ModelDistribution events are described correctly.
-   * Phase 10: Model usage distribution events.
-   */
-  it('describes model_distribution events with model count', () => {
-    const event: VibeteaEvent<'model_distribution'> = {
-      id: 'evt_test_models123456789',
-      source: 'monitor',
-      timestamp: new Date().toISOString(),
-      type: 'model_distribution',
-      payload: {
-        modelUsage: {
-          'claude-sonnet-4-20250514': {
-            inputTokens: 1500000,
-            outputTokens: 300000,
-            cacheReadTokens: 800000,
-            cacheCreationTokens: 100000,
-          },
-          'claude-opus-4-20250514': {
-            inputTokens: 500000,
-            outputTokens: 150000,
-            cacheReadTokens: 200000,
-            cacheCreationTokens: 50000,
-          },
-        },
-      },
-    };
-
-    const description = getEventDescription(event);
-    expect(description).toBe('Model distribution: 2 models used');
-  });
-
-  it('pluralizes model count correctly for single model', () => {
-    const event: VibeteaEvent<'model_distribution'> = {
-      id: 'evt_test_single_model123456789',
-      source: 'monitor',
-      timestamp: new Date().toISOString(),
-      type: 'model_distribution',
-      payload: {
-        modelUsage: {
-          'claude-opus-4-20250514': {
-            inputTokens: 500000,
-            outputTokens: 150000,
-            cacheReadTokens: 200000,
-            cacheCreationTokens: 50000,
-          },
-        },
-      },
-    };
-
-    const description = getEventDescription(event);
-    expect(description).toBe('Model distribution: 1 model used');
-  });
-});
-```
-
-Key patterns for Phase 9-10 event handlers:
-- **ActivityPatternEvent**: Count non-empty hours in `hourCounts` object
-- **ModelDistributionEvent**: Count entries in `modelUsage` dictionary
-- **Proper pluralization**: Handle singular/plural forms correctly
-- **Type-safe access**: Use object keys and length checks for nested data
-
-
-### Rust Unit Tests
-
-**Pattern: Module-level test organization with helper functions**
-
-From `server/src/auth.rs`:
-
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ed25519_dalek::{Signer, SigningKey, SECRET_KEY_LENGTH};
-
-    // Helper functions
-    fn create_test_keypair(seed: u8) -> (SigningKey, String) {
-        let mut seed_bytes = [0u8; SECRET_KEY_LENGTH];
-        for (i, byte) in seed_bytes.iter_mut().enumerate() {
-            *byte = seed.wrapping_add(i as u8);
-        }
-        let signing_key = SigningKey::from_bytes(&seed_bytes);
-        let public_key_bytes = signing_key.verifying_key().to_bytes();
-        let public_key_base64 = BASE64_STANDARD.encode(public_key_bytes);
-        (signing_key, public_key_base64)
-    }
-
-    fn generate_test_keypair() -> (SigningKey, String) {
-        create_test_keypair(1)
-    }
-
-    fn create_keys_map(source_id: &str, public_key_base64: &str) -> HashMap<String, String> {
-        let mut keys = HashMap::new();
-        keys.insert(source_id.to_string(), public_key_base64.to_string());
-        keys
-    }
-
-    // Test cases
-    #[test]
-    fn verify_signature_succeeds_for_valid_signature() {
-        let (signing_key, public_key_base64) = generate_test_keypair();
-        let public_keys = create_keys_map("monitor-1", &public_key_base64);
-
-        let message = b"test message to sign";
-        let signature = signing_key.sign(message);
-        let signature_base64 = BASE64_STANDARD.encode(signature.to_bytes());
-
-        let result = verify_signature("monitor-1", &signature_base64, message, &public_keys);
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn verify_signature_fails_for_unknown_source() {
-        let (_, public_key_base64) = generate_test_keypair();
-        let public_keys = create_keys_map("monitor-1", &public_key_base64);
-
-        let result = verify_signature(
-            "unknown-monitor",
-            "c29tZXNpZ25hdHVyZQ==",
-            b"message",
-            &public_keys,
-        );
-
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, AuthError::UnknownSource(ref s) if s == "unknown-monitor"));
-        assert!(err.is_unknown_source());
+    if let EventPayload::Tool { context, .. } = &result {
+        assert_eq!(context.as_deref(), Some("auth.rs"));
     }
 }
 ```
 
-**Pattern: Environment variable testing with serial_test crate**
+### Integration Tests - Error Recovery (Rust)
 
-Tests modifying environment variables must run with `--test-threads=1` to prevent interference. See `CLAUDE.md` for Phase 3 learning about `EnvGuard` RAII pattern.
+File: `monitor/tests/sender_recovery_test.rs`
 
-### Skill Tracker Tests (Phase 5)
-
-**Pattern: File parsing and event creation tests**
-
-From `monitor/src/trackers/skill_tracker.rs`:
+Tests verify sender handles errors gracefully and recovers:
 
 ```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
+//! Integration tests for sender recovery behavior.
+//!
+//! These tests verify that the sender correctly handles error scenarios
+//! and recovers gracefully, particularly around oversized events.
 
-    #[test]
-    fn parse_history_entry_valid() {
-        let line = r#"{"display": "/commit", "timestamp": 1738567268363, "project": "/home/user/project", "sessionId": "abc-123"}"#;
-        let entry = parse_history_entry(line).expect("should parse");
+#[tokio::test]
+async fn test_oversized_event_does_not_block_normal_events() {
+    let mock_server = MockServer::start().await;
+    // Test setup...
 
-        assert_eq!(entry.display, "/commit");
-        assert_eq!(entry.timestamp, 1738567268363);
-        assert_eq!(entry.project, "/home/user/project");
-        assert_eq!(entry.session_id, "abc-123");
-    }
-
-    #[test]
-    fn parse_history_entry_invalid_json() {
-        let line = "not json";
-        let result = parse_history_entry(line);
-        assert!(matches!(result, Err(HistoryParseError::InvalidJson(_))));
-    }
-
-    #[test]
-    fn create_skill_invocation_event_extracts_skill_name() {
-        let entry = HistoryEntry {
-            display: "/commit -m \"message\"".to_string(),
-            timestamp: 1738567268363,
-            project: "/home/user/project".to_string(),
-            session_id: "abc-123".to_string(),
-        };
-
-        let event = create_skill_invocation_event(&entry).expect("should create event");
-        assert_eq!(event.skill_name, "commit");
-        assert_eq!(event.session_id, "abc-123");
-    }
+    let result = sender.flush().await;
+    assert!(result.is_ok(), "Flush should succeed: {:?}", result);
 }
 ```
 
-Key patterns for Phase 5 skill_tracker:
-- **Deterministic timestamps**: Use fixed millisecond values for reproducible tests
-- **Privacy validation**: Verify only skill name extracted, not command arguments
-- **Error cases**: Test missing fields, invalid JSON, malformed entries
-- **Event creation**: Verify timestamp conversion from ms to UTC DateTime
+### GitHub Actions Integration Testing (Phase 5+6)
 
-### Todo Tracker Tests (Phase 6)
+#### Example Workflow Integration (Phase 5)
 
-The `todo_tracker` module establishes comprehensive test patterns with 79 unit tests organized in marked sections:
+File: `.github/workflows/ci-with-monitor.yml` (Example workflow)
 
-**Pattern: Organized test sections with clear task IDs**
+The example workflow demonstrates how to test the monitor in CI/CD environments:
 
-From `monitor/src/trackers/todo_tracker.rs`:
+```yaml
+# .github/workflows/ci-with-monitor.yml
+name: CI with VibeTea Monitoring
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::Path;
+# Tests demonstrate:
+# 1. Binary download from releases (or build from source)
+# 2. Background process execution with environment variable configuration
+# 3. Non-blocking operation (monitor failures don't fail workflow)
+# 4. Graceful shutdown with SIGTERM (flushes buffered events)
+# 5. Private key via GitHub secrets (VIBETEA_PRIVATE_KEY)
+# 6. Server URL via GitHub secrets (VIBETEA_SERVER_URL)
+# 7. Source ID formatting for traceability (github-owner/repo-run-id)
 
-    // =========================================================================
-    // T118: Todo Filename Parsing Tests
-    // =========================================================================
+jobs:
+  build-with-monitoring:
+    runs-on: ubuntu-latest
+    env:
+      VIBETEA_PRIVATE_KEY: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+      VIBETEA_SERVER_URL: ${{ secrets.VIBETEA_SERVER_URL }}
+      VIBETEA_SOURCE_ID: "github-${{ github.repository }}-${{ github.run_id }}"
 
-    #[test]
-    fn extract_session_id_valid_filename() {
-        let path = Path::new(
-            "/home/user/.claude/todos/6e45a55c-3124-4cc8-ad85-040a5c316009-agent-6e45a55c-3124-4cc8-ad85-040a5c316009.json",
-        );
-        let session_id = extract_session_id_from_filename(path).unwrap();
-        assert_eq!(session_id, "6e45a55c-3124-4cc8-ad85-040a5c316009");
-    }
+    steps:
+      # Download binary or build from source
+      - name: Download VibeTea Monitor
+        run: curl -fsSL -o vibetea-monitor "..."
 
-    // =========================================================================
-    // T119: Todo Status Counting Tests
-    // =========================================================================
+      # Start in background (non-blocking)
+      - name: Start VibeTea Monitor
+        run: |
+          if [ -f vibetea-monitor ] && [ -n "$VIBETEA_PRIVATE_KEY" ]; then
+            ./vibetea-monitor run &
+            MONITOR_PID=$!
+            echo "MONITOR_PID=$MONITOR_PID" >> $GITHUB_ENV
+          fi
 
-    #[test]
-    fn count_statuses_mixed_entries() {
-        let entries = vec![
-            TodoEntry { content: "A".to_string(), status: TodoStatus::Completed, active_form: None },
-            TodoEntry { content: "B".to_string(), status: TodoStatus::Completed, active_form: None },
-            TodoEntry { content: "C".to_string(), status: TodoStatus::InProgress, active_form: Some("...".to_string()) },
-        ];
-        let counts = count_todo_statuses(&entries);
-        assert_eq!(counts.completed, 2);
-        assert_eq!(counts.in_progress, 1);
-    }
+      # Run CI steps (events captured during this time)
+      - name: Run tests
+        run: cargo test --workspace -- --test-threads=1
 
-    // =========================================================================
-    // T120: Abandonment Detection Tests
-    // =========================================================================
-
-    #[test]
-    fn abandonment_session_ended_with_incomplete_tasks() {
-        let counts = TodoStatusCounts { completed: 2, in_progress: 0, pending: 3 };
-        assert!(is_abandoned(&counts, true));  // Session ended + incomplete = abandoned
-    }
-}
+      # Graceful shutdown (flush events, don't block)
+      - name: Stop VibeTea Monitor
+        if: always()
+        run: |
+          if [ -n "$MONITOR_PID" ]; then
+            kill -TERM $MONITOR_PID 2>/dev/null || true
+            sleep 2
+          fi
 ```
 
-Key patterns for Phase 6 todo_tracker:
-- **Comprehensive test sections**: Tests organized with clear task IDs (T118-T120) and section headers
-- **79 total tests**: Covers parsing, counting, abandonment detection, edge cases, and async integration
-- **Async test patterns**: Uses `#[tokio::test]` for async integration tests with real file watching
-- **Temporary file handling**: Uses `tempfile::TempDir` for isolated test file operations
-- **Timeout management**: Uses `tokio::time::timeout()` for time-limited async assertions
-- **Realistic test data**: Uses actual JSON format matching `~/.claude/todos/` structure
-- **Privacy verification**: Tests validate that only status counts/metadata captured, not task content
-- **Abandonment logic**: Tests verify the combination of session end + incomplete tasks = abandoned
+Key testing patterns for GitHub Actions:
+- **Binary delivery**: Tests can use pre-built releases or cargo build
+- **Environment variable configuration**: All settings via env vars and secrets
+- **Non-blocking operation**: Monitor never blocks workflow (wrapped in conditionals)
+- **Graceful shutdown**: SIGTERM handling with event flush before exit
+- **Source tracking**: Includes repository and run ID for traceability
 
-### Stats Tracker Tests (Phase 8-10)
+#### Composite Action Testing (Phase 6)
 
-The `stats_tracker` module watches `~/.claude/stats-cache.json` and emits 5 types of events:
+File: `.github/actions/vibetea-monitor/action.yml` (Reusable composite action)
 
-**Pattern: File parsing with retry logic and event emission**
+The composite action encapsulates monitor deployment as a reusable artifact:
 
-From `monitor/src/trackers/stats_tracker.rs`:
+```yaml
+name: 'VibeTea Monitor'
+description: 'Start VibeTea monitor to track Claude Code events'
+author: 'aaronbassett'
 
-```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::TempDir;
-    use tokio::time::{sleep, timeout, Duration};
+# Input validation testing
+inputs:
+  server-url:
+    description: 'URL of the VibeTea server'
+    required: true
+  private-key:
+    description: 'Base64-encoded Ed25519 private key'
+    required: true
+  source-id:
+    description: 'Custom source identifier'
+    required: false
+    default: ''
+  version:
+    description: 'Monitor version to download'
+    required: false
+    default: 'latest'
+  shutdown-timeout:
+    description: 'Timeout in seconds for graceful shutdown'
+    required: false
+    default: '5'
 
-    const SAMPLE_STATS: &str = r#"{
-        "totalSessions": 150,
-        "totalMessages": 2500,
-        "totalToolUsage": 8000,
-        "longestSession": "00:45:30",
-        "hourCounts": { "9": 50, "14": 100, "17": 75 },
-        "modelUsage": {
-            "claude-sonnet-4-20250514": {
-                "inputTokens": 1500000,
-                "outputTokens": 300000,
-                "cacheReadInputTokens": 800000,
-                "cacheCreationInputTokens": 100000
-            },
-            "claude-opus-4-20250514": {
-                "inputTokens": 500000,
-                "outputTokens": 150000,
-                "cacheReadInputTokens": 200000,
-                "cacheCreationInputTokens": 50000
-            }
-        }
-    }"#;
+# Output availability for downstream steps
+outputs:
+  monitor-pid:
+    description: 'Process ID of the running monitor'
+    value: ${{ steps.start-monitor.outputs.pid }}
+  monitor-started:
+    description: 'Whether the monitor started successfully'
+    value: ${{ steps.start-monitor.outputs.started }}
 
-    #[test]
-    fn test_parse_stats_cache_full() {
-        let stats = parse_stats_cache(SAMPLE_STATS).expect("Should parse");
+# Implementation using composite steps
+runs:
+  using: 'composite'
+  steps:
+    - name: Download VibeTea Monitor
+      id: download
+      shell: bash
+      run: |
+        # Download and validate binary
 
-        assert_eq!(stats.total_sessions, 150);
-        assert_eq!(stats.total_messages, 2500);
-        assert_eq!(stats.total_tool_usage, 8000);
-        assert_eq!(stats.longest_session, "00:45:30");
-        assert_eq!(stats.hour_counts.len(), 3);
-        assert_eq!(stats.model_usage.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_emit_stats_events_for_each_model() {
-        let (_temp_dir, stats_path) = create_test_stats_file(SAMPLE_STATS);
-
-        let (tx, mut rx) = mpsc::channel(100);
-        emit_stats_events(&stats_path, &tx)
-            .await
-            .expect("Should emit events");
-
-        // Should receive 5 events (Phase 9-10):
-        // 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage
-        let mut received = Vec::new();
-        while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
-            received.push(event);
-        }
-
-        assert_eq!(
-            received.len(),
-            5,
-            "Should emit 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage events"
-        );
-
-        // Verify SessionMetrics event (first)
-        let session_metrics = match &received[0] {
-            StatsEvent::SessionMetrics(m) => m,
-            _ => panic!("First event should be SessionMetrics"),
-        };
-        assert_eq!(session_metrics.total_sessions, 150);
-
-        // Verify ActivityPattern event (Phase 9)
-        let activity_pattern = received
-            .iter()
-            .find_map(|e| match e {
-                StatsEvent::ActivityPattern(a) => Some(a),
-                _ => None,
-            })
-            .expect("Should have ActivityPattern event");
-        assert_eq!(activity_pattern.hour_counts.len(), 3);
-
-        // Verify ModelDistribution event (Phase 10)
-        let model_dist = received
-            .iter()
-            .find_map(|e| match e {
-                StatsEvent::ModelDistribution(m) => Some(m),
-                _ => None,
-            })
-            .expect("Should have ModelDistribution event");
-        assert_eq!(model_dist.model_usage.len(), 2);
-
-        // Verify TokenUsage events (2 models)
-        let token_events: Vec<_> = received
-            .iter()
-            .filter_map(|e| match e {
-                StatsEvent::TokenUsage(t) => Some(t),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(token_events.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_emit_session_metrics_only_for_empty_model_usage() {
-        let json = r#"{"totalSessions": 10, "modelUsage": {}}"#;
-        let (_temp_dir, stats_path) = create_test_stats_file(json);
-
-        let (tx, mut rx) = mpsc::channel(100);
-        emit_stats_events(&stats_path, &tx)
-            .await
-            .expect("Should succeed");
-
-        // Should receive only 1 event (session metrics) when model data is empty
-        let mut received = Vec::new();
-        while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
-            received.push(event);
-        }
-
-        assert_eq!(received.len(), 1, "Should emit only session metrics when no model data");
-
-        match &received[0] {
-            StatsEvent::SessionMetrics(m) => assert_eq!(m.total_sessions, 10),
-            _ => panic!("Event should be SessionMetrics"),
-        }
-    }
-}
+    - name: Start VibeTea Monitor
+      id: start-monitor
+      shell: bash
+      env:
+        VIBETEA_PRIVATE_KEY: ${{ inputs.private-key }}
+        VIBETEA_SERVER_URL: ${{ inputs.server-url }}
+      run: |
+        # Start monitor with validation
 ```
 
-Key patterns for Phase 8-10 stats_tracker:
-- **Lenient JSON parsing**: All fields use `#[serde(default)]` for missing or extra fields
-- **camelCase mapping**: Uses `#[serde(rename_all = "camelCase")]` to match Claude Code JSON format
-- **5 event types** (Phase 8-10):
-  - `SessionMetrics`: Global session stats (emitted always)
-  - `TokenUsage`: Per-model token consumption (Phase 8, emitted per model)
-  - `ActivityPattern`: Hourly activity distribution (Phase 9, emitted when non-empty)
-  - `ModelDistribution`: Usage summary across all models (Phase 10, emitted when non-empty)
-  - These are organized in enum `StatsEvent`
-- **Empty event filtering** (Phase 9-10): Activity and Model Distribution events only emit when data is non-empty
-- **Model iteration**: Tests verify events emitted per model in stats cache
-- **File retry logic**: Debouncing and retry handling for mid-write file reads
-- **Error handling**: Tests for file watcher init, parse failures, and channel closure
+**Testing the composite action:**
 
-### Integration Tests
+In any workflow that uses it:
 
-**Strategy for Rust integration tests**:
-- Co-located in same module with unit tests
-- Use `#[tokio::test]` for async integration tests
-- Setup and teardown using fixtures/helper functions
-- Can test multiple modules together
+```yaml
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "pr-${{ github.event.pull_request.number }}"
 
-## Mocking Strategy
+# Verify action outputs
+- name: Check monitor status
+  run: |
+    echo "Monitor started: ${{ steps.vibetea-monitor.outputs.monitor-started }}"
+    echo "Monitor PID: ${{ steps.vibetea-monitor.outputs.monitor-pid }}"
+```
 
-### TypeScript Mocking
+Action testing validation:
+- **Input handling**: Tests verify required inputs block and optional inputs have sensible defaults
+- **Download resilience**: Tests verify graceful handling of download failures
+- **Output availability**: Tests verify PID and status outputs are accessible in downstream steps
+- **Non-blocking design**: Action should complete successfully even if monitor startup fails
+- **Process validation**: Tests verify monitor process actually starts (not just binary downloaded)
+- **Cleanup requirements**: Tests document recommended cleanup step for graceful shutdown
 
-| Target | Strategy | Location |
-|--------|----------|----------|
-| Browser APIs (localStorage, WebSocket) | Inline mock objects in test file | Test setup section |
-| Zustand store | Direct `setState()` calls | Test setup with beforeEach |
-| React components | React Testing Library render + query selectors | Test body |
-| HTTP requests | Not yet implemented (no integration tests) | Future |
+### Mocking Strategy
 
-### Rust Mocking
+| Layer | Mock Strategy | Location |
+|-------|---------------|----------|
+| External APIs (TypeScript) | MSW (Mock Service Worker) | `tests/mocks/` (planned) |
+| External APIs (Rust) | wiremock | `tests/` with `wiremock::MockServer` |
+| Database (TypeScript) | In-memory or test database | TBD |
+| Time | `vi.useFakeTimers()` (Vitest) | In test functions |
+| Environment | `EnvGuard` RAII pattern (Rust) | Integration tests |
+| Subprocess | Real binary execution | CLI integration tests |
 
-| Target | Strategy | Location |
-|--------|----------|----------|
-| File I/O | Not mocked; use real temp files in tests | Test function |
-| Network | Not mocked; use wiremock (Phase 6+) | Future |
-| Time | Not mocked; use DateTime::new() for fixed times | Test data |
-| Cryptography | Real Ed25519 operations with deterministic seeds | Test setup |
-| File watching | Use real file changes in isolated test directories | Test function |
+### Test Data
 
-## Test Data
-
-### Fixtures
-
-TypeScript fixtures are embedded in test files as constants:
+#### Fixtures (TypeScript)
 
 ```typescript
-const testUser = {
+// Pattern for test fixtures
+export const testUser = {
   id: 'test-user-id',
   email: 'test@example.com',
   name: 'Test User',
 };
 
-const testEvent: VibeteaEvent<'session'> = {
+export const testEvent: VibeteaEvent<'session'> = {
   id: 'evt_test123456789012345',
   source: 'test-source',
   timestamp: new Date().toISOString(),
@@ -707,97 +769,41 @@ const testEvent: VibeteaEvent<'session'> = {
 };
 ```
 
-Rust fixtures are generated by helper functions:
+#### Helpers (Rust)
 
 ```rust
-fn create_test_keypair(seed: u8) -> (SigningKey, String) {
-    // Deterministic seed ensures reproducible tests
-    let mut seed_bytes = [0u8; SECRET_KEY_LENGTH];
-    for (i, byte) in seed_bytes.iter_mut().enumerate() {
-        *byte = seed.wrapping_add(i as u8);
-    }
-    // ... create keypair
+/// Generates a valid 32-byte seed and returns it base64-encoded.
+fn generate_valid_base64_seed() -> (String, [u8; 32]) {
+    let mut seed = [0u8; 32];
+    use rand::Rng;
+    rand::rng().fill(&mut seed);
+    let base64_seed = BASE64_STANDARD.encode(&seed);
+    (base64_seed, seed)
 }
-```
 
-### Phase 5 Skill Tracker Fixtures
-
-```rust
-fn create_test_history_entry(display: &str, session_id: &str) -> HistoryEntry {
-    HistoryEntry {
-        display: display.to_string(),
-        timestamp: 1738567268363,  // 2025-02-03T14:34:28Z
-        project: "/home/user/project".to_string(),
-        session_id: session_id.to_string(),
-    }
-}
-```
-
-### Phase 6 Todo Tracker Fixtures
-
-```rust
-const SAMPLE_TODO: &str = r#"[
-    {"content": "Task 1", "status": "completed", "activeForm": null},
-    {"content": "Task 2", "status": "in_progress", "activeForm": "Working on task 2..."},
-    {"content": "Task 3", "status": "pending", "activeForm": null}
-]"#;
-
-fn create_test_todo_file(dir: &TempDir, session_id: &str, content: &str) -> PathBuf {
-    let filename = format!("{}-agent-{}.json", session_id, session_id);
-    let todo_path = dir.path().join(&filename);
-    let mut file = std::fs::File::create(&todo_path).expect("Failed to create todo file");
-    file.write_all(content.as_bytes()).expect("Failed to write content");
-    file.flush().expect("Failed to flush");
-    todo_path
-}
-```
-
-### Phase 8-10 Stats Tracker Fixtures
-
-```rust
-const SAMPLE_STATS: &str = r#"{
-    "totalSessions": 150,
-    "totalMessages": 2500,
-    "totalToolUsage": 8000,
-    "longestSession": "00:45:30",
-    "hourCounts": { "9": 50, "14": 100, "17": 75 },
-    "modelUsage": {
-        "claude-sonnet-4-20250514": {
-            "inputTokens": 1500000,
-            "outputTokens": 300000,
-            "cacheReadInputTokens": 800000,
-            "cacheCreationInputTokens": 100000
+/// Creates a test event with a small payload.
+fn create_small_event() -> Event {
+    Event::new(
+        "test-monitor".to_string(),
+        EventType::Tool,
+        EventPayload::Tool {
+            session_id: Uuid::new_v4(),
+            tool: "Read".to_string(),
+            status: ToolStatus::Completed,
+            context: Some("small.rs".to_string()),
+            project: Some("test-project".to_string()),
         },
-        "claude-opus-4-20250514": {
-            "inputTokens": 500000,
-            "outputTokens": 150000,
-            "cacheReadInputTokens": 200000,
-            "cacheCreationInputTokens": 50000
-        }
-    }
-}"#;
-
-fn create_test_stats_file(content: &str) -> (TempDir, PathBuf) {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let stats_path = temp_dir.path().join("stats-cache.json");
-    let mut file = std::fs::File::create(&stats_path).expect("Failed to create stats file");
-    file.write_all(content.as_bytes())
-        .expect("Failed to write stats content");
-    file.flush().expect("Failed to flush");
-
-    (temp_dir, stats_path)
+    )
 }
 ```
 
 ## Coverage Requirements
 
-### Target Coverage
-
 | Metric | Target | Strategy |
 |--------|--------|----------|
-| Line coverage | 80%+ | Focus on critical paths |
-| Branch coverage | 75%+ | Test error cases |
-| Function coverage | 80%+ | Public APIs fully tested |
+| Line coverage | 80%+ | Focus on public APIs and error paths |
+| Branch coverage | 75%+ | Include both success and failure cases |
+| Function coverage | 90%+ | Every exported function should be tested |
 
 ### Coverage Exclusions
 
@@ -805,143 +811,192 @@ Files/patterns excluded from coverage:
 
 - `src/generated/` - Auto-generated code
 - `*.config.ts` - Configuration files
-- `src/types/` - Type definitions only
-- Test files themselves (`*.test.ts`, `#[cfg(test)]`)
-- Binary main entry points
+- `src/types/` - Type definitions only (tested indirectly)
+- `src/main.rs` - Binary entrypoint (tested via integration tests)
 
 ## Test Categories
 
 ### Smoke Tests
 
-Critical path tests that verify basic functionality:
+Critical path tests that must pass before deploy:
 
-**TypeScript**:
-- `App.test.tsx`: Token handling, connection status, filter integration
-- `events.test.ts`: Valid event creation for all event types
-- `formatting.test.ts`: Core timestamp and duration formatting
-
-**Rust**:
-- `auth.rs`: Signature verification succeeds with valid data
-- `config.rs`: Configuration loads from environment variables
-- `agent_tracker.rs`: Task tool input parsing works (Phase 4)
-- `skill_tracker.rs`: History entry parsing works (Phase 5)
-- `todo_tracker.rs`: Todo file parsing and abandonment detection works (Phase 6)
-- `stats_tracker.rs`: Stats cache JSON parsing and 5 event types emission works (Phase 8-10)
+| Test | Purpose | Location |
+|------|---------|----------|
+| `events.test.ts` | Event type creation and validation | `client/src/__tests__/` |
+| `privacy_test.rs` | Privacy compliance across all event types | `monitor/tests/privacy_test.rs` |
+| `env_key_test.rs` | Environment key loading and validation | `monitor/tests/env_key_test.rs` |
+| `key_export_test.rs` | Export-key subcommand functionality | `monitor/tests/key_export_test.rs` |
 
 ### Regression Tests
 
-Tests for previously fixed bugs would follow this pattern:
+Tests for previously fixed bugs:
 
-```rust
-#[test]
-fn regression_issue_123() {
-    // Test that reproduces the bug and verifies fix
-}
+| Test | Issue | Description |
+|------|-------|-------------|
+| `unsafe_mode_test.rs` | N/A | Verify unsafe auth mode disables validation |
+
+## Test Execution Summary
+
+### Test Count by Package
+
+| Package | Test Type | Count | Status |
+|---------|-----------|-------|--------|
+| monitor | Unit (inline) | 60+ | In use |
+| monitor | Integration (env_key_test) | 21 | Phase 11 |
+| monitor | Integration (privacy_test) | 17 | In use |
+| monitor | Integration (key_export_test) | 12 | Phase 12 |
+| monitor | Integration (sender_recovery_test) | N/A | In use |
+| server | Unit (inline) | 40+ | In use |
+| server | Integration | 1+ | In use |
+| client | Unit (Vitest) | 33+ | In use |
+
+### Total Test Coverage (Phase 12)
+- **Rust/Monitor**: 110+ tests across unit and integration
+- **Rust/Server**: 40+ unit tests
+- **TypeScript/Client**: 33+ tests
+- **Grand Total**: 180+ tests
+
+## CI Integration
+
+### Test Pipeline (from `.github/workflows/ci.yml`)
+
+```yaml
+# Rust tests with sequential execution for env var safety
+- name: Run tests
+  run: cargo test --package ${{ matrix.crate }} -- --test-threads=1
+
+# TypeScript tests
+- name: Run tests
+  run: pnpm test
 ```
 
-## Test Execution
+### GitHub Actions Example Workflow
 
-### Local Development
+The example workflow (`.github/workflows/ci-with-monitor.yml`) demonstrates:
 
-```bash
-# TypeScript watch mode for rapid feedback
-npm run test:watch
+1. **Monitor binary deployment** - Download from releases or build locally
+2. **Background execution** - Non-blocking operation with PID tracking
+3. **Event capture during CI** - Events captured while running tests/builds
+4. **Graceful shutdown** - SIGTERM handling for clean shutdown
+5. **Secret configuration** - Private key and server URL via GitHub secrets
+6. **Error resilience** - Monitor failures don't fail workflows
+7. **Source tracking** - Unique identifiers for traceability
 
-# Run specific test file
-npm run test -- App.test.tsx
+This serves as a reference implementation for teams wanting to integrate VibeTea monitoring into their CI pipelines.
 
-# Rust with serial execution for env var safety
-cargo test --workspace --test-threads=1
+### GitHub Actions Composite Action Integration (Phase 6)
 
-# Run specific test
-cargo test --workspace test_name
+The reusable composite action (`.github/actions/vibetea-monitor/action.yml`) simplifies monitor deployment:
 
-# Run monitor tests only (includes todo_tracker and stats_tracker)
-cargo test -p vibetea-monitor --test-threads=1
+```yaml
+# Usage in any workflow
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+
+# Optional: Custom source ID for tracking
+- uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "github-${{ github.repository }}-${{ github.run_id }}"
+
+# Graceful shutdown
+- name: Stop VibeTea Monitor
+  if: always()
+  run: |
+    if [ -n "$VIBETEA_MONITOR_PID" ]; then
+      kill -TERM $VIBETEA_MONITOR_PID 2>/dev/null || true
+      sleep 5
+    fi
 ```
 
-### CI Pipeline
-
-The CI workflow would run:
-
-1. TypeScript tests (Vitest)
-   - Unit tests run in parallel
-   - Coverage threshold check
-
-2. Rust tests (Cargo)
-   - Server tests with `--test-threads=1`
-   - Monitor tests with `--test-threads=1` (includes all trackers and stats_tracker)
-   - All tests must pass
-
-3. Code quality checks
-   - ESLint for TypeScript
-   - Clippy for Rust
-   - Type checking
+Key advantages of the composite action:
+- **Reusability**: Action can be used across multiple repositories
+- **Encapsulation**: Binary download and startup logic hidden from consumers
+- **Output parameters**: PID and status available to downstream steps
+- **Non-blocking**: Failures don't interrupt workflow (warnings only)
+- **Versioning**: Pin to specific version or use `@main` for latest
 
 ### Required Checks
 
-| Check | Blocking | Tool |
-|-------|----------|------|
-| Unit tests pass | Yes | Vitest / Cargo |
-| Type checking passes | Yes | TypeScript / Rust compiler |
-| Linting passes | Yes | ESLint / Clippy |
-| Coverage threshold met | No (for now) | Built-in reporters |
+| Check | Blocking | Notes |
+|-------|----------|-------|
+| Unit tests pass | Yes | Must pass before merge |
+| Integration tests pass | Yes | Must pass before merge |
+| CLI tests pass | Yes | export-key subcommand (Phase 12) |
+| Coverage threshold met | No | Informational only |
+| Type checking passes | Yes | TypeScript strict mode |
+| Linting passes | Yes | ESLint + Clippy |
+| Formatting passes | Yes | Prettier + rustfmt |
 
-## Test Documentation
+## Test Execution Priority
 
-### Test Comments
+Tests are organized by execution priority in CI:
 
-Use JSDoc comments to explain non-obvious test logic:
+1. **Linting & Formatting** (Fast, 1 min)
+   - `cargo fmt --check`
+   - `cargo clippy -- -D warnings`
+   - `pnpm lint`
+   - `pnpm format:check`
 
-```typescript
-/**
- * Test that WebSocket auto-reconnection works after connection loss.
- *
- * Mock WebSocket closes unexpectedly, triggering exponential backoff
- * reconnection attempts. Verifies that connection recovers within
- * a reasonable time frame with correct backoff delays.
- */
-it('should reconnect after connection loss', async () => {
-  // Test code
-});
-```
+2. **Type Checking** (Medium, 2 min)
+   - `cargo check`
+   - `pnpm typecheck`
 
-Use doc comments for Rust test helpers:
+3. **Unit Tests** (Medium, 3-5 min)
+   - Rust: `cargo test --lib`
+   - TypeScript: `pnpm test`
 
-```rust
-/// Creates a test key pair from a deterministic seed.
-///
-/// Using deterministic seeds makes tests reproducible. The seed is expanded
-/// to fill the 32-byte private key requirement.
-fn create_test_keypair(seed: u8) -> (SigningKey, String) {
-    // Implementation
-}
-```
+4. **Integration Tests** (Slower, 5-10 min)
+   - Rust: `cargo test --test '*'`
+   - Includes privacy, crypto, sender, export-key tests
 
-## Known Test Limitations
+5. **Build Release** (Slow, 10+ min)
+   - `cargo build --release`
 
-1. **No E2E tests**: Browser-based E2E testing not yet implemented
-2. **No integration tests**: TypeScript and Rust integration tests not yet implemented
-3. **No HTTP mocking**: Server and Monitor HTTP interactions not yet mocked for testing
-4. **No database tests**: In-memory SQLite or test containers not yet used
-5. **Coverage reporting**: TypeScript coverage not yet reported; Rust coverage optional
+## Testing Best Practices
 
-## Future Testing Improvements
+### Rust
 
-- [ ] E2E tests with Playwright for full app flows
-- [ ] Integration tests for Server + Client communication
-- [ ] HTTP request mocking with wiremock (Phase 6+)
-- [ ] Coverage reporting in CI pipeline
-- [ ] Performance benchmarks for critical paths
-- [ ] Property-based testing for edge cases
-- [ ] Snapshot testing for complex data structures
+1. **Use descriptive test names**: Names should describe the behavior being tested
+2. **Test one thing**: Each test should verify a single behavior
+3. **Use #[serial] for env vars**: Prevents test interference
+4. **Document requirements**: Link tests to specifications (FR-###)
+5. **Test error messages**: Verify errors are clear and actionable
+6. **Use RAII patterns**: Automatically clean up resources
+7. **Group related tests**: Use module organization with clear comments
+8. **Test subprocess interactions**: For CLI, spawn actual binary with Command::new()
+9. **Validate output streams**: Ensure correct stream usage (stdout vs stderr)
+10. **Verify exit codes**: Expect specific exit codes for different scenarios
+
+### TypeScript
+
+1. **Use Arrange-Act-Assert**: Clear test structure
+2. **Test edge cases**: Empty inputs, null, invalid types
+3. **Use type guards**: Verify types during tests
+4. **Mock external dependencies**: Use MSW for API mocking
+5. **Test error paths**: Not just happy paths
+6. **Use fixtures**: Centralize test data
+7. **Keep tests focused**: One assertion or related assertions per test
+
+### GitHub Actions (YAML)
+
+1. **Test action inputs**: Verify required inputs are enforced, optional inputs have defaults
+2. **Test output parameters**: Verify outputs are available to downstream steps
+3. **Test error handling**: Verify non-critical failures use warnings, not failures
+4. **Test environment isolation**: Use matrix strategy for multiple environment testing
+5. **Document cleanup**: Clearly document any manual cleanup steps (e.g., monitor shutdown)
+6. **Test workflow integration**: Verify action works with different workflow patterns
+7. **Test version pinning**: Verify action works with version references and `@main`
 
 ---
 
 ## What Does NOT Belong Here
 
 - Code style rules → CONVENTIONS.md
-- Security testing details → SECURITY.md
+- Security testing → SECURITY.md
 - Architecture patterns → ARCHITECTURE.md
 - Technology choices → STACK.md
 

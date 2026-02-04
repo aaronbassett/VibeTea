@@ -10,3 +10,5 @@
 ### Security Patterns (Phase 3)
 - Use `subtle::ConstantTimeEq` for token comparison to prevent timing attacks
 - Use `ed25519_dalek::VerifyingKey::verify_strict()` for RFC 8032 compliant signature verification
+- Use `zeroize` crate for any intermediate buffers containing private key material
+- Memory should be zeroed on **both** success and error paths for defense in depth

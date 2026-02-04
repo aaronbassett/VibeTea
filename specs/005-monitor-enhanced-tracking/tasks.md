@@ -29,25 +29,25 @@
 **Purpose**: Project initialization and module structure
 
 ### Phase Start
-- [x] T001 [GIT] Verify on feature branch 005-monitor-enhanced-tracking and working tree is clean
+- [ ] T001 [GIT] Verify on feature branch 005-monitor-enhanced-tracking and working tree is clean
 
 ### Implementation
-- [x] T002 Create trackers module directory at monitor/src/trackers/
-- [x] T003 [GIT] Commit: create trackers module directory
-- [x] T004 [P] Create trackers/mod.rs with module exports in monitor/src/trackers/mod.rs
-- [x] T005 [P] Add trackers module to lib.rs in monitor/src/lib.rs
-- [x] T006 [GIT] Commit: add trackers module structure
-- [x] T007 [P] Extend EventPayload enum with new event types in monitor/src/types.rs (use devs:rust-dev agent)
-- [x] T008 [P] Extend server EventPayload enum to match monitor in server/src/types.rs (use devs:rust-dev agent)
-- [x] T009 [GIT] Commit: add new event types to monitor and server
-- [x] T010 [P] Extend client event types in client/src/types/events.ts (use devs:typescript-dev agent)
-- [x] T011 [GIT] Commit: add new event types to client
+- [ ] T002 Create trackers module directory at monitor/src/trackers/
+- [ ] T003 [GIT] Commit: create trackers module directory
+- [ ] T004 [P] Create trackers/mod.rs with module exports in monitor/src/trackers/mod.rs
+- [ ] T005 [P] Add trackers module to lib.rs in monitor/src/lib.rs
+- [ ] T006 [GIT] Commit: add trackers module structure
+- [ ] T007 [P] Extend EventPayload enum with new event types in monitor/src/types.rs (use devs:rust-dev agent)
+- [ ] T008 [P] Extend server EventPayload enum to match monitor in server/src/types.rs (use devs:rust-dev agent)
+- [ ] T009 [GIT] Commit: add new event types to monitor and server
+- [ ] T010 [P] Extend client event types in client/src/types/events.ts (use devs:typescript-dev agent)
+- [ ] T011 [GIT] Commit: add new event types to client
 
 ### Phase Completion
-- [x] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T013 [GIT] Create/update PR to main with phase summary
-- [x] T014 [GIT] Verify all CI checks pass
-- [x] T015 [GIT] Report PR ready status
+- [ ] T012 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T013 [GIT] Create/update PR to main with phase summary
+- [ ] T014 [GIT] Verify all CI checks pass
+- [ ] T015 [GIT] Report PR ready status
 
 ---
 
@@ -58,35 +58,35 @@
 **CRITICAL**: No user story work can begin until this phase is complete
 
 ### Phase Start
-- [x] T016 [GIT] Verify working tree is clean before starting Phase 2
-- [x] T017 [GIT] Pull and rebase on origin/main if needed
-- [x] T018 Create retro/P2.md for this phase
+- [ ] T016 [GIT] Verify working tree is clean before starting Phase 2
+- [ ] T017 [GIT] Pull and rebase on origin/main if needed
+- [ ] T018 Create retro/P2.md for this phase
 
 ### Implementation
-- [x] T019 [GIT] Commit: initialize phase 2 retro
-- [x] T020 Add debounce utility module to monitor/src/utils/debounce.rs (use devs:rust-dev agent)
-- [x] T020A [P] Implement session state limit enforcement (max 1000 sessions) in monitor/src/config.rs (use devs:rust-dev agent)
+- [ ] T019 [GIT] Commit: initialize phase 2 retro
+- [ ] T020 Add debounce utility module to monitor/src/utils/debounce.rs (use devs:rust-dev agent)
+- [ ] T020A [P] Implement session state limit enforcement (max 1000 sessions) in monitor/src/config.rs (use devs:rust-dev agent)
   - Add MAX_TRACKED_SESSIONS config constant (default 1000)
   - Implement LRU session eviction when limit reached
   - Add metrics tracking for session limit warnings
-- [x] T021 [GIT] Commit: add debounce utility
-- [x] T022 [P] Add shell-like tokenizer for skill name extraction in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
-- [x] T023 [P] Add session filename parser utility in monitor/src/utils/session_filename.rs (use devs:rust-dev agent)
-- [x] T024 [GIT] Commit: add tokenizer and session filename utilities
-- [x] T025 Create utils module with mod.rs in monitor/src/utils/mod.rs
-- [x] T026 [GIT] Commit: create utils module
-- [x] T027 Add utils module to lib.rs in monitor/src/lib.rs
-- [x] T028 [GIT] Commit: add utils module to lib.rs
-- [x] T029 Run codebase mapping for Phase 2 changes (/sdd:map incremental)
-- [x] T030 [GIT] Commit: update codebase documents for phase 2
-- [x] T031 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T032 [GIT] Commit: finalize phase 2 retro
+- [ ] T021 [GIT] Commit: add debounce utility
+- [ ] T022 [P] Add shell-like tokenizer for skill name extraction in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
+- [ ] T023 [P] Add session filename parser utility in monitor/src/utils/session_filename.rs (use devs:rust-dev agent)
+- [ ] T024 [GIT] Commit: add tokenizer and session filename utilities
+- [ ] T025 Create utils module with mod.rs in monitor/src/utils/mod.rs
+- [ ] T026 [GIT] Commit: create utils module
+- [ ] T027 Add utils module to lib.rs in monitor/src/lib.rs
+- [ ] T028 [GIT] Commit: add utils module to lib.rs
+- [ ] T029 Run codebase mapping for Phase 2 changes (/sdd:map incremental)
+- [ ] T030 [GIT] Commit: update codebase documents for phase 2
+- [ ] T031 Review retro/P2.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T032 [GIT] Commit: finalize phase 2 retro
 
 ### Phase Completion
-- [x] T033 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T034 [GIT] Create/update PR to main with phase summary
-- [x] T035 [GIT] Verify all CI checks pass
-- [x] T036 [GIT] Report PR ready status
+- [ ] T033 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T034 [GIT] Create/update PR to main with phase summary
+- [ ] T035 [GIT] Verify all CI checks pass
+- [ ] T036 [GIT] Report PR ready status
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -99,44 +99,44 @@
 **Independent Test**: Start Claude Code session, perform actions, verify monitor displays global token counts broken down by model.
 
 ### Phase Start
-- [x] T037 [GIT] Verify working tree is clean before starting Phase 3
-- [x] T038 [GIT] Pull and rebase on origin/main if needed
-- [x] T039 [US1] Create retro/P3.md for this phase
+- [ ] T037 [GIT] Verify working tree is clean before starting Phase 3
+- [ ] T038 [GIT] Pull and rebase on origin/main if needed
+- [ ] T039 [US1] Create retro/P3.md for this phase
 
 ### Tests for User Story 1
-- [x] T040 [GIT] Commit: initialize phase 3 retro
-- [x] T041 [P] [US1] Unit test for stats_tracker parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T042 [P] [US1] Unit test for TokenUsageEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T042A [P] [US1] Unit test for 200ms debounce timing behavior in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T040 [GIT] Commit: initialize phase 3 retro
+- [ ] T041 [P] [US1] Unit test for stats_tracker parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T042 [P] [US1] Unit test for TokenUsageEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T042A [P] [US1] Unit test for 200ms debounce timing behavior in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
   - Mock file watcher events at <100ms intervals
   - Verify only 1 event emitted per 200ms window
-- [x] T043 [GIT] Commit: add stats_tracker tests (including debounce timing)
+- [ ] T043 [GIT] Commit: add stats_tracker tests (including debounce timing)
 
 ### Implementation for User Story 1
-- [x] T044 [US1] Implement StatsCache struct for JSON parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T045 [GIT] Commit: add StatsCache struct
-- [x] T046 [US1] Implement stats_tracker module with file watching in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T047 [GIT] Commit: implement stats_tracker file watching
-- [x] T048 [US1] Implement TokenUsageEvent emission per model in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T049 [GIT] Commit: implement TokenUsageEvent emission
-- [x] T050 [US1] Add 200ms debounce for stats-cache.json changes in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T051 [GIT] Commit: add debounce to stats_tracker
-- [x] T052 [US1] Add JSON parse failure retry with 100ms delay in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T053 [GIT] Commit: add JSON parse retry logic
-- [x] T054 [US1] Wire stats_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [x] T055 [GIT] Commit: wire stats_tracker to watcher
-- [x] T056 [US1] Add client store handler for token_usage events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T057 [GIT] Commit: add client token_usage handler
-- [x] T058 [US1] Run /sdd:map incremental for Phase 3 changes
-- [x] T059 [GIT] Commit: update codebase documents for phase 3
-- [x] T060 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T061 [GIT] Commit: finalize phase 3 retro
+- [ ] T044 [US1] Implement StatsCache struct for JSON parsing in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T045 [GIT] Commit: add StatsCache struct
+- [ ] T046 [US1] Implement stats_tracker module with file watching in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T047 [GIT] Commit: implement stats_tracker file watching
+- [ ] T048 [US1] Implement TokenUsageEvent emission per model in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T049 [GIT] Commit: implement TokenUsageEvent emission
+- [ ] T050 [US1] Add 200ms debounce for stats-cache.json changes in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T051 [GIT] Commit: add debounce to stats_tracker
+- [ ] T052 [US1] Add JSON parse failure retry with 100ms delay in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T053 [GIT] Commit: add JSON parse retry logic
+- [ ] T054 [US1] Wire stats_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [ ] T055 [GIT] Commit: wire stats_tracker to watcher
+- [ ] T056 [US1] Add client store handler for token_usage events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T057 [GIT] Commit: add client token_usage handler
+- [ ] T058 [US1] Run /sdd:map incremental for Phase 3 changes
+- [ ] T059 [GIT] Commit: update codebase documents for phase 3
+- [ ] T060 [US1] Review retro/P3.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T061 [GIT] Commit: finalize phase 3 retro
 
 ### Phase Completion
-- [x] T062 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T063 [GIT] Create/update PR to main with phase summary
-- [x] T064 [GIT] Verify all CI checks pass
-- [x] T065 [GIT] Report PR ready status
+- [ ] T062 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T063 [GIT] Create/update PR to main with phase summary
+- [ ] T064 [GIT] Verify all CI checks pass
+- [ ] T065 [GIT] Report PR ready status
 
 **Checkpoint**: Token usage tracking fully functional and testable independently
 
@@ -149,35 +149,35 @@
 **Independent Test**: Ask Claude to perform a task triggering agent spawns, verify monitor captures subagent_type for each Task tool invocation.
 
 ### Phase Start
-- [x] T066 [GIT] Verify working tree is clean before starting Phase 4
-- [x] T067 [GIT] Pull and rebase on origin/main if needed
-- [x] T068 [US2] Create retro/P4.md for this phase
+- [ ] T066 [GIT] Verify working tree is clean before starting Phase 4
+- [ ] T067 [GIT] Pull and rebase on origin/main if needed
+- [ ] T068 [US2] Create retro/P4.md for this phase
 
 ### Tests for User Story 2
-- [x] T069 [GIT] Commit: initialize phase 4 retro
-- [x] T070 [P] [US2] Unit test for Task tool_use parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [x] T071 [P] [US2] Unit test for AgentSpawnEvent emission in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [x] T072 [GIT] Commit: add agent_tracker tests
+- [ ] T069 [GIT] Commit: initialize phase 4 retro
+- [ ] T070 [P] [US2] Unit test for Task tool_use parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [ ] T071 [P] [US2] Unit test for AgentSpawnEvent emission in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [ ] T072 [GIT] Commit: add agent_tracker tests
 
 ### Implementation for User Story 2
-- [x] T073 [US2] Implement TaskToolUse struct for JSON parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [x] T074 [GIT] Commit: add TaskToolUse struct
-- [x] T075 [US2] Implement agent_tracker module in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
-- [x] T076 [GIT] Commit: implement agent_tracker module
-- [x] T077 [US2] Integrate agent_tracker with existing JSONL parsing in monitor/src/parser.rs (use devs:rust-dev agent)
-- [x] T078 [GIT] Commit: integrate agent_tracker with parser
-- [x] T079 [US2] Add client store handler for agent_spawn events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T080 [GIT] Commit: add client agent_spawn handler
-- [x] T081 [US2] Run /sdd:map incremental for Phase 4 changes
-- [x] T082 [GIT] Commit: update codebase documents for phase 4
-- [x] T083 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T084 [GIT] Commit: finalize phase 4 retro
+- [ ] T073 [US2] Implement TaskToolUse struct for JSON parsing in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [ ] T074 [GIT] Commit: add TaskToolUse struct
+- [ ] T075 [US2] Implement agent_tracker module in monitor/src/trackers/agent_tracker.rs (use devs:rust-dev agent)
+- [ ] T076 [GIT] Commit: implement agent_tracker module
+- [ ] T077 [US2] Integrate agent_tracker with existing JSONL parsing in monitor/src/parser.rs (use devs:rust-dev agent)
+- [ ] T078 [GIT] Commit: integrate agent_tracker with parser
+- [ ] T079 [US2] Add client store handler for agent_spawn events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T080 [GIT] Commit: add client agent_spawn handler
+- [ ] T081 [US2] Run /sdd:map incremental for Phase 4 changes
+- [ ] T082 [GIT] Commit: update codebase documents for phase 4
+- [ ] T083 [US2] Review retro/P4.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T084 [GIT] Commit: finalize phase 4 retro
 
 ### Phase Completion
-- [x] T085 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T086 [GIT] Create/update PR to main with phase summary
-- [x] T087 [GIT] Verify all CI checks pass
-- [x] T088 [GIT] Report PR ready status
+- [ ] T085 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T086 [GIT] Create/update PR to main with phase summary
+- [ ] T087 [GIT] Verify all CI checks pass
+- [ ] T088 [GIT] Report PR ready status
 
 **Checkpoint**: Agent spawn tracking fully functional and testable independently
 
@@ -190,41 +190,41 @@
 **Independent Test**: Invoke several slash commands, verify monitor captures each with timestamp and command name.
 
 ### Phase Start
-- [x] T089 [GIT] Verify working tree is clean before starting Phase 5
-- [x] T090 [GIT] Pull and rebase on origin/main if needed
-- [x] T091 [US3] Create retro/P5.md for this phase
+- [ ] T089 [GIT] Verify working tree is clean before starting Phase 5
+- [ ] T090 [GIT] Pull and rebase on origin/main if needed
+- [ ] T091 [US3] Create retro/P5.md for this phase
 
 ### Tests for User Story 3
-- [x] T092 [GIT] Commit: initialize phase 5 retro
-- [x] T093 [P] [US3] Unit test for history.jsonl parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [x] T094 [P] [US3] Unit test for shell-like tokenization in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
-- [x] T094A [P] [US3] Unit test for quoted string handling in shell-like tokenizer (use devs:rust-dev agent)
+- [ ] T092 [GIT] Commit: initialize phase 5 retro
+- [ ] T093 [P] [US3] Unit test for history.jsonl parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [ ] T094 [P] [US3] Unit test for shell-like tokenization in monitor/src/utils/tokenize.rs (use devs:rust-dev agent)
+- [ ] T094A [P] [US3] Unit test for quoted string handling in shell-like tokenizer (use devs:rust-dev agent)
   - Test: `/commit -m "fix: update docs"` → `commit`
   - Test: `/"my skill" arg1` → `"my skill"`
   - Test: `/sdd:plan` → `sdd:plan`
-- [x] T095 [GIT] Commit: add skill_tracker tests (including quoted command names)
+- [ ] T095 [GIT] Commit: add skill_tracker tests (including quoted command names)
 
 ### Implementation for User Story 3
-- [x] T096 [US3] Implement HistoryEntry struct for JSON parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [x] T097 [GIT] Commit: add HistoryEntry struct
-- [x] T098 [US3] Implement skill_tracker module with file watching in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [x] T099 [GIT] Commit: implement skill_tracker module
-- [x] T100 [US3] Implement skill name extraction using shell-like tokenizer in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
-- [x] T101 [GIT] Commit: implement skill name extraction
-- [x] T102 [US3] Wire skill_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [x] T103 [GIT] Commit: wire skill_tracker to watcher
-- [x] T104 [US3] Add client store handler for skill_invocation events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T105 [GIT] Commit: add client skill_invocation handler
-- [x] T106 [US3] Run /sdd:map incremental for Phase 5 changes
-- [x] T107 [GIT] Commit: update codebase documents for phase 5
-- [x] T108 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T109 [GIT] Commit: finalize phase 5 retro
+- [ ] T096 [US3] Implement HistoryEntry struct for JSON parsing in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [ ] T097 [GIT] Commit: add HistoryEntry struct
+- [ ] T098 [US3] Implement skill_tracker module with file watching in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [ ] T099 [GIT] Commit: implement skill_tracker module
+- [ ] T100 [US3] Implement skill name extraction using shell-like tokenizer in monitor/src/trackers/skill_tracker.rs (use devs:rust-dev agent)
+- [ ] T101 [GIT] Commit: implement skill name extraction
+- [ ] T102 [US3] Wire skill_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [ ] T103 [GIT] Commit: wire skill_tracker to watcher
+- [ ] T104 [US3] Add client store handler for skill_invocation events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T105 [GIT] Commit: add client skill_invocation handler
+- [ ] T106 [US3] Run /sdd:map incremental for Phase 5 changes
+- [ ] T107 [GIT] Commit: update codebase documents for phase 5
+- [ ] T108 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T109 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
-- [x] T110 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T111 [GIT] Create/update PR to main with phase summary
-- [x] T112 [GIT] Verify all CI checks pass
-- [x] T113 [GIT] Report PR ready status
+- [ ] T110 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T111 [GIT] Create/update PR to main with phase summary
+- [ ] T112 [GIT] Verify all CI checks pass
+- [ ] T113 [GIT] Report PR ready status
 
 **Checkpoint**: Skill invocation tracking fully functional and testable independently
 
@@ -237,42 +237,42 @@
 **Independent Test**: Create tasks, complete some, leave others pending, end session, verify correct categorization.
 
 ### Phase Start
-- [x] T114 [GIT] Verify working tree is clean before starting Phase 6
-- [x] T115 [GIT] Pull and rebase on origin/main if needed
-- [x] T116 [US4] Create retro/P6.md for this phase
+- [ ] T114 [GIT] Verify working tree is clean before starting Phase 6
+- [ ] T115 [GIT] Pull and rebase on origin/main if needed
+- [ ] T116 [US4] Create retro/P6.md for this phase
 
 ### Tests for User Story 4
-- [x] T117 [GIT] Commit: initialize phase 6 retro
-- [x] T118 [P] [US4] Unit test for todo filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T119 [P] [US4] Unit test for todo status counting in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T120 [P] [US4] Unit test for abandonment detection via summary event in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T121 [GIT] Commit: add todo_tracker tests
+- [ ] T117 [GIT] Commit: initialize phase 6 retro
+- [ ] T118 [P] [US4] Unit test for todo filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T119 [P] [US4] Unit test for todo status counting in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T120 [P] [US4] Unit test for abandonment detection via summary event in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T121 [GIT] Commit: add todo_tracker tests
 
 ### Implementation for User Story 4
-- [x] T122 [US4] Implement TodoEntry and TodoFile structs in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T123 [GIT] Commit: add TodoEntry and TodoFile structs
-- [x] T124 [US4] Implement todo_tracker module with file watching in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T125 [GIT] Commit: implement todo_tracker file watching
-- [x] T126 [US4] Implement session-todo correlation via filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T127 [GIT] Commit: implement session-todo correlation
-- [x] T128 [US4] Implement abandonment detection via summary event correlation in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T129 [GIT] Commit: implement abandonment detection
-- [x] T130 [US4] Wire todo_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [x] T131 [GIT] Commit: wire todo_tracker to watcher
-- [x] T132 [US4] Add 100ms debounce for todo file changes in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
-- [x] T133 [GIT] Commit: add debounce to todo_tracker
-- [x] T134 [US4] Add client store handler for todo_progress events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T135 [GIT] Commit: add client todo_progress handler
-- [x] T136 [US4] Run /sdd:map incremental for Phase 6 changes
-- [x] T137 [GIT] Commit: update codebase documents for phase 6
-- [x] T138 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T139 [GIT] Commit: finalize phase 6 retro
+- [ ] T122 [US4] Implement TodoEntry and TodoFile structs in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T123 [GIT] Commit: add TodoEntry and TodoFile structs
+- [ ] T124 [US4] Implement todo_tracker module with file watching in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T125 [GIT] Commit: implement todo_tracker file watching
+- [ ] T126 [US4] Implement session-todo correlation via filename parsing in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T127 [GIT] Commit: implement session-todo correlation
+- [ ] T128 [US4] Implement abandonment detection via summary event correlation in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T129 [GIT] Commit: implement abandonment detection
+- [ ] T130 [US4] Wire todo_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [ ] T131 [GIT] Commit: wire todo_tracker to watcher
+- [ ] T132 [US4] Add 100ms debounce for todo file changes in monitor/src/trackers/todo_tracker.rs (use devs:rust-dev agent)
+- [ ] T133 [GIT] Commit: add debounce to todo_tracker
+- [ ] T134 [US4] Add client store handler for todo_progress events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T135 [GIT] Commit: add client todo_progress handler
+- [ ] T136 [US4] Run /sdd:map incremental for Phase 6 changes
+- [ ] T137 [GIT] Commit: update codebase documents for phase 6
+- [ ] T138 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T139 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
-- [x] T140 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T141 [GIT] Create/update PR to main with phase summary
-- [x] T142 [GIT] Verify all CI checks pass
-- [x] T143 [GIT] Report PR ready status
+- [ ] T140 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T141 [GIT] Create/update PR to main with phase summary
+- [ ] T142 [GIT] Verify all CI checks pass
+- [ ] T143 [GIT] Report PR ready status
 
 **Checkpoint**: Todo progress tracking with abandonment fully functional
 
@@ -285,44 +285,44 @@
 **Independent Test**: Have Claude edit files, verify monitor calculates lines added/removed by diffing vN vs vN-1.
 
 ### Phase Start
-- [x] T144 [GIT] Verify working tree is clean before starting Phase 7
-- [x] T145 [GIT] Pull and rebase on origin/main if needed
-- [x] T146 [US5] Create retro/P7.md for this phase
+- [ ] T144 [GIT] Verify working tree is clean before starting Phase 7
+- [ ] T145 [GIT] Pull and rebase on origin/main if needed
+- [ ] T146 [US5] Create retro/P7.md for this phase
 
 ### Tests for User Story 5
-- [x] T147 [GIT] Commit: initialize phase 7 retro
-- [x] T148 [P] [US5] Unit test for file version parsing (@vN pattern) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T149 [P] [US5] Unit test for line diff calculation in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T150 [P] [US5] Unit test for v1 skip behavior in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T151 [GIT] Commit: add file_history_tracker tests
+- [ ] T147 [GIT] Commit: initialize phase 7 retro
+- [ ] T148 [P] [US5] Unit test for file version parsing (@vN pattern) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T149 [P] [US5] Unit test for line diff calculation in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T150 [P] [US5] Unit test for v1 skip behavior in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T151 [GIT] Commit: add file_history_tracker tests
 
 ### Implementation for User Story 5
-- [x] T152 [US5] Add similar crate dependency for line diffs in monitor/Cargo.toml (use devs:rust-dev agent)
-- [x] T153 [GIT] Commit: add similar crate dependency
-- [x] T154 [US5] Implement FileVersion struct and parsing in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T155 [GIT] Commit: add FileVersion struct
-- [x] T156 [US5] Implement file_history_tracker module with directory watching in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T157 [GIT] Commit: implement file_history_tracker directory watching
-- [x] T158 [US5] Implement async diff operation for vN vs vN-1 in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T159 [GIT] Commit: implement async diff operation
-- [x] T160 [US5] Implement v1 skip logic (no diff for initial versions) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T161 [GIT] Commit: implement v1 skip logic
-- [x] T162 [US5] Wire file_history_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
-- [x] T163 [GIT] Commit: wire file_history_tracker to watcher
-- [x] T164 [US5] Add 100ms debounce for file-history changes in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
-- [x] T165 [GIT] Commit: add debounce to file_history_tracker
-- [x] T166 [US5] Add client store handler for file_change events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T167 [GIT] Commit: add client file_change handler
-- [x] T168 [US5] Run /sdd:map incremental for Phase 7 changes
-- [x] T169 [GIT] Commit: update codebase documents for phase 7
-- [x] T170 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T171 [GIT] Commit: finalize phase 7 retro
+- [ ] T152 [US5] Add similar crate dependency for line diffs in monitor/Cargo.toml (use devs:rust-dev agent)
+- [ ] T153 [GIT] Commit: add similar crate dependency
+- [ ] T154 [US5] Implement FileVersion struct and parsing in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T155 [GIT] Commit: add FileVersion struct
+- [ ] T156 [US5] Implement file_history_tracker module with directory watching in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T157 [GIT] Commit: implement file_history_tracker directory watching
+- [ ] T158 [US5] Implement async diff operation for vN vs vN-1 in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T159 [GIT] Commit: implement async diff operation
+- [ ] T160 [US5] Implement v1 skip logic (no diff for initial versions) in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T161 [GIT] Commit: implement v1 skip logic
+- [ ] T162 [US5] Wire file_history_tracker to watcher in monitor/src/watcher.rs (use devs:rust-dev agent)
+- [ ] T163 [GIT] Commit: wire file_history_tracker to watcher
+- [ ] T164 [US5] Add 100ms debounce for file-history changes in monitor/src/trackers/file_history_tracker.rs (use devs:rust-dev agent)
+- [ ] T165 [GIT] Commit: add debounce to file_history_tracker
+- [ ] T166 [US5] Add client store handler for file_change events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T167 [GIT] Commit: add client file_change handler
+- [ ] T168 [US5] Run /sdd:map incremental for Phase 7 changes
+- [ ] T169 [GIT] Commit: update codebase documents for phase 7
+- [ ] T170 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T171 [GIT] Commit: finalize phase 7 retro
 
 ### Phase Completion
-- [x] T172 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T173 [GIT] Create/update PR to main with phase summary
-- [x] T174 [GIT] Verify all CI checks pass
-- [x] T175 [GIT] Report PR ready status
+- [ ] T172 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T173 [GIT] Create/update PR to main with phase summary
+- [ ] T174 [GIT] Verify all CI checks pass
+- [ ] T175 [GIT] Report PR ready status
 
 **Checkpoint**: File edit line change tracking fully functional
 
@@ -339,28 +339,28 @@
 **Independent Test**: Run Claude Code sessions, verify monitor captures message counts, tool call counts, session duration.
 
 ### Phase Start
-- [x] T176 [GIT] Verify working tree is clean before starting Phase 8
-- [x] T177 [GIT] Pull and rebase on origin/main if needed
-- [x] T178 [US6] Create retro/P8.md for this phase
+- [ ] T176 [GIT] Verify working tree is clean before starting Phase 8
+- [ ] T177 [GIT] Pull and rebase on origin/main if needed
+- [ ] T178 [US6] Create retro/P8.md for this phase
 
 ### Implementation for User Story 6
-- [x] T179 [GIT] Commit: initialize phase 8 retro
-- [x] T180 [US6] Extend StatsCache struct with session metrics fields in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T181 [GIT] Commit: extend StatsCache with session metrics
-- [x] T182 [US6] Implement SessionMetricsEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T183 [GIT] Commit: implement SessionMetricsEvent emission
-- [x] T184 [US6] Add client store handler for session_metrics events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T185 [GIT] Commit: add client session_metrics handler
-- [x] T186 [US6] Run /sdd:map incremental for Phase 8 changes
-- [x] T187 [GIT] Commit: update codebase documents for phase 8
-- [x] T188 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T189 [GIT] Commit: finalize phase 8 retro
+- [ ] T179 [GIT] Commit: initialize phase 8 retro
+- [ ] T180 [US6] Extend StatsCache struct with session metrics fields in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T181 [GIT] Commit: extend StatsCache with session metrics
+- [ ] T182 [US6] Implement SessionMetricsEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T183 [GIT] Commit: implement SessionMetricsEvent emission
+- [ ] T184 [US6] Add client store handler for session_metrics events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T185 [GIT] Commit: add client session_metrics handler
+- [ ] T186 [US6] Run /sdd:map incremental for Phase 8 changes
+- [ ] T187 [GIT] Commit: update codebase documents for phase 8
+- [ ] T188 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T189 [GIT] Commit: finalize phase 8 retro
 
 ### Phase Completion
-- [x] T190 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T191 [GIT] Create/update PR to main with phase summary
-- [x] T192 [GIT] Verify all CI checks pass
-- [x] T193 [GIT] Report PR ready status
+- [ ] T190 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T191 [GIT] Create/update PR to main with phase summary
+- [ ] T192 [GIT] Verify all CI checks pass
+- [ ] T193 [GIT] Report PR ready status
 
 **Checkpoint**: Session metrics tracking fully functional
 
@@ -373,26 +373,26 @@
 **Independent Test**: Use Claude Code at different times, verify monitor captures hourCounts data.
 
 ### Phase Start
-- [x] T194 [GIT] Verify working tree is clean before starting Phase 9
-- [x] T195 [GIT] Pull and rebase on origin/main if needed
-- [x] T196 [US7] Create retro/P9.md for this phase
+- [ ] T194 [GIT] Verify working tree is clean before starting Phase 9
+- [ ] T195 [GIT] Pull and rebase on origin/main if needed
+- [ ] T196 [US7] Create retro/P9.md for this phase
 
 ### Implementation for User Story 7
-- [x] T197 [GIT] Commit: initialize phase 9 retro
-- [x] T198 [US7] Implement ActivityPatternEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T199 [GIT] Commit: implement ActivityPatternEvent emission
-- [x] T200 [US7] Add client store handler for activity_pattern events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T201 [GIT] Commit: add client activity_pattern handler
-- [x] T202 [US7] Run /sdd:map incremental for Phase 9 changes
-- [x] T203 [GIT] Commit: update codebase documents for phase 9
-- [x] T204 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T205 [GIT] Commit: finalize phase 9 retro
+- [ ] T197 [GIT] Commit: initialize phase 9 retro
+- [ ] T198 [US7] Implement ActivityPatternEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T199 [GIT] Commit: implement ActivityPatternEvent emission
+- [ ] T200 [US7] Add client store handler for activity_pattern events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T201 [GIT] Commit: add client activity_pattern handler
+- [ ] T202 [US7] Run /sdd:map incremental for Phase 9 changes
+- [ ] T203 [GIT] Commit: update codebase documents for phase 9
+- [ ] T204 [US7] Review retro/P9.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T205 [GIT] Commit: finalize phase 9 retro
 
 ### Phase Completion
-- [x] T206 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T207 [GIT] Create/update PR to main with phase summary
-- [x] T208 [GIT] Verify all CI checks pass
-- [x] T209 [GIT] Report PR ready status
+- [ ] T206 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T207 [GIT] Create/update PR to main with phase summary
+- [ ] T208 [GIT] Verify all CI checks pass
+- [ ] T209 [GIT] Report PR ready status
 
 **Checkpoint**: Activity pattern tracking fully functional
 
@@ -405,26 +405,26 @@
 **Independent Test**: Use different models during sessions, verify monitor captures per-model usage.
 
 ### Phase Start
-- [x] T210 [GIT] Verify working tree is clean before starting Phase 10
-- [x] T211 [GIT] Pull and rebase on origin/main if needed
-- [x] T212 [US8] Create retro/P10.md for this phase
+- [ ] T210 [GIT] Verify working tree is clean before starting Phase 10
+- [ ] T211 [GIT] Pull and rebase on origin/main if needed
+- [ ] T212 [US8] Create retro/P10.md for this phase
 
 ### Implementation for User Story 8
-- [x] T213 [GIT] Commit: initialize phase 10 retro
-- [x] T214 [US8] Implement ModelDistributionEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [x] T215 [GIT] Commit: implement ModelDistributionEvent emission
-- [x] T216 [US8] Add client store handler for model_distribution events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [x] T217 [GIT] Commit: add client model_distribution handler
-- [x] T218 [US8] Run /sdd:map incremental for Phase 10 changes
-- [x] T219 [GIT] Commit: update codebase documents for phase 10
-- [x] T220 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
-- [x] T221 [GIT] Commit: finalize phase 10 retro
+- [ ] T213 [GIT] Commit: initialize phase 10 retro
+- [ ] T214 [US8] Implement ModelDistributionEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [ ] T215 [GIT] Commit: implement ModelDistributionEvent emission
+- [ ] T216 [US8] Add client store handler for model_distribution events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [ ] T217 [GIT] Commit: add client model_distribution handler
+- [ ] T218 [US8] Run /sdd:map incremental for Phase 10 changes
+- [ ] T219 [GIT] Commit: update codebase documents for phase 10
+- [ ] T220 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
+- [ ] T221 [GIT] Commit: finalize phase 10 retro
 
 ### Phase Completion
-- [x] T222 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [x] T223 [GIT] Create/update PR to main with phase summary
-- [x] T224 [GIT] Verify all CI checks pass
-- [x] T225 [GIT] Report PR ready status
+- [ ] T222 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [ ] T223 [GIT] Create/update PR to main with phase summary
+- [ ] T224 [GIT] Verify all CI checks pass
+- [ ] T225 [GIT] Report PR ready status
 
 **Checkpoint**: Model distribution tracking fully functional
 

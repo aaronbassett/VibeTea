@@ -1,7 +1,7 @@
 # Security
 
 > **Purpose**: Document authentication, authorization, security controls, and vulnerability status.
-> **Generated**: 2026-02-04
+> **Generated**: 2026-02-03
 > **Last Updated**: 2026-02-04
 
 ## Authentication
@@ -10,35 +10,56 @@
 
 | Method | Implementation | Configuration |
 |--------|----------------|---------------|
-| Monitor API | Ed25519 signature verification (RFC 8032 strict) | `server/src/auth.rs` |
-| WebSocket Client | Bearer token with constant-time comparison | `server/src/auth.rs` |
+| Ed25519 Signatures | ed25519_dalek | `server/src/auth.rs` |
+| Bearer Token (WebSocket) | Token validation | `server/src/auth.rs` |
+| Environment Variables | Public key registration | `VIBETEA_PUBLIC_KEYS`, `VIBETEA_SUBSCRIBER_TOKEN` |
 
 ### Token Configuration
 
 | Setting | Value | Location |
 |---------|-------|----------|
-| Signature algorithm | Ed25519 (RFC 8032 compliant via `verify_strict()`) | `server/src/auth.rs:231` |
-| Signing method | `ed25519_dalek::VerifyingKey::verify_strict()` | `server/src/auth.rs:45,230-232` |
-| Token comparison | Constant-time via `subtle::ConstantTimeEq` | `server/src/auth.rs:290` |
-| Signature encoding | Base64 standard | `server/src/routes.rs:874` |
-| Public key encoding | Base64 standard (32 bytes) | `server/src/config.rs:48-49` |
+| Monitor authentication | Ed25519 digital signatures | X-Source-ID, X-Signature headers |
+| WebSocket authentication | Bearer token (static string) | ?token query parameter |
+| Signing algorithm | Ed25519 (RFC 8032 strict) | Uses `verify_strict()` |
+| Key storage (monitor) | Ed25519 raw seed (32 bytes) | `~/.vibetea/key.priv` (mode 0600) |
+| Public key encoding | Base64 standard (RFC 4648) | Registered via `VIBETEA_PUBLIC_KEYS` |
+| Private key format (env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
 
-### Monitor Authentication Flow
+### Key Loading Strategy
 
-1. Monitor signs request body with Ed25519 private key
-2. Sends `X-Source-ID` header with monitor identifier
-3. Sends `X-Signature` header with base64-encoded signature
-4. Server verifies signature using registered public key
-5. Server validates event.source matches X-Source-ID header
+| Source | Priority | Behavior | Location |
+|--------|----------|----------|----------|
+| Environment variable | First (takes precedence) | `VIBETEA_PRIVATE_KEY` must be valid base64-encoded 32 bytes | `monitor/src/crypto.rs:143` |
+| File fallback | Second | `{VIBETEA_KEY_PATH}/key.priv` (defaults to `~/.vibetea`) | `monitor/src/crypto.rs:206` |
+| Auto-generation | N/A | Can generate new keypair if neither exists | `monitor/src/crypto.rs:108` |
+
+### Key Material Security
+
+| Aspect | Implementation | Location |
+|--------|----------------|----------|
+| Private key seed (32 bytes) | Zeroed after SigningKey creation (zeroize crate) | `monitor/src/crypto.rs:114,169,233,287` |
+| Decoded key buffer | Zeroed on error and success paths | `monitor/src/crypto.rs:157,221` |
+| Environment variable trimming | Whitespace/newlines removed before decoding | `monitor/src/crypto.rs:147` |
+| Key length validation | Exactly 32 bytes required, errors on mismatch | `monitor/src/crypto.rs:155,219,276` |
+| File permissions | Unix mode 0600 (owner read/write only) | `monitor/src/crypto.rs:329-335` |
+
+### Signature Verification
+
+| Component | Detail |
+|-----------|--------|
+| Public key bytes | 32 bytes Ed25519 |
+| Signature bytes | 64 bytes Ed25519 |
+| Constant-time comparison | Used with `subtle::ConstantTimeEq` |
+| Message content | Full HTTP request body (prevents tampering) |
 
 ### Session Management
 
 | Setting | Value |
 |---------|-------|
-| WebSocket authentication | Query parameter token validation (`?token=xxx`) |
-| Token validation | Case-sensitive, constant-time comparison |
-| Session duration | Determined by WebSocket connection lifetime |
-| Idle timeout | TCP keepalive (OS-level) |
+| Session type | Stateless per-request authentication |
+| Token type | Non-expiring static bearer token (WebSocket only) |
+| Storage | Environment variables + in-memory configuration |
+| Timeout | No timeout (continuous WebSocket connection) |
 
 ## Authorization
 
@@ -46,18 +67,26 @@
 
 | Model | Description |
 |-------|-------------|
-| Source-based access control | Each monitor has unique `source_id` with registered Ed25519 public key |
-| Token-based access control | WebSocket clients authenticate with shared subscriber token |
-| Event source validation | Event payload source must match authenticated X-Source-ID header |
+| Source-based | Event sources are identified by source_id and must match registered public keys |
+| Token-based | WebSocket clients authenticate with a single shared token |
+| No granular roles | All sources have same permissions; all WebSocket clients have same permissions |
 
-### Permission Enforcement Points
+### Permissions
 
-| Location | Pattern | Implementation |
-|----------|---------|-----------------|
-| Event ingestion | Signature verification | `server/src/routes.rs:293-307` |
-| Event source validation | Cross-check header vs payload | `server/src/routes.rs:348-365` |
-| WebSocket connection | Token validation | `server/src/routes.rs:458-491` |
-| Rate limiting | Per-source token bucket | `server/src/rate_limit.rs` |
+| Actor | Permissions | Scope |
+|-------|------------|-------|
+| Registered monitor (source_id) | Submit events to POST /events | Events matching authenticated source_id |
+| WebSocket client (valid token) | Subscribe to event stream | All events (with optional filtering by source/type/project) |
+| Unknown monitor | Rejected at authentication stage | N/A |
+| Invalid token | Rejected at authentication stage | N/A |
+
+### Permission Checks
+
+| Location | Pattern | Example |
+|----------|---------|---------|
+| API events endpoint | Signature verification | `server/src/routes.rs:293` |
+| WebSocket endpoint | Token validation | `server/src/routes.rs:483` |
+| Event validation | Source ID matching | `server/src/routes.rs:348` - Events must match authenticated source |
 
 ## Input Validation
 
@@ -65,206 +94,259 @@
 
 | Layer | Method | Implementation |
 |-------|--------|-----------------|
-| JSON deserialization | Type-safe serde deserialization | `server/src/routes.rs:329-342` |
-| Header validation | Non-empty string checks | `server/src/routes.rs:263-290` |
-| Signature verification | Base64 decode + Ed25519 verification | `server/src/auth.rs:192-233` |
-| Request body | Size limit (1 MB max) | `server/src/routes.rs:72,182` |
-| Public key format | Base64 decode + 32-byte length validation | `server/src/auth.rs:204-211` |
+| Event payload (API) | JSON deserialization | serde with custom Event types |
+| Private key (env var) | Base64 + length validation | Standard RFC 4648 base64, exactly 32 bytes |
+| Private key (file) | File size validation | Exactly 32 bytes required |
+| Headers | String length and format checks | Empty string rejection |
+| Request body | Size limit | 1 MB maximum (DefaultBodyLimit) |
+| Event fields | Type validation | Timestamp, UUID, enum types enforced by serde |
 
 ### Sanitization
 
-| Data Type | Method | Location |
-|-----------|--------|----------|
-| File paths in tools | Basename extraction (no full paths) | `monitor/src/privacy.rs:445-454` |
-| Sensitive tool context | Bash/Grep/Glob patterns stripped | `monitor/src/privacy.rs:380-382` |
-| Source code content | Tool context redacted | `monitor/src/privacy.rs:378-401` |
-| Prompts/responses | Completely stripped from payloads | `monitor/src/privacy.rs:352-355` |
-| Shell commands | Never transmitted | `monitor/src/privacy.rs:63` (Bash in SENSITIVE_TOOLS) |
-| Search patterns | Never transmitted | `monitor/src/privacy.rs:63` (Grep in SENSITIVE_TOOLS) |
+| Data Type | Sanitization | Location |
+|-----------|--------------|----------|
+| Event JSON | Deserialization validates structure | `server/src/routes.rs:329` |
+| Headers | Whitespace trimming + empty check | `server/src/auth.rs:270-276` |
+| Source ID | Must not be empty | `server/src/config.rs:182-187` |
+| Public key | Must not be empty, must be valid base64 | `server/src/config.rs:189-193` |
+| Private key (env var) | Whitespace trimmed before base64 decode | `monitor/src/crypto.rs:147` |
 
 ## Data Protection
 
 ### Sensitive Data Handling
 
-| Data Type | Protection Method | Location |
-|-----------|-------------------|----------|
-| Ed25519 private keys | File storage (file mode 0600 by user) | `monitor/src/config.rs:76` |
-| Ed25519 public keys | Base64-encoded in environment variable | `server/src/config.rs:48-49` |
-| Bearer token | Environment variable, constant-time comparison | `server/src/auth.rs:269-294` |
-| Source code | Privacy pipeline strips before transmission | `monitor/src/privacy.rs:222-372` |
-| Event payloads | In-memory broadcasting only (no persistence) | `server/src/broadcast.rs` |
+| Data Type | Protection Method | Storage |
+|-----------|-------------------|---------|
+| Private keys (monitor file) | Raw 32-byte seed | `~/.vibetea/key.priv` (mode 0600, owner-only) |
+| Private keys (monitor env var) | Base64-encoded 32-byte seed | `VIBETEA_PRIVATE_KEY` environment variable |
+| Public keys (server) | Base64-encoded format | Environment variable `VIBETEA_PUBLIC_KEYS` |
+| Subscriber token | Plain string comparison (constant-time) | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` |
+| Event payload | No encryption at rest | In-memory broadcast channel |
 
-### Cryptography
+### Encryption
 
-| Type | Algorithm | Implementation | Key Management |
-|------|-----------|-----------------|-----------------|
-| Signature verification | Ed25519 | `ed25519_dalek::VerifyingKey::verify_strict()` | Public keys from `VIBETEA_PUBLIC_KEYS` |
-| Token comparison | Constant-time | `subtle::ConstantTimeEq` | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Transport security | HTTPS/TLS 1.3 | Configured at reverse proxy | Deployment responsibility |
+| Type | Algorithm | Implementation |
+|------|-----------|-----------------|
+| In transit | TLS 1.3+ | Requires HTTPS/WSS in production |
+| At rest | None | Events are in-memory only, not persisted |
+| Signing | Ed25519 deterministic | Uses standard RFC 8032 implementation |
 
-## Privacy Controls
+### Private Key Security
 
-### Privacy Pipeline (Monitor)
+| Aspect | Implementation |
+|--------|-----------------|
+| Generation | Uses OS cryptographically secure RNG (`rand::rng()`) |
+| File permissions | Unix mode 0600 (owner read/write only) |
+| Format | Raw 32-byte seed, not PKCS#8 or other wrapper |
+| File validation | Fails if file size != 32 bytes |
+| Environment variable | Alternative loading via `VIBETEA_PRIVATE_KEY` (base64-encoded) |
+| Memory zeroing | All intermediate buffers zeroed after use (zeroize crate) |
+| Seed array | Explicitly zeroed after SigningKey construction |
+| Error paths | Key material zeroed on decode failures |
 
-The monitor implements a comprehensive privacy pipeline to ensure no sensitive data is transmitted:
+### Logging and Secrets
 
-| Aspect | Implementation | Location |
-|--------|----------------|----------|
-| Path sanitization | Full paths reduced to basenames | `monitor/src/privacy.rs:445-454` |
-| Sensitive tool stripping | Bash, Grep, Glob, WebSearch, WebFetch context set to None | `monitor/src/privacy.rs:55-63,380-382` |
-| Extension allowlist | Optional filter via `VIBETEA_BASENAME_ALLOWLIST` | `monitor/src/privacy.rs:136-158` |
-| Summary text redaction | All summary text replaced with "Session ended" | `monitor/src/privacy.rs:352-355` |
-| Enhanced events pass-through | Activity, Agent, SessionMetrics, TokenUsage, etc. transmit as-is | `monitor/src/privacy.rs:326-371` |
+| Practice | Implementation | Location |
+|----------|-----------------|----------|
+| Private key logging | Never logged (no string conversion of seed) | Throughout `monitor/src/crypto.rs` |
+| Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:429` |
+| Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:42` |
 
-### Privacy Guarantees for Enhanced Events (Phase 9-10)
+## Key Export Functionality (Phase 4-6)
 
-All new events from Phase 9 and 10 transmit metadata only with no sensitive content:
+### Export-Key Command
 
-| Event Type | Privacy Status | Data Transmitted | Location |
-|-----------|----------------|-----------------|----------|
-| ActivityPatternEvent | Metadata-only | Hourly activity counts (0-23 as string keys) | `monitor/src/trackers/stats_tracker.rs:492-507` |
-| ModelDistributionEvent | Metadata-only | Model names + aggregated token counts | `monitor/src/trackers/stats_tracker.rs:509-538` |
-| SessionMetricsEvent | Metadata-only | Global session counts, message counts, tool usage counts | `monitor/src/trackers/stats_tracker.rs:471-490` |
-| TokenUsageEvent | Metadata-only | Model name + token counts by type | `monitor/src/trackers/stats_tracker.rs:540-561` |
+| Feature | Implementation | Location |
+|---------|-----------------|----------|
+| CLI subcommand | `vibetea-monitor export-key` | `monitor/src/main.rs:101-109` |
+| Output target | stdout only | `monitor/src/main.rs:191-192` |
+| Output format | Base64-encoded seed + single newline | `monitor/src/main.rs:192` |
+| Diagnostic messages | All go to stderr | `monitor/src/main.rs:196-199` |
+| Exit code success | 0 | `monitor/src/main.rs:193` |
+| Exit code failure | 1 (configuration error) | `monitor/src/main.rs:199` |
+| Path argument | Optional --path flag for key directory | `monitor/src/main.rs:107-108` |
+| Error handling | Missing key returns error message to stderr | `monitor/src/main.rs:196-199` |
 
-All events follow established privacy patterns: **no code, prompts, commands, or user content transmitted**.
+### Export Use Cases
 
-### ActivityPatternEvent Privacy Details
+| Use Case | Purpose | Integration | Phase |
+|----------|---------|-------------|-------|
+| GitHub Actions setup | Export key for CI/CD environment | Pipe output to GitHub secret creation | Phase 5 |
+| Key migration | Move keys between systems | Base64 output compatible with `VIBETEA_PRIVATE_KEY` | Phase 4 |
+| Backup verification | Verify exported key roundtrips | Integration tests verify signing consistency | Phase 4 |
+| Composite GitHub Action | Pre-built reusable action wrapper | Used in GitHub Actions workflows | Phase 6 |
 
-- **hour_counts**: Map of hour (0-23 as string) to activity count
-- **No PII**: Only aggregated hourly metrics
-- **No content**: Zero chance of code or prompt extraction
-- **Type-safe**: ActivityPatternEvent struct contains only hour_counts field
+### GitHub Actions Integration (Phase 5-6)
 
-### ModelDistributionEvent Privacy Details
+#### Phase 5: Manual Workflow Setup
 
-- **model_usage**: Map of model name to TokenUsageSummary
-- **TokenUsageSummary fields**: input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
-- **No PII**: Only token counts aggregated by model
-- **No content**: Zero chance of prompt or output extraction
-- **Type-safe**: ModelDistributionEvent struct contains only model_usage field
+| Component | Implementation | Location |
+|-----------|-----------------|----------|
+| Private key secret | Stored as `VIBETEA_PRIVATE_KEY` | `.github/workflows/ci-with-monitor.yml:35` |
+| Server URL secret | Stored as `VIBETEA_SERVER_URL` | `.github/workflows/ci-with-monitor.yml:36` |
+| Source ID | Dynamic: `github-{repo}-{run_id}` | `.github/workflows/ci-with-monitor.yml:39` |
+| Binary download | Pre-built binary from releases | `.github/workflows/ci-with-monitor.yml:49-50` |
+| Process management | Background task with signal handling | `.github/workflows/ci-with-monitor.yml:63-70, 108-113` |
+
+#### Phase 6: Composite GitHub Action
+
+| Component | Implementation | Location |
+|-----------|-----------------|----------|
+| Action name | `VibeTea Monitor` | `.github/actions/vibetea-monitor/action.yml:16-17` |
+| Action inputs | `server-url`, `private-key`, `source-id`, `version`, `shutdown-timeout` | `.github/actions/vibetea-monitor/action.yml:24-46` |
+| Action outputs | `monitor-pid`, `monitor-started` | `.github/actions/vibetea-monitor/action.yml:48-55` |
+| Binary download step | Handles version resolution and platform-specific URLs | `.github/actions/vibetea-monitor/action.yml:61-87` |
+| Monitor startup step | Sets environment variables, validates config, starts process | `.github/actions/vibetea-monitor/action.yml:90-144` |
+| Graceful shutdown | Documents SIGTERM signal handling and cleanup | `.github/actions/vibetea-monitor/action.yml:146-166` |
+| Non-blocking errors | Network failures don't fail workflow; warnings logged | `.github/actions/vibetea-monitor/action.yml:101-120` |
+
+### Composite Action Security Properties
+
+| Property | Implementation | Location |
+|----------|-----------------|----------|
+| Environment variables passed safely | Uses GitHub Actions env context | `.github/actions/vibetea-monitor/action.yml:93-96` |
+| Secret masking | Private key automatically masked by GitHub Actions | `VIBETEA_PRIVATE_KEY` parameter |
+| Source ID interpolation | Dynamic generation with repo and run_id | `.github/actions/vibetea-monitor/action.yml:96` |
+| Process lifecycle | Monitor runs in background; output via job logs | `.github/actions/vibetea-monitor/action.yml:127-144` |
+| Signal handling documented | Post-job cleanup requires manual SIGTERM step | `.github/actions/vibetea-monitor/action.yml:146-166` |
+| Failure tolerance | Missing binary or config logs warning, doesn't fail | `.github/actions/vibetea-monitor/action.yml:101-120` |
+
+### Action Integration with README
+
+| Section | Content | Location |
+|---------|---------|----------|
+| GitHub Actions Setup | Prerequisites and key export instructions | `README.md:134-166` |
+| Manual Workflow Setup | Step-by-step instructions for manual workflows | `README.md:169-210` |
+| Reusable Action Usage | Basic usage with the composite action | `README.md:212-252` |
+| Custom Source ID | Example with custom source identifier | `README.md:254-263` |
+| Pinned Version | Example with specific monitor version | `README.md:265-274` |
+| Action Inputs | Complete input parameter reference | `README.md:276-284` |
+| Action Outputs | Available output parameters | `README.md:286-291` |
+
+### Security Properties of Export
+
+| Property | Guarantee |
+|----------|-----------|
+| Key integrity | Exported key matches file content exactly |
+| Output purity | stdout contains only key data, no diagnostic text |
+| Roundtrip compatibility | Exported key can be loaded via `VIBETEA_PRIVATE_KEY` |
+| Signature consistency | Ed25519 is deterministic; exported key produces identical signatures |
+| Memory safety | Seed array explicitly zeroed after use (zeroize crate) |
 
 ## Rate Limiting
 
-| Endpoint | Limit | Window | Tracked By |
-|----------|-------|--------|-----------|
-| POST /events | 100 requests/second | Per-source rolling | `X-Source-ID` header |
-| GET /ws | No rate limit | N/A | N/A |
-| GET /health | No rate limit | N/A | N/A |
+| Endpoint | Default Limit | Configuration |
+|----------|---------------|---------------|
+| POST /events | 100 requests/sec | 100 token capacity per source |
+| GET /ws | No per-connection limit | WebSocket is persistent subscription |
+| Rate limiter cleanup | Every 30 seconds | Removes inactive sources after 60 seconds |
 
-### Rate Limiter Details
+### Rate Limit Algorithm
 
-- **Algorithm**: Token bucket with per-source tracking
-- **Rate**: 100 tokens/second (configurable via `RateLimiter::new()`)
-- **Burst**: 100 tokens initial capacity (configurable)
-- **Cleanup**: Stale entries removed after 60 seconds of inactivity
-- **Implementation**: Thread-safe `RwLock<HashMap>` with background cleanup task
-- **Retry-After**: Returns `Retry-After` header on 429 response
+| Aspect | Detail |
+|--------|--------|
+| Type | Token bucket algorithm |
+| Granularity | Per source_id |
+| Rate | 100 tokens/second (default) |
+| Capacity | 100 tokens (allows bursts) |
+| Response | 429 Too Many Requests with Retry-After header |
 
 ## Secrets Management
 
 ### Environment Variables
 
-| Variable | Required | Format | Usage |
-|----------|----------|--------|-------|
-| `VIBETEA_PUBLIC_KEYS` | Yes (if auth enabled) | `source1:pubkey1,source2:pubkey2` | Monitor public keys |
-| `VIBETEA_SUBSCRIBER_TOKEN` | Yes (if auth enabled) | Any string | WebSocket client token |
-| `PORT` | No | Numeric (default: 8080) | HTTP server port |
-| `VIBETEA_UNSAFE_NO_AUTH` | No | "true" to disable | Dev-only auth bypass |
-| `RUST_LOG` | No | Log filter (default: info) | Logging level |
-| `VIBETEA_BASENAME_ALLOWLIST` | No | `.rs,.ts,.md` comma-separated | Privacy extension filter |
+| Category | Naming | Example | Required |
+|----------|--------|---------|----------|
+| Monitor auth | `VIBETEA_SOURCE_ID` | monitor-1 | No (defaults to hostname) |
+| Monitor keys | `VIBETEA_KEY_PATH` | ~/.vibetea | No (defaults) |
+| Monitor private key | `VIBETEA_PRIVATE_KEY` | base64-encoded-32-bytes | No (fallback to file) |
+| Server public keys | `VIBETEA_PUBLIC_KEYS` | source1:base64key,source2:base64key | Yes (unless unsafe_no_auth) |
+| WebSocket token | `VIBETEA_SUBSCRIBER_TOKEN` | secret-token-string | Yes (unless unsafe_no_auth) |
+| Server URL (monitor) | `VIBETEA_SERVER_URL` | https://vibetea.fly.dev | Yes (required) |
 
 ### Secrets Storage
 
-| Environment | Method |
-|-------------|--------|
-| Development | Environment variables (shell/Docker) |
-| CI/CD | GitHub Actions secrets or vault |
-| Production | Container orchestrator (Kubernetes, AWS Secrets Manager) |
-| Monitor local | File-based key storage in `~/.vibetea/` |
+| Environment | Method | Security Notes |
+|-------------|--------|-----------------|
+| Development | `.env` files (gitignored) or export statements | File-based, cleartext |
+| GitHub Actions | GitHub Secrets | AES-128 encrypted at rest, rotatable |
+| Production | Environment variables via container orchestration | Depends on orchestration platform |
+| Private keys (file) | File-based (~/.vibetea/key.priv with mode 0600) | Owner-only readable |
+| Private keys (env var) | Environment variable (base64-encoded) | Visible in process listing; GitHub Secrets encrypted |
 
-### Configuration Validation
+### Key Provisioning
 
-- Public key format: Base64 decode + 32-byte Ed25519 key validation
-- Empty token rejection: `validate_token()` rejects empty strings
-- Startup validation: Server fails fast on missing required secrets
-- Warning logging: `VIBETEA_UNSAFE_NO_AUTH=true` logged as warning
+| Process | Location |
+|---------|----------|
+| Monitor key generation | `monitor/src/crypto.rs:108` - Crypto::generate() |
+| Environment variable loading | `monitor/src/crypto.rs:143` - Crypto::load_from_env() |
+| File with env fallback | `monitor/src/crypto.rs:206` - Crypto::load_with_fallback() |
+| Key export for external use | `monitor/src/main.rs:181-202` - run_export_key() |
+| Server registration | Manual environment variable setup |
+| Public key fingerprint | `monitor/src/crypto.rs:429` - public_key_fingerprint() (8 chars) |
+
+### GitHub Actions Key Management (Phase 5-6)
+
+#### Manual Workflow Setup
+
+| Step | Command | Security |
+|------|---------|----------|
+| 1. Export | `vibetea-monitor export-key` | Outputs base64 key to stdout only |
+| 2. Store | Add to GitHub Secrets as `VIBETEA_PRIVATE_KEY` | GitHub encrypts at rest |
+| 3. Use | Injected as env var during workflow | Masked in logs; available to monitor process |
+| 4. Cleanup | Automatically cleared after workflow | GitHub Actions cleanup |
+
+#### Composite Action Usage
+
+| Step | Implementation | Security |
+|------|-----------------|----------|
+| 1. Input | `private-key` parameter with `secrets.VIBETEA_PRIVATE_KEY` | GitHub automatically masks in logs |
+| 2. Load | Action passes private-key to monitor via env var | Masked by GitHub Actions |
+| 3. Start | Monitor starts in background with env vars set | Process inherits masked variable |
+| 4. Cleanup | Manual SIGTERM step or automatic job cleanup | Documents recommended post-job step |
 
 ## Security Headers
 
-VibeTea server does not directly set security headers. Configure at reverse proxy/load balancer:
-
-| Header | Recommended | Purpose |
-|--------|-------------|---------|
-| Content-Security-Policy | `default-src 'self'` | XSS protection |
-| X-Frame-Options | `DENY` | Clickjacking protection |
-| X-Content-Type-Options | `nosniff` | MIME sniffing protection |
-| Strict-Transport-Security | `max-age=31536000` | HTTPS enforcement |
+| Header | Status | Note |
+|--------|--------|------|
+| X-Source-ID | Required | Must be non-empty string |
+| X-Signature | Required (when auth enabled) | Base64-encoded Ed25519 signature |
+| Content-Type | Assumed application/json | Not validated, accepted from client |
+| Retry-After | Conditional | Only set on 429 responses |
 
 ## CORS Configuration
 
-VibeTea is designed for backend-to-backend communication. Configure CORS at reverse proxy level:
-
-| Setting | Recommendation |
-|---------|-----------------|
-| Allowed origins | Restrict to known client IPs |
-| Allowed methods | POST (events), GET (WebSocket, health) |
-| Allowed headers | Content-Type, X-Source-ID, X-Signature |
-| Credentials | Not applicable (auth via headers) |
+| Setting | Value |
+|---------|-------|
+| Allowed origins | All (no CORS policy enforced in codebase) |
+| Allowed methods | POST (events), GET (ws, health) |
+| Credentials | WebSocket token via query param |
 
 ## Audit Logging
 
-| Event | Logged Data | Level | Location |
-|-------|-------------|-------|----------|
-| Signature verification failure | source, error type | warn | `routes.rs:294` |
-| Rate limit exceeded | source, retry_after_secs | info | `routes.rs:314-318` |
-| Invalid event format | source, parse error | debug | `routes.rs:332` |
-| Event source mismatch | authenticated source, event source | warn | `routes.rs:350-355` |
-| WebSocket connection | filter parameters | info | `routes.rs:494-497` |
-| Unknown source | source_id attempted | warn | `routes.rs:294` |
-| Configuration error | error details | error | `main.rs:53` |
-| Server startup | port, auth mode, key count | info | `main.rs:74-79` |
-
-All logging is structured JSON via `tracing` crate, configurable via `RUST_LOG`.
-
-## Security Control Summary
-
-### Strengths
-
-1. **Ed25519 RFC 8032 Strict Verification**: `verify_strict()` ensures RFC 8032 compliance, preventing signature malleability attacks
-2. **Constant-Time Token Comparison**: `subtle::ConstantTimeEq` prevents timing attacks on token validation
-3. **Privacy-First Architecture**: Comprehensive privacy pipeline ensures no code, prompts, or commands transmitted
-4. **Metadata-Only Enhanced Events**: Phase 9-10 events transmit only aggregated statistics (hourly counts, model names, token counts)
-5. **Per-Source Rate Limiting**: Token bucket algorithm with independent limits per source
-6. **Configuration Validation**: Required secrets validated on startup with fast failure
-7. **Type-Safe JSON Parsing**: Serde deserialization enforces event schema
-8. **Source Validation**: Event.source field cross-checked against X-Source-ID header
-9. **Request Size Limits**: 1 MB maximum body size prevents resource exhaustion
-10. **Structured Logging**: Production-ready JSON logging with configurable levels
-11. **File Watcher Security**: UUID pattern matching prevents reading unintended files in todo tracker
-12. **Type-Safe Privacy Enforcement**: Privacy struct fields prevent sensitive data extraction at compile-time
-
-### Attack Vectors & Mitigations
-
-| Vector | Risk | Mitigation |
-|--------|------|-----------|
-| Signature forgery | High | Ed25519 is cryptographically secure; `verify_strict()` prevents malleability |
-| Timing attacks on token | Medium | Constant-time comparison via `subtle::ConstantTimeEq` |
-| Token guessing | Low | No rate limiting on WebSocket auth attempts (deployment concern) |
-| Malformed signatures | Low | Base64 validation + length checks before crypto operations |
-| Source spoofing | Low | Cross-validation of X-Source-ID header and event.source field |
-| Resource exhaustion | Low | Rate limiting (100 req/sec per source) + 1 MB body size limit |
-| Privacy breach via events | Low | Privacy pipeline + type-safe event structs prevent sensitive data transmission |
-| Configuration misconfiguration | Medium | Startup validation fails fast; warnings for unsafe mode |
+| Event | Logged Data | Level |
+|-------|-------------|-------|
+| Key source identification | Environment variable vs file | info |
+| Authentication failures | source_id, error type | warn/debug |
+| Signature verification failures | source_id, error details | warn |
+| Rate limit exceeded | source_id, retry_after | info |
+| WebSocket connect | filter params | info |
+| WebSocket disconnect | - | info |
+| Configuration errors | Missing variables | error |
 
 ---
 
-## What Does NOT Belong Here
+## Development Mode Security
 
-- Tech debt and risks → CONCERNS.md
-- Testing strategy → TESTING.md
-- Code conventions → CONVENTIONS.md
+### VIBETEA_UNSAFE_NO_AUTH Mode
+
+When `VIBETEA_UNSAFE_NO_AUTH=true`:
+- All signature verification is skipped
+- WebSocket token validation is skipped
+- WARNING logged at startup
+- Intended for local development only
+- Located in `server/src/config.rs:94-99`
 
 ---
 
-*This document defines security controls. Update when security posture changes.*
+*This document defines active security controls. Review when adding authentication methods or cryptographic operations.*

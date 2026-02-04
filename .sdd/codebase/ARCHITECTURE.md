@@ -1,7 +1,7 @@
 # Architecture
 
 > **Purpose**: Document system design, patterns, component relationships, and data flow.
-> **Generated**: 2026-02-04
+> **Generated**: 2026-02-03
 > **Last Updated**: 2026-02-04
 
 ## Architecture Overview
@@ -22,7 +22,8 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **Producer-Consumer** | Monitors are event producers, Clients are event consumers, Server mediates asynchronous delivery |
 | **Privacy-First** | Events contain only structural metadata (timestamps, tool names, skill names, file basenames), never code or sensitive content |
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
-| **Modular Tracking** | Enhanced tracking subsystem with pluggable tracker modules for different data sources |
+| **CI/CD Integration** | Environment variable key loading enables monitor deployment in containerized and GitHub Actions environments |
+| **Composite Action** | GitHub Actions workflow integration via reusable composite action for simplified monitor setup |
 
 ## Core Components
 
@@ -36,11 +37,13 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Cryptographic signing of events (Ed25519)
   - Event buffering and exponential backoff retry
   - Graceful shutdown with event flushing
-  - Enhanced tracking of specialized events (agent spawns, skill invocations, token usage, activity patterns, model distribution, session metrics, todo progress, file changes)
+  - Key export functionality for GitHub Actions integration
+  - Dual-source key loading (environment variable with file fallback)
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events`)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
 - **Dependents**: None (source component)
+- **Deployment Context**: Can run locally, in Docker, or in GitHub Actions via environment variable key injection
 
 ### Server (Hub)
 
@@ -71,6 +74,36 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Depends on **Server** (via WebSocket connection to `/ws`)
   - No persistence layer (in-memory Zustand store)
 - **Dependents**: None (consumer component)
+
+### GitHub Actions Composite Action (CI/CD Integration - Phase 6)
+
+- **Purpose**: Simplifies VibeTea monitor deployment in GitHub Actions workflows
+- **Location**: `.github/actions/vibetea-monitor/action.yml`
+- **Key Responsibilities**:
+  - Download VibeTea monitor binary from GitHub releases
+  - Configure environment variables (private key, server URL, source ID)
+  - Start monitor in background before CI steps
+  - Provide process ID and status outputs to workflow
+  - Documentation for graceful shutdown pattern
+- **Dependencies**:
+  - Depends on VibeTea GitHub releases (binary artifacts)
+  - Requires `curl` on runner for binary download
+  - Uses `bash` shell for cross-platform compatibility
+- **Inputs**:
+  - `server-url` (required): VibeTea server URL
+  - `private-key` (required): Base64-encoded Ed25519 private key
+  - `source-id` (optional): Custom event source identifier
+  - `version` (optional): Monitor version (default: latest)
+  - `shutdown-timeout` (optional): Graceful shutdown wait time (default: 5 seconds)
+- **Outputs**:
+  - `monitor-pid`: Process ID of running monitor
+  - `monitor-started`: Whether monitor started successfully
+- **Environment Variables Set**:
+  - `VIBETEA_PRIVATE_KEY`: From action input
+  - `VIBETEA_SERVER_URL`: From action input
+  - `VIBETEA_SOURCE_ID`: From action input or auto-generated as `github-{repo}-{run_id}`
+  - `VIBETEA_MONITOR_PID`: Process ID saved for cleanup
+  - `VIBETEA_SHUTDOWN_TIMEOUT`: For manual cleanup reference
 
 ## Data Flow
 
@@ -168,6 +201,30 @@ Main event loop: sender.queue()
 
 All pipelines feed into the same `sender.queue()` for batching and transmission.
 
+### GitHub Actions Integration Flow (Phase 5 & 6)
+
+GitHub Actions workflow → Monitor (via composite action or manual setup) → Server → Client:
+1. **Composite Action Setup (Phase 6)**: `.github/actions/vibetea-monitor` downloads binary and configures environment
+   - Action downloads monitor binary from releases (or skips gracefully on network failure)
+   - Environment variables configured: `VIBETEA_PRIVATE_KEY`, `VIBETEA_SERVER_URL`, `VIBETEA_SOURCE_ID`
+   - Monitor started in background, PID captured and saved to `$GITHUB_ENV`
+   - Action returns `monitor-started` and `monitor-pid` outputs for workflow use
+
+2. **Manual Setup (Phase 5)**: Workflow manually downloads and starts monitor
+   - `curl` downloads binary from releases
+   - Permissions set with `chmod +x`
+   - Monitor started in background with `./vibetea-monitor run &`
+   - Process ID saved for cleanup
+
+3. **Common Flow**: Both setup methods use same environment variable key loading
+   - Monitor loads private key from `VIBETEA_PRIVATE_KEY` environment variable
+   - During CI/CD steps (tests, builds, Claude Code operations), monitor captures events
+   - Events signed and buffered using env var key
+   - Events transmitted to server via HTTP with retry logic
+   - Server authenticates using pre-registered public key
+   - Clients receive events in real-time dashboard
+   - Workflow terminates, monitor receives SIGTERM and flushes remaining events
+
 ### Detailed Request/Response Cycle
 
 1. **Event Creation** (Monitor/Parser):
@@ -219,6 +276,7 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 | **Monitor** | Observe local activity, preserve privacy, authenticate, track metrics | FileSystem, HTTP client, Crypto, Stats files, history.jsonl, todos/, file history | Server internals, other Monitors, network stack details |
 | **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state | File system, external APIs, Client implementation details |
 | **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
+| **GitHub Actions Composite Action** | Download, configure, launch monitor | GitHub releases, environment variables, bash shell | Monitor source code, Server config, Client code |
 
 ## Dependency Rules
 
@@ -226,6 +284,7 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 - **Server → Monitor**: None (server doesn't initiate contact)
 - **Server ↔ Client**: Bidirectional (Client initiates WebSocket, Server sends events, Client sends nothing back)
 - **Cross-Monitor**: No inter-Monitor communication (all go through Server)
+- **Composite Action → Monitor**: Downloads binary and configures environment (read-only)
 - **Persistence**: None at any layer (no database, no cache persistence)
 
 ## Key Interfaces & Contracts
@@ -249,6 +308,8 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
 | `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
+| `KeySource` | Tracks key origin for logging | EnvironmentVariable, File(PathBuf) |
+| `Crypto` | Ed25519 key operations | generate(), load(), save(), sign(), public_key_fingerprint(), seed_base64() |
 
 ## Authentication & Authorization
 
@@ -263,6 +324,7 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
   5. Invalid signatures rejected with 401 Unauthorized
 - **Security**: Uses `ed25519_dalek::VerifyingKey::verify_strict()` (RFC 8032 compliant)
 - **Timing Attack Prevention**: `subtle::ConstantTimeEq` for signature comparison
+- **Key Tracking**: `KeySource` enum tracks whether keys loaded from file or environment variable (logged at startup for verification)
 
 ### Client Authentication (Consumer)
 
@@ -303,6 +365,102 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 | **Todo Tracker State** | `TodoTracker` instance | Maintains ended sessions set, debounces file changes, processes immediately (Phase 6) |
 | **File History Tracker State** | `FileHistoryTracker` instance | Tracks file versions and computes line deltas |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
+| **Crypto Keys** | Loaded once at startup | KeySource tracked for logging, indicates origin (env var or file) |
+
+## Cryptographic Key Management
+
+### Key Loading Strategy
+
+The Monitor implements a flexible key loading mechanism with precedence rules:
+
+1. **Environment Variable (`VIBETEA_PRIVATE_KEY`)**
+   - Takes absolute precedence when set
+   - Must contain base64-encoded 32-byte Ed25519 seed (RFC 4648 standard base64)
+   - Whitespace trimmed before decoding (handles newlines, CRLF, spaces)
+   - Used via `Crypto::load_from_env()` for direct loading
+   - Used via `Crypto::load_with_fallback()` as primary source (no fallback on error)
+
+2. **File-based Key (`~/.vibetea/key.priv`)**
+   - Used as fallback when env var not set
+   - Contains raw 32-byte seed (binary format)
+   - Loaded via `Crypto::load()` or `Crypto::load_with_fallback()`
+   - File permissions enforced: `0600` (owner read/write only)
+
+3. **Key Precedence Rules**
+   - If `VIBETEA_PRIVATE_KEY` is set: use it (even if file exists and file would error)
+   - If `VIBETEA_PRIVATE_KEY` is set but invalid: error immediately (no fallback to file)
+   - If `VIBETEA_PRIVATE_KEY` not set: use file at `VIBETEA_KEY_PATH/key.priv`
+
+4. **Runtime Behavior in `run_monitor()`**
+   - Calls `Crypto::load_with_fallback(&config.key_path)`
+   - Returns tuple `(Crypto, KeySource)` indicating origin
+   - Logs key fingerprint and source at INFO level
+   - Logs warning if file key exists but env var takes precedence
+
+### Key Export for CI/CD Integration (Phase 4)
+
+The Monitor now supports exporting private keys for GitHub Actions and other CI systems:
+
+- **Command**: `vibetea-monitor export-key [--path <DIR>]`
+- **Output**: Outputs base64-encoded seed to stdout, only (no diagnostics)
+- **Diagnostics**: All messages (errors, logs) go to stderr
+- **Use Case**: `vibetea-monitor export-key | gh secret set VIBETEA_PRIVATE_KEY`
+- **Exit Codes**:
+  - 0: Success (key exported to stdout)
+  - 1: Configuration error (missing key, invalid directory)
+  - 2: Runtime error (I/O failures)
+- **Security Considerations**:
+  - Command reads from filesystem only (no environment variable fallback)
+  - Suitable for piping to clipboard or secret management tools
+  - No ANSI codes or extra formatting in stdout
+  - Clean output enables direct integration with CI/CD systems
+
+### Composite Action Key Loading (Phase 6)
+
+The GitHub Actions composite action simplifies key management:
+
+- **Input Handling**: Action accepts `private-key` input (base64-encoded Ed25519 seed)
+- **Environment Variable Setting**: Action sets `VIBETEA_PRIVATE_KEY` env var before starting monitor
+- **Precedence**: Monitor uses environment variable key loading (no file fallback needed in CI)
+- **Error Handling**: Action gracefully skips if download fails (non-blocking to workflow)
+- **Whitespace Handling**: Environment variable setting handles edge cases automatically
+
+### Memory Safety & Zeroization
+
+The crypto module implements memory-safe key handling:
+
+- **Intermediate Buffers**: All decoded/processed key material is zeroed after use via `zeroize` crate
+- **Seed Array Zeroization**: `seed: [u8; SEED_LENGTH]` zeroed immediately after creating `SigningKey`
+- **Error Path Safety**: Decoded buffers zeroed even on error paths (e.g., invalid length)
+- **Key Derivation**: Signing key created from seed, then seed immediately zeroed
+- **Comment Tags**: All zeroization points marked with FR-020 (security feature reference)
+
+### Key Exposure Logging
+
+The Monitor logs key origin at startup to help users verify key loading:
+
+```rust
+// When loaded from environment variable
+info!(
+    source = "environment",
+    fingerprint = %crypto.public_key_fingerprint(),
+    "Cryptographic key loaded"
+);
+
+// When loaded from file
+info!(
+    source = "file",
+    path = %path.display(),
+    fingerprint = %crypto.public_key_fingerprint(),
+    "Cryptographic key loaded"
+);
+
+// Warning if both sources exist
+info!(
+    ignored_path = %config.key_path.display(),
+    "File key exists but VIBETEA_PRIVATE_KEY takes precedence"
+);
+```
 
 ## Cross-Cutting Concerns
 
@@ -314,6 +472,8 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 | **Privacy** | Event payload sanitization + tracker opt-out | `monitor/src/privacy.rs` (removes sensitive fields), tracker modules follow privacy-first design |
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
+| **Key Management** | Ed25519 key generation, storage, signing, export | `monitor/src/crypto.rs` (with KeySource tracking, memory zeroing, and export support) |
+| **GitHub Actions Integration** | Binary download, env var config, background launch | `.github/actions/vibetea-monitor/action.yml` |
 
 ## Enhanced Tracking Subsystem (Phase 4-10)
 
@@ -449,45 +609,31 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Native browser support**: No additional libraries needed for basic connectivity
 - **Standard protocol**: Works with existing proxies and load balancers
 
-### Why Modular Trackers?
+### Why Environment Variable Precedence?
 
-- **Extensibility**: New event types can be added without touching parser core
-- **Separation of concerns**: Each tracker focuses on one data source
-- **Privacy control**: Trackers can be disabled/enabled per configuration
-- **Parallel extraction**: Multiple trackers can process different files independently
-- **Independent lifecycle**: Trackers can have different update frequencies and processing patterns
+- **Container-friendly**: Secrets in env vars are standard practice for containerized apps
+- **No file permissions required**: Works in restricted environments (CI, serverless)
+- **Emergency override**: Can temporarily use different key without file system changes
+- **Key rotation support**: Switch keys by changing env var without file I/O
+- **Explicit precedence rules**: Clear error handling (env var errors don't silently fallback)
 
-### Why Separate Skill Tracker?
+### Why Separate export-key Command?
 
-- **Different data source**: history.jsonl is separate from session JSONL files
-- **Append-only pattern**: Allows efficient tailing with byte offsets
-- **Immediate processing**: No debounce needed (user actions are already serialized)
-- **Independent lifecycle**: Can be enabled/disabled without affecting session tracking
+- **Security**: Isolates key export from running monitor (no network involved)
+- **CI/CD Integration**: Enables headless key management in GitHub Actions
+- **Clean Output**: stdout contains only the key for direct piping to secret tools
+- **Auditability**: Separate invocation leaves clear audit trail in CI logs
 
-### Why Separate Todo Tracker?
+### Why Composite GitHub Actions (Phase 6)?
 
-- **Different data source**: todos/ directory separate from session files
-- **Session-scoped state**: Tracks abandoned sessions for proper event context
-- **Debounced updates**: Multiple status changes coalesced (100ms optimal per research)
-- **Independent lifecycle**: Can be enabled/disabled without affecting core tracking
-- **Abandonment detection**: Correlates todo state with session lifecycle for accurate reporting
-
-### Why Separate Stats Tracker? (Phase 8)
-
-- **Different data source**: stats-cache.json separate from session and history files
-- **Global scope**: Tracks system-wide metrics, not session-specific
-- **Debounced updates**: File changes coalesced (200ms optimal for rapid updates)
-- **Multi-event emission**: Single file read produces multiple event types for flexible consumption
-- **Retry resilience**: Built-in retry logic for file read failures (file may be mid-write)
-- **Independent lifecycle**: Can be enabled/disabled without affecting core tracking
-
-### Why Separate Activity Pattern and Model Distribution Events? (Phase 9-10)
-
-- **Different aggregation levels**: SessionMetrics = raw counts, ActivityPattern = hourly distribution, ModelDistribution = model-level summary
-- **Client-side visualization flexibility**: Different events for different dashboard visualizations
-- **Independent consumption**: Clients can subscribe to relevant event types via filters
-- **Backward compatibility**: Existing token_usage events unaffected; new events are additive
-- **Debouncing efficiency**: All derived from same file read; 200ms debounce coalesces multiple events
+- **Abstraction**: Hides binary download details and shell script complexity
+- **Reusability**: Single action can be used in multiple workflows
+- **Simplicity**: Users don't need to understand curl, chmod, background processes
+- **Consistency**: Standardized approach across all workflows using VibeTea
+- **Error Handling**: Action gracefully skips if network fails (non-blocking to CI)
+- **Outputs**: Provides monitor status and PID for advanced workflows
+- **Documentation**: Action metadata serves as inline usage documentation
+- **Maintenance**: Changes to binary location or download strategy only need updating action.yml
 
 ---
 

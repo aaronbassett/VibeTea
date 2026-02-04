@@ -1,274 +1,207 @@
 # Known Concerns
 
 > **Purpose**: Document technical debt, known risks, bugs, fragile areas, and improvement opportunities.
-> **Generated**: 2026-02-04
+> **Generated**: 2026-02-03
 > **Last Updated**: 2026-02-04
+
+## Security Concerns
+
+### High Priority
+
+| ID | Area | Description | Risk Level | Mitigation | Status |
+|----|------|-------------|------------|------------|--------|
+| SEC-001 | WebSocket authentication | Single static token for all clients allows no per-client revocation or auditing | High | Plan token rotation mechanism or client certificates | Open |
+| SEC-002 | Token management | Subscriber token hardcoded in environment variable with no expiration or rotation | High | Implement periodic token rotation and audit logging | Open |
+| SEC-003 | CORS policy | All origins allowed, no CORS validation in place | Medium | Add configurable CORS origin whitelist | Open |
+| SEC-004 | Signature header validation | X-Signature header parsed as-is with minimal format validation | Low | Already mitigated by base64 decoding and cryptographic verification | Mitigated |
+
+### Medium Priority
+
+| ID | Area | Description | Risk Level | Mitigation | Status |
+|----|------|-------------|------------|------------|---------|
+| SEC-005 | Private key environment variable | `VIBETEA_PRIVATE_KEY` env var alternative now documented and implemented | Low | Documented in SECURITY.md; same validation as file-based keys | Resolved |
+| SEC-006 | Rate limiting overhead | Per-source token bucket tracking could consume memory with many unique sources | Medium | Implement stale entry cleanup (partially done); add configurable limits | Open |
+| SEC-007 | Event persistence | Events are in-memory only; no persistence means events lost on restart | Medium | Document as design decision; recommend replay mechanism at application level | Open |
+| SEC-008 | Export-key stdout purity | Diagnostic/error messages must be stderr-only to enable safe piping | Low | Export-key explicitly prints errors to stderr; only key goes to stdout | Mitigated (Phase 4) |
+| SEC-009 | GitHub Actions secret exposure | Private key accessible in GitHub Actions environment; potential exposure via leaked logs | Medium | Use GitHub secret masking; never log VIBETEA_PRIVATE_KEY; minimize output from monitor process | Mitigated (Phase 5) |
+| SEC-010 | Composite action error handling | Action warns on network failure but continues workflow; potential silent monitoring failures | Medium | Document in README; monitor logs for warnings; consider explicit failure modes | Mitigated (Phase 6) |
+
+## Security Improvements (Phase 3-6)
+
+### Phase 3 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-019 | Never log private key value | Private key seed never converted to string for logging | Implemented | `monitor/src/crypto.rs` - no logging of sensitive values |
+| FR-020 | Memory zeroing for key material | Zeroize crate wipes intermediate buffers after SigningKey construction | Implemented | `monitor/src/crypto.rs:114,157,169,221,233,287` |
+| FR-021 | Standard Base64 RFC 4648 | All key encoding uses standard (not URL-safe) base64 | Implemented | `monitor/src/crypto.rs:152,216` uses `BASE64_STANDARD` |
+| FR-022 | Validate key material is exactly 32 bytes | Strict validation on load/decode, clear error messages | Implemented | `monitor/src/crypto.rs:155-162,219-226,276-283` |
+
+### Phase 4 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-003 | Export-key command | CLI subcommand outputs base64-encoded private key + single newline | Implemented | `monitor/src/main.rs:101-109, 181-202` |
+| FR-023 | Stderr for diagnostics | All diagnostic/error messages go to stderr; stdout is key-only | Implemented | `monitor/src/main.rs:196-199` - errors print to eprintln! |
+| FR-026 | Exit code semantics | 0 for success, 1 for configuration error (missing key) | Implemented | `monitor/src/main.rs:199` |
+| FR-027 | Integration tests | Tests verify exported key roundtrips via `VIBETEA_PRIVATE_KEY` | Implemented | `monitor/tests/key_export_test.rs:148-221` |
+| FR-028 | Signature consistency | Ed25519 deterministic; tests verify identical signatures after export-import | Implemented | `monitor/tests/key_export_test.rs:229-264` |
+
+### Phase 5 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-029 | GitHub Actions workflow example | Example CI workflow showing monitor integration with export-key setup | Implemented | `.github/workflows/ci-with-monitor.yml` |
+| FR-030 | Dynamic source ID in Actions | Source ID includes repo and run ID for traceability | Implemented | `.github/workflows/ci-with-monitor.yml:39` |
+| FR-031 | Graceful monitor shutdown | SIGTERM handler flushes buffered events before exit | Documented | `.github/workflows/ci-with-monitor.yml:105-113` |
+
+### Phase 6 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-032 | Composite GitHub Action | Reusable action wrapper for monitor binary download and startup | Implemented | `.github/actions/vibetea-monitor/action.yml` |
+| FR-033 | Action inputs/outputs | Parameterized inputs (server-url, private-key, version) and outputs (monitor-pid, started) | Implemented | `.github/actions/vibetea-monitor/action.yml:24-55` |
+| FR-034 | Action documentation | README updated with action usage, inputs, outputs, and examples | Implemented | `README.md:212-292` |
+| FR-035 | Non-blocking action errors | Network/config failures log warnings but don't fail workflow | Implemented | `.github/actions/vibetea-monitor/action.yml:101-120` |
+| FR-036 | Dynamic source ID interpolation | Action default source ID uses repo and run_id for uniqueness | Implemented | `.github/actions/vibetea-monitor/action.yml:96` |
 
 ## Technical Debt
 
 ### High Priority
 
-Items that should be addressed soon:
-
-| ID | Area | Description | Impact | Effort |
-|----|------|-------------|--------|--------|
-| TD-001 | `server/src/routes.rs` | No HTTPS enforcement at application level | Security risk | High |
-| TD-002 | `server/src/` | No request/response size validation for WebSocket messages | DoS risk | Medium |
-| TD-003 | `monitor/src/crypto.rs` | Private key file stored unencrypted on disk | Data compromise risk | High |
-| TD-060 | `monitor/src/trackers/todo_tracker.rs` | No deduplication of events when file is modified multiple times rapidly | Duplicate events | Low |
-| TD-064 | `monitor/src/trackers/stats_tracker.rs` | Stats cache file not validated for ownership or corruption | Data integrity risk | Medium |
+| ID | Area | Description | Impact | Effort | Status |
+|----|------|-------------|--------|--------|--------|
+| TD-001 | Cleanup task | Rate limiter cleanup task in main.rs never terminates; cleanup_handle is dropped without cancellation | Cleanup runs until server shutdown | Low | Open |
+| TD-002 | Error handling | Some auth errors (InvalidPublicKey) could reveal server configuration details in logs | Debugging difficulty | Low | Open |
 
 ### Medium Priority
 
-Items to address when working in the area:
-
-| ID | Area | Description | Impact | Effort |
-|----|------|-------------|--------|--------|
-| TD-010 | `server/src/` | No logging of successful authentications (only failures) | Audit visibility | Low |
-| TD-011 | `server/src/rate_limit.rs` | Rate limiter in-memory only; no persistence across restarts | State loss | Medium |
-| TD-012 | `server/src/` | WebSocket frame fragmentation handling is implicit (rely on axum) | Reliability | Medium |
-| TD-013 | `server/src/auth.rs` | No key rotation mechanism documented | Operational complexity | Medium |
-| TD-050 | `monitor/src/trackers/skill_tracker.rs` | File watcher watches entire directory; could catch unrelated files | Minor overhead | Low |
-| TD-051 | `monitor/src/trackers/skill_tracker.rs` | No debounce on file events; rapid appends may cause multiple reads | Performance | Low |
-| TD-061 | `monitor/src/trackers/todo_tracker.rs` | Abandoned sessions set grows unbounded; no cleanup mechanism | Memory leak | Medium |
-| TD-062 | `monitor/src/trackers/todo_tracker.rs` | No metrics on debouncer queue size or processing latency | Observability gap | Low |
-| TD-065 | `monitor/src/trackers/stats_tracker.rs` | No validation that stats JSON matches expected structure | Robustness | Low |
-| TD-066 | `monitor/src/trackers/stats_tracker.rs` | Retry logic (with_retry) could mask transient file system issues | Debugging difficulty | Low |
-| TD-068 | `monitor/src/trackers/stats_tracker.rs` | No metrics on event emission rate or skipped events | Observability gap | Low |
+| ID | Area | Description | Impact | Effort | Status |
+|----|------|-------------|--------|--------|--------|
+| TD-003 | Configuration validation | VIBETEA_PUBLIC_KEYS parsing doesn't validate that decoded base64 is exactly 32 bytes | Confusing error messages at runtime | Low | Open |
+| TD-004 | Type safety | EventPayload uses untagged enum which could be fragile with certain JSON structures | API contract ambiguity | Medium | Open |
+| TD-005 | Logging | Some debug/trace logs are verbose and could impact performance under load | Performance in high-traffic scenarios | Low | Open |
+| TD-008 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
+| TD-009 | Composite action cleanup | Post-job cleanup requires manual SIGTERM step; no automatic cleanup mechanism | Potential zombie processes | Medium | Open |
 
 ### Low Priority
 
-Nice to have improvements:
-
-| ID | Area | Description | Impact | Effort |
-|----|------|-------------|--------|--------|
-| TD-020 | `server/src/` | HTTP/2 upgrade could improve performance | Performance | Medium |
-| TD-021 | `monitor/src/` | No key backup/recovery mechanism documented | Operational risk | Low |
-| TD-022 | `server/src/routes.rs` | Error responses could be more granular for debugging | Developer experience | Low |
-| TD-063 | `monitor/src/trackers/todo_tracker.rs` | No validation that todo JSON matches official Claude Code format | Robustness | Low |
-| TD-067 | `monitor/src/trackers/stats_tracker.rs` | No way to disable stats tracking if stats-cache.json is not present | Operational flexibility | Low |
-
-## Security Concerns
-
-Security-related issues requiring attention:
-
-| ID | Area | Description | Risk Level | Mitigation |
-|----|------|-------------|------------|------------|
-| SEC-001 | `server/src/config.rs` | `VIBETEA_UNSAFE_NO_AUTH` mode disables all authentication | High | Only use in development; never in production |
-| SEC-002 | `monitor/src/crypto.rs` | Private keys stored as plaintext bytes on disk | High | Encrypt keys at rest; restrict filesystem access to mode 0600 |
-| SEC-003 | `server/src/` | No TLS enforcement at application level | High | Enforce HTTPS via reverse proxy; use HSTS headers |
-| SEC-004 | `server/src/routes.rs` | Event source validation happens after deserialization | Medium | Validate earlier if possible; document order of checks |
-| SEC-005 | `server/src/` | No metrics/monitoring for suspicious patterns | Medium | Add rate limit bypass detection; log authentication failures centrally |
-| SEC-006 | `server/src/` | Constant-time comparison only for WebSocket token | Medium | Extend to all sensitive string comparisons |
-| SEC-007 | `server/src/rate_limit.rs` | DoS vector: unlimited unique source IDs can exhaust memory | Medium | Add per-endpoint limit on unique source ID count |
-| SEC-008 | `monitor/src/trackers/skill_tracker.rs` | history.jsonl file not validated for ownership | Low | Verify file permissions before reading; document assumption that file is user-owned |
-| SEC-009 | `monitor/src/trackers/todo_tracker.rs` | todos directory watching is non-recursive but could still pick up subdirectory changes | Low | Verify file parent matches todos_dir exactly; currently implemented correctly at line 858 |
-| SEC-010 | `monitor/src/trackers/todo_tracker.rs` | Empty task content in todo file is valid and transmitted | Low | Document that empty tasks are allowed; consider minimum content validation |
-| SEC-011 | `monitor/src/trackers/stats_tracker.rs` | stats-cache.json file not validated for ownership before reading | Low | Verify file ownership matches user (uid); document assumption that file is user-owned |
-| SEC-012 | `monitor/src/trackers/stats_tracker.rs` | Malformed JSON in stats-cache.json silently skips events instead of alerting | Low | Add debug-level logging for parse failures; consider user notification |
+| ID | Area | Description | Impact | Effort | Status |
+|----|------|-------------|--------|--------|--------|
+| TD-006 | Documentation | VIBETEA_PRIVATE_KEY environment variable now documented in SECURITY.md | Developer confusion | Low | Resolved |
+| TD-007 | Error response codes | Health endpoint always returns 200 even during degradation; no status codes for partial failure | Monitoring complexity | Low | Open |
 
 ## Known Bugs
 
-Active bugs that haven't been fixed:
-
-| ID | Description | Workaround | Severity |
-|----|-------------|------------|----------|
-| BUG-001 | WebSocket clients can receive events from unsubscribed sources if filter is not applied | Always specify `source` parameter in WebSocket query | Low |
-| BUG-002 | Rate limiter NaN handling: saturating_mul used but edge case with very high rates possible | Keep rates < 1e10 tokens/second | Low |
-| BUG-003 | Todo file with multiple rapid changes may emit multiple events due to debouncing window | Events will eventually coalesce; bursts typically resolve in 100-200ms | Low |
-| BUG-004 | Stats cache file being written during read can cause partial JSON parse errors | Handled with retry logic; benign unless file is continuously being written | Low |
-
-## Performance Concerns
-
-Known performance issues:
-
-| ID | Area | Description | Impact | Mitigation |
-|----|------|-------------|--------|------------|
-| PERF-001 | `server/src/rate_limit.rs` | HashMap lookup for each request (O(1) amortized but non-zero overhead) | Latency increase | Acceptable for typical workloads |
-| PERF-002 | `server/src/routes.rs` | JSON deserialization on every request | CPU usage | Consider msgpack if bandwidth is concern |
-| PERF-003 | `monitor/src/crypto.rs` | File I/O for key loading on each signing operation | Monitor startup latency | Load keys once at startup |
-| PERF-004 | `monitor/src/trackers/skill_tracker.rs` | File position tracking with atomic (SeqCst ordering) | Minimal overhead | Acceptable; critical for tail-like behavior |
-| PERF-005 | `monitor/src/trackers/todo_tracker.rs` | RwLock on ended_sessions set with read on every file change | Minimal overhead | Only affects high-frequency todo updates; typically acceptable |
-| PERF-006 | `monitor/src/trackers/stats_tracker.rs` | JSON parsing with retries and file I/O on every change | Minimal overhead | Only occurs when stats-cache.json is written (infrequent) |
-| PERF-007 | `monitor/src/trackers/stats_tracker.rs` | Multiple event emissions per stats file read (4 events: session_metrics, activity_pattern, model_distribution, token_usage per model) | Latency per read | Batch emissions or consolidate into single event if throughput becomes concern |
+| ID | Description | Workaround | Severity | Status |
+|----|-------------|------------|----------|--------|
+| BUG-001 | EnvGuard in tests modifies global env var state; tests must use `#[serial]` to avoid race conditions | Use `#[serial]` decorator on all env-var-touching tests | Medium | Mitigated in code |
+| BUG-002 | WebSocket client lagging causes skipped events (lagged count logged but events discarded) | No workaround; clients must reconnect to resume from current position | Medium | Documented in trace log |
 
 ## Fragile Areas
 
-Code areas that are brittle or risky to modify:
-
 | Area | Why Fragile | Precautions |
 |------|-------------|-------------|
-| `server/src/auth.rs` | Cryptographic signature verification is security-critical | Add tests for every code path; never skip RFC 8032 strict verification |
-| `server/src/config.rs` | Configuration parsing affects entire server security posture | Test with invalid inputs; document parsing rules |
-| `server/src/routes.rs` | Source validation happens in multiple places; easy to miss one | Centralize source validation logic; add integration tests |
-| `monitor/src/crypto.rs` | Signing is security-critical; keys must not leak | Never log keys; use constant-time operations only |
-| `monitor/src/trackers/agent_tracker.rs` | Privacy-critical: must never extract or transmit prompt content | Maintain type-safe design (no prompt field in struct); review any struct field additions |
-| `monitor/src/trackers/skill_tracker.rs` | File watching and offset tracking are fragile to filesystem changes | Handle file truncation gracefully; test with rapid appends and concurrent access |
-| `monitor/src/trackers/todo_tracker.rs` | File watching, debouncing, and session state tracking are interconnected | Ensure abandoned_sessions cleanup is implemented; add integration tests for rapid file changes |
-| `monitor/src/trackers/stats_tracker.rs` | File watching, event emission, and stats aggregation are critical for accuracy | Test with concurrent writes; ensure retry logic doesn't mask real issues; verify event emission ordering |
+| `server/src/auth.rs` | Critical security-sensitive code; base64/length validation is subtle | Extensive test coverage (43 tests); use RFC 8032 strict verification |
+| `server/src/routes.rs` | High complexity with multiple auth paths and error cases | Test all auth combinations; validate error responses |
+| `monitor/src/crypto.rs` | Cryptographic key handling; file permissions and memory management matter | Tests verify file permissions on Unix; tests verify zeroization; regenerate if compromised |
+| `server/src/config.rs` | Configuration parsing with environment variables; tests required `#[serial]` | Never modify without running full test suite with `--test-threads=1` |
+| `monitor/tests/env_key_test.rs` | Environment variable tests must serialize to avoid race conditions | All tests use `#[serial]` decorator (24 env-var-touching tests) |
+| `monitor/tests/key_export_test.rs` | Export-key tests modify env vars and spawn subprocesses; must use `#[serial]` | All tests use `#[serial]` decorator (15 export-key tests) |
+| `monitor/src/main.rs` | New export-key logic handles private key material and must not log it | Verify stdout purity in tests; all key writes are stderr only |
+| `.github/workflows/ci-with-monitor.yml` | Workflow manages private key and process; signal handling is critical | Test with dry-run first; ensure SIGTERM properly terminates and flushes |
+| `.github/actions/vibetea-monitor/action.yml` | Composite action manages binary download and monitor process lifecycle | Ensure secret masking works; test with actual GitHub Actions runner |
 
 ## Deprecated Code
 
-Code marked for removal:
-
 | Area | Deprecation Reason | Removal Target | Replacement |
 |------|-------------------|----------------|-------------|
-| None currently | N/A | N/A | N/A |
+| None identified | - | - | - |
 
 ## TODO Items
 
-Active TODO comments in codebase:
+| Location | TODO | Priority | Status |
+|----------|------|----------|--------|
+| `monitor/tests/privacy_test.rs:319` | TODO regex in test assertion for security match | Medium | Open |
 
-| Location | TODO | Priority |
-|----------|------|----------|
-| `server/src/config.rs:96` | Review VIBETEA_UNSAFE_NO_AUTH warning message | Low |
-| `server/src/main.rs:214` | Consider adding graceful shutdown timeout metrics | Low |
+## Dependency Concerns
 
-## External Dependencies at Risk
+### At-Risk Dependencies
 
-Dependencies that may need attention:
+| Package | Concern | Action Needed | Status |
+|---------|---------|---------------|--------|
+| `ed25519_dalek` | Cryptographic library; monitor for security advisories | Subscribe to GitHub security alerts | Open |
+| `tokio` | Runtime; heavy async dependency with many transitive deps | Keep updated; monitor for CVEs | Open |
+| `base64` | Decoding; generally stable but validate error handling | No immediate action needed | Resolved |
+| `zeroize` | New dependency for memory safety; critical for security | Monitor for updates and best practices | Open |
 
-| Package | Concern | Action Needed |
-|---------|---------|---------------|
-| `ed25519_dalek` | Cryptographic library requires correct version (check for updates) | Monitor for security advisories |
-| `tokio` | Heavy dependency; ensure async patterns are correct | Monitor for performance regressions |
-| `axum` | HTTP framework; ensure HTTPS enforcement at proxy | Verify proxy configuration in deployment |
-| `notify` | File watcher library used by skill_tracker, todo_tracker, and stats_tracker | Monitor for issues with file system event reliability |
-| `serde_json` | JSON parsing with retries; deeply nested structures in stats-cache could cause issues | Verify recursion depth limits in serde config |
+## Performance Concerns
+
+| ID | Area | Description | Impact | Mitigation |
+|----|------|-------------|--------|-----------|
+| PERF-001 | Rate limiter memory | Hash map of source_id -> TokenBucket grows unbounded until cleanup | Memory leak over time | Cleanup task removes stale entries (60s timeout) |
+| PERF-002 | Event broadcast | Broadcaster uses bounded channel; lagging subscribers lose events | Client experience degrades | Expected behavior; clients reconnect |
+| PERF-003 | JSON serialization | Every event serialized per WebSocket subscriber | CPU under high load | No mitigation; consider compression |
+| PERF-004 | GitHub Actions binary download | Release binary download on every workflow run | Network overhead | Consider caching binary or building from source |
+| PERF-005 | Composite action overhead | Action adds step overhead for binary download and validation | Minimal workflow slowdown | Overhead is ~5-10 seconds per workflow; acceptable for CI |
 
 ## Monitoring Gaps
 
-Areas lacking proper observability:
-
-| Area | Missing | Impact |
-|------|---------|--------|
-| `server/src/` | Per-endpoint latency metrics | Can't detect performance degradation |
-| `server/src/auth.rs` | Signature verification success/failure ratio | Can't detect attack patterns |
-| `server/src/rate_limit.rs` | Memory usage of rate limiter state | Can't predict capacity exhaustion |
-| `monitor/` | Event submission success/failure metrics | Can't detect monitor connectivity issues |
-| `monitor/src/trackers/skill_tracker.rs` | File watcher error count and lag | Can't detect history.jsonl processing delays |
-| `monitor/src/trackers/todo_tracker.rs` | Debouncer queue depth and event emission latency | Can't detect processing bottlenecks |
-| `monitor/src/trackers/todo_tracker.rs` | Ended sessions count and cleanup frequency | Can't detect memory leaks in session tracking |
-| `monitor/src/trackers/stats_tracker.rs` | File watcher error count and parse retry frequency | Can't detect stats-cache.json accessibility issues |
-| `monitor/src/trackers/stats_tracker.rs` | Event emission rate and debouncer latency | Can't detect stats file update frequency |
-| `monitor/src/trackers/stats_tracker.rs` | Skipped events due to hour_counts/model_usage being empty | Can't measure coverage of activity pattern and model distribution events |
+| Area | Missing | Impact | Notes |
+|------|---------|--------|-------|
+| Private key source tracking | No metrics on whether file vs env var is used | Can't audit key source at runtime | KeySource enum added in Phase 3; logging at startup recommended |
+| Rate limiter state | No metrics on bucket count or token refill rates | Hard to debug rate limiting issues | Consider adding Prometheus metrics |
+| Authentication success rate | No metrics on auth successes vs failures | Can't detect brute force attempts | Would require counter instrumentation |
+| WebSocket health | No metrics on connection duration or message throughput | Hard to diagnose subscription issues | Consider adding connection metrics |
+| Export-key usage | No audit trail of key exports | Can't track which systems have exported keys | Consider adding telemetry or structured logging |
+| GitHub Actions monitor | No metrics on monitor process uptime/failures in CI | Can't detect if monitoring silently fails | Consider structured logging to Actions output |
+| Composite action usage | No telemetry on adoption or failure rates | Can't track action usage patterns | Could add optional telemetry to action |
 
 ## Improvement Opportunities
 
-Areas that could benefit from refactoring:
-
 | Area | Current State | Desired State | Benefit |
 |------|---------------|---------------|---------|
-| `server/src/routes.rs` | Multiple error code strings scattered | Centralized error code enum | Consistency, maintainability |
-| `server/src/` | Limited validation of configuration values | Schema validation at startup | Catch config errors earlier |
-| `server/src/auth.rs` | Signature verification is monolithic | Break into sub-functions | Easier testing, readability |
-| `server/src/` | No request tracing/correlation IDs | Add X-Request-ID support | Better debugging |
-| `monitor/src/trackers/` | Three/four separate tracker implementations | Unified tracker interface | Easier to add new trackers |
-| `monitor/src/trackers/todo_tracker.rs` | Abandoned sessions set with no cleanup | Implement periodic cleanup task | Prevent memory leaks |
-| `monitor/src/trackers/stats_tracker.rs` | Simple debounce; no coalescing of rapid changes | Batch stats emissions or use cumulative events | Reduce event volume on rapid updates |
-| `monitor/src/trackers/stats_tracker.rs` | Four separate event types per stats file read | Consolidated stats event with all data | Reduce API surface; simplify client handling |
+| Token management | Static string in environment | JWT or token service with expiration | Better security and client management |
+| Configuration validation | Happens at startup only | Happens at startup with detailed validation | Catch misconfigurations earlier |
+| Error logging | Mix of debug/warn levels | Structured error types with contextual data | Better observability |
+| Rate limiting | Per-source only | Support per-IP and per-endpoint limits | Finer-grained DoS protection |
+| Event filtering | Client-side by query params | Server-side filtering with ACLs | Reduced bandwidth, better security |
+| Private key rotation | Manual process | Automated rotation with versioning | Reduced risk of key compromise |
+| Export-key defaults | Explicit --path flag required | Auto-discovery of ~/.vibetea or env var | Smoother UX for end users |
+| GitHub Actions integration | Manual secret setup | Documentation or automated secret creation script | Easier onboarding for CI/CD |
+| Composite action | Basic functionality | Advanced features (log output, retry logic) | Better debugging and resilience |
 
-## Potential Vulnerabilities to Review
+## Security Debt Items
 
-These are not confirmed vulnerabilities but areas that should be reviewed:
+| ID | Area | Description | Mitigation Strategy | Status |
+|----|------|-------------|------------|--------|
+| DEBT-001 | WebSocket token | Same token for all clients across all time | Implement token rotation every N days or on deployment | Open |
+| DEBT-002 | Key registration | Public keys hardcoded in environment variable | Implement key management API with dynamic updates | Open |
+| DEBT-003 | Audit trail | Minimal logging of auth events | Add structured audit logging to database/file | Open |
+| DEBT-004 | Client identity | WebSocket clients are anonymous beyond token | Add optional client ID/name for audit purposes | Open |
+| DEBT-005 | Key export audit | No record of when/where keys are exported | Implement export logging with timestamp/system info | Open |
+| DEBT-006 | GitHub Actions secret usage | Monitor process has access to private key; potential logging risk | Implement log filtering to never output env vars | Phase 5 risk |
+| DEBT-007 | Composite action versioning | Action pinned to @main; no semantic versioning | Implement version tags and GitHub releases | Phase 6 opportunity |
 
-1. **Timing attacks on token comparison**: While `subtle::ConstantTimeEq` is used for WebSocket tokens, ensure all sensitive comparisons use it.
+## Potential Attack Vectors
 
-2. **Public key validation**: Public keys from `VIBETEA_PUBLIC_KEYS` are not validated to be valid Ed25519 keys at startup (only at verification time).
-
-3. **Request body size**: Maximum body size is 1 MB; consider if this is sufficient for use cases.
-
-4. **JSON parsing**: Malicious JSON with deeply nested structures could cause stack overflow; serde has protections but should be verified.
-
-5. **WebSocket upgrade**: Verify that WebSocket upgrade doesn't accept invalid protocols.
-
-6. **Rate limiter state**: HashMap can grow unbounded if many unique source IDs are used; stale entry cleanup helps but may not be sufficient under attack.
-
-7. **history.jsonl file permissions**: Skill tracker reads from `~/.claude/history.jsonl` without verifying ownership or permissions. Malicious files in shared environments could lead to injection.
-
-8. **File offset overflow**: Atomic u64 offset could theoretically overflow with files larger than 2^63 bytes, though practically unlikely.
-
-9. **Todo file format validation**: Todo files are lenient parsed; deeply nested JSON could cause performance issues.
-
-10. **Debouncer channel capacity**: Debouncer uses channel of capacity 1000; rapid file changes could overflow if processing is slow.
-
-11. **Stats cache file validation**: File is read without validating that it belongs to the current user. Symlink attacks possible if `/tmp/stats-cache.json` is used.
-
-12. **Stats JSON nesting depth**: Claude Code stats cache could theoretically have deeply nested model usage maps; serde recursion depth should be verified.
-
-13. **ActivityPatternEvent hour_counts coverage**: If stats-cache.json lacks hour_counts field, ActivityPatternEvent is not emitted (empty map check at line 493). Verify client handles occasional absence gracefully.
-
-14. **ModelDistributionEvent model_usage coverage**: If stats-cache.json lacks model_usage field, ModelDistributionEvent is not emitted (empty map check at line 510). Verify client handles occasional absence gracefully.
-
-## Privacy-Related Concerns
-
-### Phase 4: Agent Tracking Privacy
-
-| ID | Area | Description | Status | Notes |
-|----|------|-------------|--------|-------|
-| PRIV-001 | `monitor/src/trackers/agent_tracker.rs` | Task tool prompt extraction eliminated | Resolved (Phase 4) | `TaskToolInput` struct intentionally lacks prompt field |
-| PRIV-002 | `monitor/src/trackers/agent_tracker.rs` | Type-safe privacy enforcement | Implemented | Privacy guaranteed at compile-time via struct definition |
-| PRIV-003 | `monitor/src/trackers/agent_tracker.rs` | Only metadata extracted | Implemented | Extracts: subagent_type, description (non-sensitive fields) |
-
-### Phase 5: Skill Tracking Privacy
-
-| ID | Area | Description | Status | Notes |
-|----|------|-------------|--------|-------|
-| PRIV-004 | `monitor/src/trackers/skill_tracker.rs` | Command arguments not extracted | Implemented | Only skill name extracted from `/skill arg1 arg2` |
-| PRIV-005 | `monitor/src/trackers/skill_tracker.rs` | history.jsonl file contains user session data | Implemented | File is append-only and user-owned; only metadata (skill name, timestamp) is transmitted |
-| PRIV-006 | `monitor/src/trackers/skill_tracker.rs` | Privacy validation in tests | Implemented | Tests verify that arguments are skipped (`skill_tracker.rs:1068-1078`) |
-
-### Phase 6: Todo Tracking Privacy
-
-| ID | Area | Description | Status | Notes |
-|----|------|-------------|--------|-------|
-| PRIV-007 | `monitor/src/trackers/todo_tracker.rs` | Task content never extracted or transmitted | Implemented | Only status counts (completed, in_progress, pending) are emitted |
-| PRIV-008 | `monitor/src/trackers/todo_tracker.rs` | Type-safe privacy via struct design | Implemented | `TodoProgressEvent` has no content field; privacy guaranteed at compile-time |
-| PRIV-009 | `monitor/src/trackers/todo_tracker.rs` | Lenient parsing doesn't leak invalid entries | Implemented | Invalid entries silently skipped during parsing (`parse_todo_file_lenient`) |
-| PRIV-010 | `monitor/src/trackers/todo_tracker.rs` | Filename validation prevents reading arbitrary files | Implemented | UUID pattern matching in `parse_todo_filename` ensures only claude files are processed |
-
-### Phase 8: Stats Tracking Privacy
-
-| ID | Area | Description | Status | Notes |
-|----|------|-------------|--------|-------|
-| PRIV-011 | `monitor/src/trackers/stats_tracker.rs` | Stats cache metrics never include user code or content | Implemented | Only aggregated counts (sessions, messages, tool usage) transmitted |
-| PRIV-012 | `monitor/src/trackers/stats_tracker.rs` | No extraction of individual session details | Implemented | SessionMetricsEvent contains global aggregates only |
-| PRIV-013 | `monitor/src/trackers/stats_tracker.rs` | Model names transmitted but not model outputs | Implemented | TokenUsageEvent tracks usage by model name for insights without content |
-| PRIV-014 | `monitor/src/trackers/stats_tracker.rs` | Privacy-by-design in event struct definitions | Implemented | StatsEvent enum variant separation ensures metadata-only transmission |
-
-### Phase 9-10: Enhanced Tracking Privacy
-
-| ID | Area | Description | Status | Notes |
-|----|------|-------------|--------|-------|
-| PRIV-015 | `monitor/src/trackers/stats_tracker.rs` | ActivityPatternEvent contains only hourly counts | Implemented (Phase 9-10) | hour_counts map has no user code or session info |
-| PRIV-016 | `monitor/src/trackers/stats_tracker.rs` | ModelDistributionEvent contains only aggregated token counts | Implemented (Phase 9-10) | model_usage map contains TokenUsageSummary with counts only |
-| PRIV-017 | `monitor/src/trackers/stats_tracker.rs` | No ability to reverse-engineer user activity from events | Implemented | Hourly granularity prevents minute-level tracking; model names are non-sensitive |
-
-### Privacy Design Patterns
-
-The trackers implement privacy-by-design:
-- **Agent tracker**: Struct definition prevents prompt extraction (`TaskToolInput` has no `prompt` field)
-- **Skill tracker**: Function-level extraction prevents argument capturing (`extract_skill_name` only returns first token)
-- **Todo tracker**: Struct definition prevents content transmission (`TodoProgressEvent` has only status counts)
-- **Stats tracker**: Aggregation approach transmits only metrics, never raw file contents or user data
-- **Type system enforcement**: Privacy is impossible to violate at compile-time
-- **Test coverage**: Privacy constraints are explicitly tested
-
-This approach is more robust than runtime validation because it's impossible to accidentally transmit sensitive data.
-
-## Compliance Notes
-
-- No formal security audit has been performed
-- Code follows Rust best practices and uses safe APIs
-- No hardcoded secrets found in codebase
-- Cryptographic operations use well-tested libraries (`ed25519_dalek`, `subtle`)
-- No SQL injection vectors (no SQL used)
-- No code injection vectors (no eval/exec)
-- Privacy controls built into type system (no prompt, content, or argument fields in tracking structs)
-- Command arguments and task content not extracted from file monitoring
-- Stats cache used only for aggregated metrics extraction (token counts, session counts, hourly distribution)
-- All file watching includes strict filename validation (UUID pattern matching, stats-cache.json validation)
-- ActivityPatternEvent and ModelDistributionEvent follow established privacy patterns from Phase 8 stats tracker
+| Vector | Mitigation | Status |
+|--------|-----------|--------|
+| Signature bypass (wrong message signed) | Signature verifies full request body | Mitigated |
+| Timing attack on token comparison | Constant-time comparison with `subtle` crate | Mitigated |
+| Timing attack on key material buffers | Zeroize crate wipes intermediate buffers | Mitigated (Phase 3) |
+| Rate limit bypass (multiple sources) | Per-source limiting doesn't prevent N sources | Partially mitigated by total capacity |
+| Private key logging | Private key never converted to string for logging | Mitigated (Phase 3) |
+| Invalid key length in env var | Strict validation: exactly 32 bytes required | Mitigated (Phase 3) |
+| WebSocket replay (reuse old token) | Static token never expires | Not mitigated |
+| Source ID spoofing | Must provide valid signature for registered source | Mitigated |
+| Base64 decoding errors | Handled with explicit error cases | Mitigated |
+| Whitespace in env var key | Trimmed before base64 decoding | Mitigated (Phase 3) |
+| Export-key output leakage | Diagnostic messages sent to stderr only | Mitigated (Phase 4) |
+| Key export in cleartext | Keys exported as base64; assumes secure transport (HTTPS/CI secrets) | Requires operator discipline |
+| GitHub Actions log leakage | Private key is env var, subject to accidental logging | Partially mitigated by GitHub secret masking (Phase 5) |
+| Composite action binary tampering | Binary downloaded from GitHub releases without signature verification | Partially mitigated by HTTPS; recommend checksum verification |
+| Man-in-the-middle on binary download | Binary download from GitHub releases via HTTP curl | Mitigated by HTTPS (curl -fsSL) |
 
 ---
 
@@ -280,15 +213,6 @@ This approach is more robust than runtime validation because it's impossible to 
 | High | Degraded functionality, security risk | This sprint |
 | Medium | Developer experience, minor issues | Next sprint |
 | Low | Nice to have, cosmetic | Backlog |
-
----
-
-## What Does NOT Belong Here
-
-- Active implementation tasks → Project board/issues
-- Security controls (what we do right) → SECURITY.md
-- Architecture decisions → ARCHITECTURE.md
-- Code conventions → CONVENTIONS.md
 
 ---
 
