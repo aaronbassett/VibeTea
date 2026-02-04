@@ -2,13 +2,13 @@
 
 > **Purpose**: Document system design, patterns, component relationships, and data flow.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Architecture Overview
 
 VibeTea is a distributed event aggregation and broadcast system for AI coding assistants with three independent components:
 
-- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server, with enhanced tracking modules for agent spawns, token usage, and other metrics
+- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server, with enhanced tracking modules for agent spawns, skill invocations, token usage, and other metrics
 - **Server** (Rust HTTP API) - Central hub that receives events from monitors and broadcasts them to subscribers via WebSocket
 - **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, and usage heatmaps
 
@@ -20,7 +20,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 |---------|-------------|
 | **Hub-and-Spoke** | Central Server acts as event aggregation point, Monitors feed events, Clients consume |
 | **Producer-Consumer** | Monitors are event producers, Clients are event consumers, Server mediates asynchronous delivery |
-| **Privacy-First** | Events contain only structural metadata (timestamps, tool names, file basenames), never code or sensitive content |
+| **Privacy-First** | Events contain only structural metadata (timestamps, tool names, skill names, file basenames), never code or sensitive content |
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
 | **Modular Tracking** | Enhanced tracking subsystem with pluggable tracker modules for different data sources |
 
@@ -28,7 +28,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 
 ### Monitor (Source)
 
-- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl` and emits structured events
+- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl` and `~/.claude/history.jsonl`, emitting structured events
 - **Location**: `monitor/src/`
 - **Key Responsibilities**:
   - File watching via `inotify` (Linux), `FSEvents` (macOS), `ReadDirectoryChangesW` (Windows)
@@ -36,7 +36,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Cryptographic signing of events (Ed25519)
   - Event buffering and exponential backoff retry
   - Graceful shutdown with event flushing
-  - Enhanced tracking of specialized events (agent spawns, token usage, stats)
+  - Enhanced tracking of specialized events (agent spawns, skill invocations, token usage, stats)
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events`)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
@@ -77,10 +77,10 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 ### Primary Monitor-to-Client Flow
 
 Claude Code → Monitor → Server → Client:
-1. JSONL line written to `~/.claude/projects/<uuid>.jsonl`
+1. JSONL line written to `~/.claude/projects/<uuid>.jsonl` or skill invocation to `~/.claude/history.jsonl`
 2. File watcher detects change via inotify/FSEvents
 3. Parser extracts event metadata (no code/prompts)
-4. Enhanced trackers extract specialized event types (agent spawns, token usage)
+4. Enhanced trackers extract specialized event types (agent spawns, skill invocations, token usage)
 5. Privacy pipeline sanitizes payload
 6. Sender signs with Ed25519, buffers, and retries on failure
 7. POST /events sent to Server with X-Source-ID and X-Signature headers
@@ -90,11 +90,11 @@ Claude Code → Monitor → Server → Client:
 11. Zustand store adds event (FIFO eviction at 1000 limit)
 12. React renders updated event list, session overview, heatmap
 
-### Enhanced Tracking Flow (Phase 4)
+### Enhanced Tracking Flow (Phase 4-5)
 
-Two parallel tracking pipelines within Monitor:
+Three parallel tracking pipelines within Monitor:
 
-**Pipeline 1: JSONL Parser (WatchEvent → ParsedEvent)**
+**Pipeline 1: Session JSONL Parser (WatchEvent → ParsedEvent)**
 ```
 Session JSONL → FileWatcher
   ↓
@@ -106,7 +106,19 @@ SessionParser.parse_line()
   └→ ParsedEventKind enum variant (including AgentSpawned)
 ```
 
-**Pipeline 2: Stats Tracker (metrics → TokenUsageEvent)**
+**Pipeline 2: Skill Tracker (history.jsonl → SkillInvocationEvent)**
+```
+history.jsonl → FileWatcher
+  ↓
+WatchEvent (LinesAdded)
+  ↓
+SkillTracker.process_line()
+  ├→ parse_history_entry()
+  ├→ extract_skill_name() (tokenization)
+  └→ SkillInvocationEvent
+```
+
+**Pipeline 3: Stats Tracker (stats.jsonl → TokenUsageEvent)**
 ```
 stats.jsonl → StatsTracker
   ↓
@@ -115,7 +127,7 @@ TokenUsageEvent (token counts by model)
 Sender queue
 ```
 
-Both pipelines feed into the same `sender.queue()` for batching and transmission.
+All pipelines feed into the same `sender.queue()` for batching and transmission.
 
 ### Detailed Request/Response Cycle
 
@@ -123,6 +135,7 @@ Both pipelines feed into the same `sender.queue()` for batching and transmission
    - JSONL line parsed from `~/.claude/projects/<uuid>.jsonl`
    - `SessionParser` extracts timestamp, tool name, action
    - `agent_tracker` detects Task tool_use and extracts agent metadata
+   - `SkillTracker` detects history.jsonl changes and parses skill invocations
    - `PrivacyPipeline` removes sensitive fields (code, prompts)
    - `Event` struct created with unique ID (`evt_` prefix + 20-char suffix)
 
@@ -161,7 +174,7 @@ Both pipelines feed into the same `sender.queue()` for batching and transmission
 
 | Layer | Responsibility | Can Access | Cannot Access |
 |-------|----------------|------------|---------------|
-| **Monitor** | Observe local activity, preserve privacy, authenticate, track metrics | FileSystem, HTTP client, Crypto, Stats files | Server internals, other Monitors, network stack details |
+| **Monitor** | Observe local activity, preserve privacy, authenticate, track metrics | FileSystem, HTTP client, Crypto, Stats files, history.jsonl | Server internals, other Monitors, network stack details |
 | **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state | File system, external APIs, Client implementation details |
 | **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
 
@@ -179,9 +192,10 @@ Both pipelines feed into the same `sender.queue()` for batching and transmission
 |-----------|---------|-----------------|
 | `Event` | Core event struct with type + payload | JSON serialization via `serde` |
 | `EventPayload` | Tagged union of event variants | Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, SessionMetrics, etc. |
-| `EventType` | Enum discriminator | 10+ variants (Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, TokenUsage, etc.) |
+| `EventType` | Enum discriminator | 10+ variants (Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, etc.) |
 | `ParsedEventKind` | Parser output enum | SessionStarted, Activity, ToolStarted, ToolCompleted, Summary, AgentSpawned |
 | `AgentSpawnEvent` | Task tool agent spawn metadata | session_id, agent_type, description, timestamp |
+| `SkillInvocationEvent` | Skill/slash command invocation metadata | session_id, skill_name, project, timestamp |
 | `TaskToolInput` | Parsed Task tool input | subagent_type, description (prompt excluded for privacy) |
 | `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
 | `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
@@ -235,6 +249,7 @@ Both pipelines feed into the same `sender.queue()` for batching and transmission
 |------------|----------|---------|
 | **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown |
 | **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
+| **Skill Tracker State** | `SkillTracker` instance | Maintains byte offset for history.jsonl, processes immediately (no debounce) |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
 | **Stats Tracker** | `StatsTracker` instance | Watches stats.jsonl for token usage metrics |
 
@@ -249,7 +264,7 @@ Both pipelines feed into the same `sender.queue()` for batching and transmission
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
 
-## Enhanced Tracking Subsystem (Phase 4)
+## Enhanced Tracking Subsystem (Phase 4-5)
 
 New modular tracking architecture in `monitor/src/trackers/`:
 
@@ -265,6 +280,20 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Integration**: Called from `SessionParser::parse_line()` when processing tool_use content blocks
 - **Output**: `ParsedEventKind::AgentSpawned` variant → `EventPayload::AgentSpawn` → `EventType::AgentSpawn`
 
+### skill_tracker Module (Phase 5)
+
+- **Purpose**: Monitor `~/.claude/history.jsonl` for skill/slash command invocations
+- **Location**: `monitor/src/trackers/skill_tracker.rs`
+- **Key Components**:
+  - `SkillTracker`: Main tracker instance managing file watch and byte offset
+  - `parse_history_entry()`: Parses JSON entry from history.jsonl
+  - `create_skill_invocation_event()`: Constructs `SkillInvocationEvent` from parsed entry
+  - `extract_skill_name()`: Tokenizes display string to extract skill name from `/command`
+- **Privacy**: Extracts only skill name (parsed from `display` field); ignores command arguments
+- **Integration**: Spawned as independent async task in `main.rs`; results queued via `sender.queue()`
+- **Output**: `SkillInvocationEvent` → queued by main event loop
+- **Architecture**: Uses `notify` crate for file changes; maintains byte offset for efficient tailing; processes immediately without debounce
+
 ### stats_tracker Module
 
 - **Purpose**: Monitor token usage and session metrics from stats.jsonl
@@ -274,7 +303,6 @@ New modular tracking architecture in `monitor/src/trackers/`:
 
 ### Future Tracker Modules (Planned)
 
-- `skill_tracker`: Slash command invocations from history.jsonl
 - `todo_tracker`: Todo list progress and abandonment detection
 - `file_history_tracker`: File edit line change tracking
 - `project_tracker`: Active project session tracking
@@ -315,6 +343,14 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Separation of concerns**: Each tracker focuses on one data source
 - **Privacy control**: Trackers can be disabled/enabled per configuration
 - **Parallel extraction**: Multiple trackers can process different JSONL files independently
+- **Independent lifecycle**: Trackers can have different update frequencies and processing patterns
+
+### Why Separate Skill Tracker?
+
+- **Different data source**: history.jsonl is separate from session JSONL files
+- **Append-only pattern**: Allows efficient tailing with byte offsets
+- **Immediate processing**: No debounce needed (user actions are already serialized)
+- **Independent lifecycle**: Can be enabled/disabled without affecting session tracking
 
 ---
 

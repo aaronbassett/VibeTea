@@ -1514,6 +1514,103 @@ Key conventions in agent_tracker module:
 - **Comprehensive testing**: 28 unit tests covering normal cases, edge cases, and realistic JSONL parsing
 - **Doc comments with examples**: Every public function includes doc comments showing usage
 
+### Skill Tracker Pattern (Rust - Phase 5)
+
+The skill_tracker module (`monitor/src/trackers/skill_tracker.rs`) monitors `~/.claude/history.jsonl` for slash command invocations:
+
+```rust
+//! Skill tracker for detecting skill/slash command invocations.
+//!
+//! This module watches `~/.claude/history.jsonl` for changes and emits
+//! [`SkillInvocationEvent`]s for each new skill invocation.
+//!
+//! # History.jsonl Format
+//!
+//! When a user invokes a skill (slash command) in Claude Code, an entry is
+//! appended to `~/.claude/history.jsonl`:
+//!
+//! ```json
+//! {
+//!   "display": "/commit -m \"fix: update docs\"",
+//!   "timestamp": 1738567268363,
+//!   "project": "/home/ubuntu/Projects/VibeTea",
+//!   "sessionId": "6e45a55c-3124-4cc8-ad85-040a5c316009"
+//! }
+//! ```
+//!
+//! # Privacy
+//!
+//! This module follows the privacy-first principle: only the skill name
+//! (extracted from `display`) and metadata are captured. Command arguments
+//! are intentionally not transmitted.
+
+/// A parsed entry from history.jsonl.
+///
+/// Represents a single skill invocation record as stored by Claude Code.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    /// The skill command as displayed (e.g., "/commit -m \"message\"").
+    pub display: String,
+
+    /// Unix timestamp in milliseconds when the skill was invoked.
+    pub timestamp: i64,
+
+    /// The project path where the skill was invoked.
+    pub project: String,
+
+    /// The session ID associated with this skill invocation.
+    pub session_id: String,
+}
+
+/// Parses a single line from history.jsonl.
+///
+/// # Errors
+/// Returns `HistoryParseError` if the line is not valid JSON or is missing required fields.
+pub fn parse_history_entry(line: &str) -> Result<HistoryEntry, HistoryParseError> {
+    serde_json::from_str(line).map_err(HistoryParseError::InvalidJson)
+}
+
+/// Creates a [`SkillInvocationEvent`] from a parsed history entry.
+///
+/// Extracts the skill name from the display string and converts the timestamp
+/// from milliseconds to UTC DateTime.
+pub fn create_skill_invocation_event(entry: &HistoryEntry) -> Option<SkillInvocationEvent> {
+    let skill_name = extract_skill_name(&entry.display)?;
+    let timestamp_secs = entry.timestamp / 1000;
+    let timestamp = Utc.timestamp_opt(timestamp_secs, 0).single()?;
+
+    Some(SkillInvocationEvent {
+        skill_name,
+        session_id: entry.session_id.clone(),
+        timestamp,
+    })
+}
+
+/// SkillTracker watches history.jsonl for new skill invocations.
+///
+/// The tracker uses file watching to detect changes and only reads newly appended
+/// lines (maintains byte offset for append-only file processing).
+pub struct SkillTracker {
+    // File watching and offset tracking internals
+}
+
+impl SkillTracker {
+    /// Creates a new skill tracker.
+    ///
+    /// Sets up file system watching for `~/.claude/history.jsonl`.
+    pub fn new(tx: mpsc::Sender<SkillInvocationEvent>) -> Result<Self, SkillTrackerError> { ... }
+}
+```
+
+Key conventions in skill_tracker module (Phase 5):
+- **File watching**: Uses `notify` crate to detect changes to `history.jsonl`
+- **Append-only processing**: Maintains byte offset to only read new lines (no debounce)
+- **Privacy-first extraction**: Only skill name captured, not command arguments
+- **Error handling**: Specific errors for parsing, I/O, and channel failures
+- **Comprehensive documentation**: Module-level docs with examples and format specifications
+- **20+ unit tests**: Covering entry parsing, skill extraction, event creation, error cases
+
 ### CLI Pattern (Rust - Phase 6)
 
 The main binary (`monitor/src/main.rs`) implements a simple command-line interface with async runtime management:
@@ -1722,6 +1819,27 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 
 use crate::types::AgentSpawnEvent;
+```
+
+Example from `monitor/src/trackers/skill_tracker.rs` (Phase 5):
+
+```rust
+use std::io::{BufRead, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use chrono::{DateTime, TimeZone, Utc};
+use notify::{
+    event::ModifyKind, Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
+use serde::Deserialize;
+use thiserror::Error;
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, trace, warn};
+
+use crate::types::SkillInvocationEvent;
+use crate::utils::tokenize::extract_skill_name;
 ```
 
 ## Comments & Documentation
@@ -2144,6 +2262,62 @@ pub fn parse_task_tool_use(tool_name: &str, input: &serde_json::Value) -> Option
 }
 ```
 
+Example from `monitor/src/trackers/skill_tracker.rs` (Phase 5):
+
+```rust
+//! Skill tracker for detecting skill/slash command invocations.
+//!
+//! This module watches `~/.claude/history.jsonl` for changes and emits
+//! [`SkillInvocationEvent`]s for each new skill invocation.
+//!
+//! # History.jsonl Format
+//!
+//! When a user invokes a skill (slash command) in Claude Code, an entry is
+//! appended to `~/.claude/history.jsonl`:
+//!
+//! ```json
+//! {
+//!   "display": "/commit -m \"fix: update docs\"",
+//!   "timestamp": 1738567268363,
+//!   "project": "/home/ubuntu/Projects/VibeTea",
+//!   "sessionId": "6e45a55c-3124-4cc8-ad85-040a5c316009"
+//! }
+//! ```
+//!
+//! # Privacy
+//!
+//! This module follows the privacy-first principle: only the skill name
+//! (extracted from `display`) and metadata are captured. Command arguments
+//! are intentionally not transmitted.
+//!
+//! # Architecture
+//!
+//! The tracker uses the [`notify`] crate to watch for file changes. Since
+//! `history.jsonl` is append-only, the tracker maintains a byte offset to
+//! only read new lines (tail-like behavior). No debounce is used - events
+//! are processed immediately per the research.md specification.
+
+/// A parsed entry from history.jsonl.
+///
+/// Represents a single skill invocation record as stored by Claude Code.
+/// The JSON uses camelCase field names which are mapped to snake_case.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryEntry {
+    /// The skill command as displayed (e.g., "/commit -m \"message\"").
+    pub display: String,
+
+    /// Unix timestamp in milliseconds when the skill was invoked.
+    pub timestamp: i64,
+
+    /// The project path where the skill was invoked.
+    pub project: String,
+
+    /// The session ID associated with this skill invocation.
+    pub session_id: String,
+}
+```
+
 ## Git Conventions
 
 ### Commit Messages
@@ -2181,6 +2355,11 @@ Examples with Phase 6:
 - `feat(monitor): implement CLI with init and run commands`
 - `feat(monitor): add HTTP sender with retry and buffering`
 - `feat(monitor): add Ed25519 keypair generation and signing`
+
+Examples with Phase 5:
+- `feat(monitor): implement skill_tracker file watching for history.jsonl`
+- `feat(monitor): add skill name extraction from history.jsonl display field`
+- `test(monitor): add 20+ unit tests for skill_tracker parsing and event creation`
 
 Examples with Phase 4:
 - `feat(monitor): add agent_tracker for Task tool agent spawn extraction`

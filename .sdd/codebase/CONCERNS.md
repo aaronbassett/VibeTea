@@ -1,8 +1,8 @@
 # Known Concerns
 
 > **Purpose**: Document technical debt, known risks, bugs, fragile areas, and improvement opportunities.
-> **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Generated**: 2026-02-04
+> **Last Updated**: 2026-02-04
 
 ## Technical Debt
 
@@ -26,6 +26,8 @@ Items to address when working in the area:
 | TD-011 | `server/src/rate_limit.rs` | Rate limiter in-memory only; no persistence across restarts | State loss | Medium |
 | TD-012 | `server/src/` | WebSocket frame fragmentation handling is implicit (rely on axum) | Reliability | Medium |
 | TD-013 | `server/src/auth.rs` | No key rotation mechanism documented | Operational complexity | Medium |
+| TD-050 | `monitor/src/trackers/skill_tracker.rs` | File watcher watches entire directory; could catch unrelated files | Minor overhead | Low |
+| TD-051 | `monitor/src/trackers/skill_tracker.rs` | No debounce on file events; rapid appends may cause multiple reads | Performance | Low |
 
 ### Low Priority
 
@@ -50,6 +52,7 @@ Security-related issues requiring attention:
 | SEC-005 | `server/src/` | No metrics/monitoring for suspicious patterns | Medium | Add rate limit bypass detection; log authentication failures centrally |
 | SEC-006 | `server/src/` | Constant-time comparison only for WebSocket token | Medium | Extend to all sensitive string comparisons |
 | SEC-007 | `server/src/rate_limit.rs` | DoS vector: unlimited unique source IDs can exhaust memory | Medium | Add per-endpoint limit on unique source ID count |
+| SEC-008 | `monitor/src/trackers/skill_tracker.rs` | history.jsonl file not validated for ownership | Low | Verify file permissions before reading; document assumption that file is user-owned |
 
 ## Known Bugs
 
@@ -69,6 +72,7 @@ Known performance issues:
 | PERF-001 | `server/src/rate_limit.rs` | HashMap lookup for each request (O(1) amortized but non-zero overhead) | Latency increase | Acceptable for typical workloads |
 | PERF-002 | `server/src/routes.rs` | JSON deserialization on every request | CPU usage | Consider msgpack if bandwidth is concern |
 | PERF-003 | `monitor/src/crypto.rs` | File I/O for key loading on each signing operation | Monitor startup latency | Load keys once at startup |
+| PERF-004 | `monitor/src/trackers/skill_tracker.rs` | File position tracking with atomic (SeqCst ordering) | Minimal overhead | Acceptable; critical for tail-like behavior |
 
 ## Fragile Areas
 
@@ -81,6 +85,7 @@ Code areas that are brittle or risky to modify:
 | `server/src/routes.rs` | Source validation happens in multiple places; easy to miss one | Centralize source validation logic; add integration tests |
 | `monitor/src/crypto.rs` | Signing is security-critical; keys must not leak | Never log keys; use constant-time operations only |
 | `monitor/src/trackers/agent_tracker.rs` | Privacy-critical: must never extract or transmit prompt content | Maintain type-safe design (no prompt field in struct); review any struct field additions |
+| `monitor/src/trackers/skill_tracker.rs` | File watching and offset tracking are fragile to filesystem changes | Handle file truncation gracefully; test with rapid appends and concurrent access |
 
 ## Deprecated Code
 
@@ -108,6 +113,7 @@ Dependencies that may need attention:
 | `ed25519_dalek` | Cryptographic library requires correct version (check for updates) | Monitor for security advisories |
 | `tokio` | Heavy dependency; ensure async patterns are correct | Monitor for performance regressions |
 | `axum` | HTTP framework; ensure HTTPS enforcement at proxy | Verify proxy configuration in deployment |
+| `notify` | File watcher library used by skill_tracker | Monitor for issues with file system event reliability |
 
 ## Monitoring Gaps
 
@@ -119,6 +125,7 @@ Areas lacking proper observability:
 | `server/src/auth.rs` | Signature verification success/failure ratio | Can't detect attack patterns |
 | `server/src/rate_limit.rs` | Memory usage of rate limiter state | Can't predict capacity exhaustion |
 | `monitor/` | Event submission success/failure metrics | Can't detect monitor connectivity issues |
+| `monitor/src/trackers/skill_tracker.rs` | File watcher error count and lag | Can't detect history.jsonl processing delays |
 
 ## Improvement Opportunities
 
@@ -130,6 +137,7 @@ Areas that could benefit from refactoring:
 | `server/src/` | Limited validation of configuration values | Schema validation at startup | Catch config errors earlier |
 | `server/src/auth.rs` | Signature verification is monolithic | Break into sub-functions | Easier testing, readability |
 | `server/src/` | No request tracing/correlation IDs | Add X-Request-ID support | Better debugging |
+| `monitor/src/trackers/` | Three separate tracker implementations (agent, stats, skill) | Unified tracker interface | Easier to add new trackers |
 
 ## Potential Vulnerabilities to Review
 
@@ -147,6 +155,10 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 
 6. **Rate limiter state**: HashMap can grow unbounded if many unique source IDs are used; stale entry cleanup helps but may not be sufficient under attack.
 
+7. **history.jsonl file permissions**: Skill tracker reads from `~/.claude/history.jsonl` without verifying ownership or permissions. Malicious files in shared environments could lead to injection.
+
+8. **File offset overflow**: Atomic u64 offset could theoretically overflow with files larger than 2^63 bytes, though practically unlikely.
+
 ## Privacy-Related Concerns
 
 ### Phase 4: Agent Tracking Privacy
@@ -157,13 +169,21 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 | PRIV-002 | `monitor/src/trackers/agent_tracker.rs` | Type-safe privacy enforcement | Implemented | Privacy guaranteed at compile-time via struct definition |
 | PRIV-003 | `monitor/src/trackers/agent_tracker.rs` | Only metadata extracted | Implemented | Extracts: subagent_type, description (non-sensitive fields) |
 
-### Privacy Design Pattern
+### Phase 5: Skill Tracking Privacy
 
-The agent tracker implements privacy-by-design:
-- Struct definition prevents prompt extraction: `TaskToolInput` has no `prompt` field
-- Parser silently ignores prompt field in JSON (serde default behavior)
-- Type system enforces that prompts cannot be included in events
-- Test coverage verifies prompt field is ignored (`tests` module, line 378-393)
+| ID | Area | Description | Status | Notes |
+|----|------|-------------|--------|-------|
+| PRIV-004 | `monitor/src/trackers/skill_tracker.rs` | Command arguments not extracted | Implemented | Only skill name extracted from `/skill arg1 arg2` |
+| PRIV-005 | `monitor/src/trackers/skill_tracker.rs` | history.jsonl file contains user session data | Implemented | File is append-only and user-owned; only metadata (skill name, timestamp) is transmitted |
+| PRIV-006 | `monitor/src/trackers/skill_tracker.rs` | Privacy validation in tests | Implemented | Tests verify that arguments are skipped (`skill_tracker.rs:1068-1078`) |
+
+### Privacy Design Patterns
+
+The trackers implement privacy-by-design:
+- **Agent tracker**: Struct definition prevents prompt extraction (`TaskToolInput` has no `prompt` field)
+- **Skill tracker**: Function-level extraction prevents argument capturing (`extract_skill_name` only returns first token)
+- **Type system enforcement**: Privacy is impossible to violate at compile-time
+- **Test coverage**: Privacy constraints are explicitly tested
 
 This approach is more robust than runtime validation because it's impossible to accidentally transmit sensitive data.
 
@@ -176,6 +196,7 @@ This approach is more robust than runtime validation because it's impossible to 
 - No SQL injection vectors (no SQL used)
 - No code injection vectors (no eval/exec)
 - Privacy controls built into type system (no prompt field in task tracking)
+- Skill arguments not extracted from history.jsonl processing
 
 ---
 

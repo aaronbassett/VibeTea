@@ -1,8 +1,8 @@
 # Security
 
 > **Purpose**: Document authentication, authorization, security controls, and vulnerability status.
-> **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Generated**: 2026-02-04
+> **Last Updated**: 2026-02-04
 
 ## Authentication
 
@@ -112,12 +112,23 @@ The authentication flow for event submission (POST /events):
 | Privacy-first principle | `prompt` field intentionally omitted | Line 75, struct definition |
 | Events transmitted | Contain only agent_type and description | `monitor/src/types.rs:64` (AgentSpawnEvent) |
 
+### Skill Tracking Privacy (Phase 5)
+
+| Aspect | Implementation | Location |
+|--------|----------------|----------|
+| History file monitoring | Watches `~/.claude/history.jsonl` for skill invocations | `monitor/src/trackers/skill_tracker.rs` |
+| Data extraction | Skill name, project path, timestamp, session ID | `SkillInvocationEvent` struct |
+| Command arguments excluded | Slash command args not transmitted | `skill_tracker.rs:56-68` (extract_skill_name function) |
+| Privacy-first design | Only basename metadata captured, no full paths | `skill_tracker.rs:22-25` |
+| Append-only processing | Tail-like behavior tracks file position | `skill_tracker.rs:81, 480` (offset tracking) |
+
 ### Data Handling Philosophy
 
-- **Privacy-first design**: The `TaskToolInput` struct intentionally lacks a `prompt` field to prevent accidental transmission of sensitive task instructions
-- **Metadata extraction**: Only non-sensitive metadata is extracted and tracked (agent type, task description)
+- **Privacy-first design**: The `TaskToolInput` and skill tracking only extract non-sensitive metadata
+- **Metadata extraction**: Only tool types, descriptions, skill names - never prompts or command arguments
 - **No prompt logging**: Prompts are never extracted, parsed, or transmitted to monitoring systems
-- **Type-safe privacy**: Privacy enforcement is built into the struct definition, not runtime validation
+- **Type-safe privacy**: Privacy enforcement is built into struct definitions, not runtime validation
+- **Command argument stripping**: Skill invocations capture only the skill name, not the arguments passed to it
 
 ## Rate Limiting
 
@@ -191,6 +202,7 @@ VibeTea is a WebSocket/HTTP API server designed for backend-to-backend communica
 | WebSocket disconnection | N/A | `routes.rs:578` (info level) |
 | Configuration errors | Error message | `main.rs:53` (error level) |
 | Server startup | Port, auth mode, public key count | `main.rs:74-79` (info level) |
+| File watcher initialization | History file path | `skill_tracker.rs:474-476` (info level) |
 
 All logging is structured JSON output via `tracing` crate.
 
