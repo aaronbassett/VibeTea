@@ -16,7 +16,7 @@ import type React from 'react';
 import { useCallback, useMemo } from 'react';
 import { m, AnimatePresence } from 'framer-motion';
 
-import { useEventStore } from '../hooks/useEventStore';
+import { useEventStore, type ConnectionStatus } from '../hooks/useEventStore';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import { formatDuration, formatRelativeTime } from '../utils/formatting';
 import { SPRING_CONFIGS } from '../constants/design-tokens';
@@ -448,11 +448,61 @@ function SessionCard({
 }
 
 /**
- * Empty state when no sessions are available.
+ * Props for the EmptyState component.
  */
-function EmptyState() {
+interface EmptyStateProps {
+  /** Current WebSocket connection status */
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/**
+ * Get context-aware empty state message based on connection status.
+ *
+ * @param connectionStatus - Current WebSocket connection status
+ * @returns Object with primary message and call-to-action text
+ */
+function getEmptyStateMessages(connectionStatus: ConnectionStatus): {
+  readonly primary: string;
+  readonly callToAction: string;
+} {
+  switch (connectionStatus) {
+    case 'connecting':
+      return {
+        primary: 'Connecting to server...',
+        callToAction: 'Sessions will appear once connected',
+      };
+    case 'reconnecting':
+      return {
+        primary: 'Reconnecting to server...',
+        callToAction: 'Sessions will reappear once reconnected',
+      };
+    case 'disconnected':
+      return {
+        primary: 'Not connected',
+        callToAction: 'Click Connect to start receiving session data',
+      };
+    case 'connected':
+    default:
+      return {
+        primary: 'No active sessions',
+        callToAction: 'Start a Claude Code session to see activity here',
+      };
+  }
+}
+
+/**
+ * Empty state when no sessions are available.
+ * Displays context-aware messages based on connection status.
+ */
+function EmptyState({ connectionStatus }: EmptyStateProps) {
+  const { primary, callToAction } = getEmptyStateMessages(connectionStatus);
+
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+    <div
+      className="flex flex-col items-center justify-center py-12 text-gray-500"
+      role="status"
+      aria-live="polite"
+    >
       <svg
         className="w-12 h-12 mb-4"
         fill="none"
@@ -467,8 +517,8 @@ function EmptyState() {
           d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
         />
       </svg>
-      <p className="text-sm">No active sessions</p>
-      <p className="text-xs mt-1">Sessions will appear here when detected</p>
+      <p className="text-sm font-medium">{primary}</p>
+      <p className="text-xs mt-1 text-center max-w-xs">{callToAction}</p>
     </div>
   );
 }
@@ -516,9 +566,10 @@ export function SessionOverview({
   // Detect user's reduced motion preference
   const prefersReducedMotion = useReducedMotion();
 
-  // Subscribe to sessions from the store
+  // Subscribe to sessions and connection status from the store
   const sessions = useEventStore((state) => state.sessions);
   const events = useEventStore((state) => state.events);
+  const connectionStatus = useEventStore((state) => state.status);
 
   // Convert sessions Map to sorted array
   const sortedSessions = useMemo(() => {
@@ -581,7 +632,7 @@ export function SessionOverview({
           </AnimatePresence>
         </div>
       ) : (
-        <EmptyState />
+        <EmptyState connectionStatus={connectionStatus} />
       )}
     </div>
   );

@@ -29,6 +29,7 @@ import { LazyMotion, domAnimation, m } from 'framer-motion';
 
 import { COLORS, SPRING_CONFIGS } from '../../constants/design-tokens';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
+import type { ConnectionStatus } from '../../hooks/useEventStore';
 
 import type {
   ActivityGraphProps,
@@ -235,16 +236,73 @@ function CustomTooltip({ active, payload, label }: CustomTooltipProps) {
 }
 
 /**
- * Empty state when no events are available for the selected time range.
+ * Props for the EmptyState component.
  */
-function EmptyState({ timeRange }: { readonly timeRange: TimeRange }) {
+interface EmptyStateComponentProps {
+  /** Currently selected time range */
+  readonly timeRange: TimeRange;
+  /** WebSocket connection status */
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/**
+ * Get context-aware empty state message based on connection status and time range.
+ *
+ * @param connectionStatus - Current WebSocket connection status
+ * @param timeRange - Currently selected time range
+ * @returns Object with primary message and call-to-action text
+ */
+function getEmptyStateMessages(
+  connectionStatus: ConnectionStatus,
+  timeRange: TimeRange
+): {
+  readonly primary: string;
+  readonly callToAction: string;
+} {
   const rangeText =
     timeRange === '1h' ? 'hour' : timeRange === '6h' ? '6 hours' : '24 hours';
+
+  switch (connectionStatus) {
+    case 'connecting':
+      return {
+        primary: 'Connecting to server...',
+        callToAction: 'Activity data will load once connected',
+      };
+    case 'reconnecting':
+      return {
+        primary: 'Reconnecting to server...',
+        callToAction: 'Activity data will resume once reconnected',
+      };
+    case 'disconnected':
+      return {
+        primary: 'Not connected',
+        callToAction: 'Click Connect to start tracking activity',
+      };
+    case 'connected':
+    default:
+      return {
+        primary: `No activity in the last ${rangeText}`,
+        callToAction: 'Start a Claude Code session to see activity trends',
+      };
+  }
+}
+
+/**
+ * Empty state when no events are available for the selected time range.
+ * Displays context-aware messages based on connection status.
+ */
+function EmptyState({ timeRange, connectionStatus }: EmptyStateComponentProps) {
+  const { primary, callToAction } = getEmptyStateMessages(
+    connectionStatus,
+    timeRange
+  );
 
   return (
     <div
       className="flex flex-col items-center justify-center h-full min-h-[200px]"
       style={{ color: COLORS.text.muted }}
+      role="status"
+      aria-live="polite"
     >
       <svg
         className="w-12 h-12 mb-4"
@@ -260,8 +318,8 @@ function EmptyState({ timeRange }: { readonly timeRange: TimeRange }) {
           d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
         />
       </svg>
-      <p className="text-sm">No activity in the last {rangeText}</p>
-      <p className="text-xs mt-1">Events will appear here as they occur</p>
+      <p className="text-sm font-medium">{primary}</p>
+      <p className="text-xs mt-1 text-center max-w-xs">{callToAction}</p>
     </div>
   );
 }
@@ -460,6 +518,7 @@ export function ActivityGraph({
   events,
   timeRange,
   onTimeRangeChange,
+  connectionStatus = 'connected',
 }: ActivityGraphProps) {
   // Respect user's reduced motion preference
   const prefersReducedMotion = useReducedMotion();
@@ -568,7 +627,7 @@ export function ActivityGraph({
           </AreaChart>
         </ResponsiveContainer>
       ) : (
-        <EmptyState timeRange={timeRange} />
+        <EmptyState timeRange={timeRange} connectionStatus={connectionStatus} />
       )}
     </div>
   );

@@ -19,7 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, m } from 'framer-motion';
 
 import { COLORS, SPRING_CONFIGS } from '../constants/design-tokens';
-import { useEventStore } from '../hooks/useEventStore';
+import { useEventStore, type ConnectionStatus } from '../hooks/useEventStore';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 
 import type { VibeteaEvent } from '../types/events';
@@ -494,11 +494,61 @@ function HeatmapCellComponent({
 }
 
 /**
- * Empty state when no events are available.
+ * Props for the EmptyState component.
  */
-function EmptyState() {
+interface EmptyStateProps {
+  /** Current WebSocket connection status */
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/**
+ * Get context-aware empty state message based on connection status.
+ *
+ * @param connectionStatus - Current WebSocket connection status
+ * @returns Object with primary message and call-to-action text
+ */
+function getEmptyStateMessages(connectionStatus: ConnectionStatus): {
+  readonly primary: string;
+  readonly callToAction: string;
+} {
+  switch (connectionStatus) {
+    case 'connecting':
+      return {
+        primary: 'Connecting to server...',
+        callToAction: 'Activity data will load once connected',
+      };
+    case 'reconnecting':
+      return {
+        primary: 'Reconnecting to server...',
+        callToAction: 'Activity data will resume once reconnected',
+      };
+    case 'disconnected':
+      return {
+        primary: 'Not connected',
+        callToAction: 'Click Connect to start tracking activity',
+      };
+    case 'connected':
+    default:
+      return {
+        primary: 'No activity data',
+        callToAction: 'Start a Claude Code session to see activity patterns',
+      };
+  }
+}
+
+/**
+ * Empty state when no events are available.
+ * Displays context-aware messages based on connection status.
+ */
+function EmptyState({ connectionStatus }: EmptyStateProps) {
+  const { primary, callToAction } = getEmptyStateMessages(connectionStatus);
+
   return (
-    <div className="flex flex-col items-center justify-center py-12 text-gray-500">
+    <div
+      className="flex flex-col items-center justify-center py-12 text-gray-500"
+      role="status"
+      aria-live="polite"
+    >
       <svg
         className="w-12 h-12 mb-4"
         fill="none"
@@ -513,8 +563,8 @@ function EmptyState() {
           d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
         />
       </svg>
-      <p className="text-sm">No activity data</p>
-      <p className="text-xs mt-1">Events will appear here as they occur</p>
+      <p className="text-sm font-medium">{primary}</p>
+      <p className="text-xs mt-1 text-center max-w-xs">{callToAction}</p>
     </div>
   );
 }
@@ -551,8 +601,9 @@ function EmptyState() {
  * ```
  */
 export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
-  // Selective subscription: only re-render when events change
+  // Selective subscription: only re-render when events or connection status change
   const events = useEventStore((state) => state.events);
+  const connectionStatus = useEventStore((state) => state.status);
 
   // Respect user's reduced motion preference (FR-008)
   const prefersReducedMotion = useReducedMotion();
@@ -849,7 +900,7 @@ export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
           </div>
         </div>
       ) : (
-        <EmptyState />
+        <EmptyState connectionStatus={connectionStatus} />
       )}
     </div>
   );

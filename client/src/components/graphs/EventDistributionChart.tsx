@@ -28,6 +28,7 @@ import {
 
 import { COLORS } from '../../constants/design-tokens';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
+import type { ConnectionStatus } from '../../hooks/useEventStore';
 
 import type {
   EventDistributionChartProps,
@@ -292,13 +293,62 @@ function CenterLabel({ totalCount, cx, cy }: CenterLabelProps) {
 }
 
 /**
- * Empty state when no events are available.
+ * Props for the EmptyState component.
  */
-function EmptyState() {
+interface EmptyStateProps {
+  /** WebSocket connection status */
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/**
+ * Get context-aware empty state message based on connection status.
+ *
+ * @param connectionStatus - Current WebSocket connection status
+ * @returns Object with primary message and call-to-action text
+ */
+function getEmptyStateMessages(connectionStatus: ConnectionStatus): {
+  readonly primary: string;
+  readonly callToAction: string;
+} {
+  switch (connectionStatus) {
+    case 'connecting':
+      return {
+        primary: 'Connecting to server...',
+        callToAction: 'Event distribution will load once connected',
+      };
+    case 'reconnecting':
+      return {
+        primary: 'Reconnecting to server...',
+        callToAction: 'Event distribution will resume once reconnected',
+      };
+    case 'disconnected':
+      return {
+        primary: 'Not connected',
+        callToAction: 'Click Connect to start collecting event data',
+      };
+    case 'connected':
+    default:
+      return {
+        primary: 'No events to display',
+        callToAction:
+          'Start a Claude Code session to see event type distribution',
+      };
+  }
+}
+
+/**
+ * Empty state when no events are available.
+ * Displays context-aware messages based on connection status.
+ */
+function EmptyState({ connectionStatus }: EmptyStateProps) {
+  const { primary, callToAction } = getEmptyStateMessages(connectionStatus);
+
   return (
     <div
       className="flex flex-col items-center justify-center h-full min-h-[200px]"
       style={{ color: COLORS.text.muted }}
+      role="status"
+      aria-live="polite"
     >
       <svg
         className="w-12 h-12 mb-4"
@@ -320,8 +370,8 @@ function EmptyState() {
           d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"
         />
       </svg>
-      <p className="text-sm">No events to display</p>
-      <p className="text-xs mt-1">Event distribution will appear here</p>
+      <p className="text-sm font-medium">{primary}</p>
+      <p className="text-xs mt-1 text-center max-w-xs">{callToAction}</p>
     </div>
   );
 }
@@ -347,6 +397,7 @@ function EmptyState() {
  */
 export function EventDistributionChart({
   events,
+  connectionStatus = 'connected',
 }: EventDistributionChartProps) {
   // Respect user's reduced motion preference
   const prefersReducedMotion = useReducedMotion();
@@ -435,7 +486,7 @@ export function EventDistributionChart({
           </PieChart>
         </ResponsiveContainer>
       ) : (
-        <EmptyState />
+        <EmptyState connectionStatus={connectionStatus} />
       )}
 
       {/* Center label overlay - positioned absolutely for proper centering */}

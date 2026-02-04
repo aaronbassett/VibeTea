@@ -9,7 +9,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { m } from 'framer-motion';
 
-import { selectFilteredEvents, useEventStore } from '../hooks/useEventStore';
+import {
+  selectFilteredEvents,
+  useEventStore,
+  type ConnectionStatus,
+} from '../hooks/useEventStore';
 import { useAnimationThrottle } from '../hooks/useAnimationThrottle';
 import { useReducedMotion } from '../hooks/useReducedMotion';
 import { EVENT_TYPE_ICONS } from './icons/EventIcons';
@@ -366,11 +370,62 @@ function JumpToLatestButton({
 }
 
 /**
- * Empty state when no events are available.
+ * Props for the EmptyState component.
  */
-function EmptyState() {
+interface EmptyStateProps {
+  /** Current WebSocket connection status */
+  readonly connectionStatus: ConnectionStatus;
+}
+
+/**
+ * Get context-aware empty state message based on connection status.
+ *
+ * @param connectionStatus - Current WebSocket connection status
+ * @returns Object with primary message and call-to-action text
+ */
+function getEmptyStateMessages(connectionStatus: ConnectionStatus): {
+  readonly primary: string;
+  readonly callToAction: string;
+} {
+  switch (connectionStatus) {
+    case 'connecting':
+      return {
+        primary: 'Connecting to server...',
+        callToAction: 'Events will stream in once connected',
+      };
+    case 'reconnecting':
+      return {
+        primary: 'Reconnecting to server...',
+        callToAction: 'Events will resume once reconnected',
+      };
+    case 'disconnected':
+      return {
+        primary: 'Not connected',
+        callToAction: 'Click Connect to start receiving events',
+      };
+    case 'connected':
+    default:
+      return {
+        primary: 'No events yet',
+        callToAction:
+          'Events will appear here as Claude Code activity is detected',
+      };
+  }
+}
+
+/**
+ * Empty state when no events are available.
+ * Displays context-aware messages based on connection status.
+ */
+function EmptyState({ connectionStatus }: EmptyStateProps) {
+  const { primary, callToAction } = getEmptyStateMessages(connectionStatus);
+
   return (
-    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+    <div
+      className="flex flex-col items-center justify-center h-full text-gray-500"
+      role="status"
+      aria-live="polite"
+    >
       <svg
         className="w-12 h-12 mb-4"
         fill="none"
@@ -385,8 +440,8 @@ function EmptyState() {
           d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
         />
       </svg>
-      <p className="text-sm">No events yet</p>
-      <p className="text-xs mt-1">Events will appear here when received</p>
+      <p className="text-sm font-medium">{primary}</p>
+      <p className="text-xs mt-1 text-center max-w-xs">{callToAction}</p>
     </div>
   );
 }
@@ -415,8 +470,9 @@ function EmptyState() {
  * ```
  */
 export function EventStream({ className = '' }: EventStreamProps) {
-  // Selective subscription: only re-render when filtered events change
+  // Selective subscription: only re-render when filtered events or connection status change
   const events = useEventStore(selectFilteredEvents);
+  const connectionStatus = useEventStore((state) => state.status);
 
   // Animation hooks
   const shouldAnimateThrottle = useAnimationThrottle();
@@ -531,7 +587,7 @@ export function EventStream({ className = '' }: EventStreamProps) {
         aria-label="Event stream"
         aria-live="polite"
       >
-        <EmptyState />
+        <EmptyState connectionStatus={connectionStatus} />
       </div>
     );
   }

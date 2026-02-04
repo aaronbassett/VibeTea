@@ -5,6 +5,7 @@
  * event activity and distribution data in the dashboard.
  */
 
+import type { ConnectionStatus } from '../hooks/useEventStore';
 import type { EventType, VibeteaEvent } from './events';
 
 // -----------------------------------------------------------------------------
@@ -64,6 +65,12 @@ export interface ActivityGraphProps {
    * @param range - The newly selected time range
    */
   readonly onTimeRangeChange?: (range: TimeRange) => void;
+
+  /**
+   * Optional WebSocket connection status for context-aware empty states.
+   * When not provided, defaults to 'connected'.
+   */
+  readonly connectionStatus?: ConnectionStatus;
 }
 
 // -----------------------------------------------------------------------------
@@ -106,4 +113,10 @@ export interface EventDistributionChartProps {
    * Array of VibeTea events to analyze and visualize. Uses readonly for immutability.
    */
   readonly events: readonly VibeteaEvent[];
+
+  /**
+   * Optional WebSocket connection status for context-aware empty states.
+   * When not provided, defaults to 'connected'.
+   */
+  readonly connectionStatus?: ConnectionStatus;
 }

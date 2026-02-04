@@ -432,10 +432,10 @@
 - [x] T240 Create retro/P11.md for this phase
 
 ### Implementation
-- [ ] T241 [GIT] Commit: initialize phase 11 retro
-- [ ] T242 [P] Add skeleton loader components for initial data fetch (FR-016) in client/src/components/ (use devs:react-dev agent)
-- [ ] T243 [P] Add empty state components with call-to-action text (FR-017) in client/src/components/ (use devs:react-dev agent)
-- [ ] T244 [GIT] Commit: add skeleton loaders and empty states
+- [x] T241 [GIT] Commit: initialize phase 11 retro
+- [x] T242 [P] Add skeleton loader components for initial data fetch (FR-016) in client/src/components/ (use devs:react-dev agent)
+- [x] T243 [P] Add empty state components with call-to-action text (FR-017) in client/src/components/ (use devs:react-dev agent)
+- [x] T244 [GIT] Commit: add skeleton loaders and empty states
 - [ ] T245 Add Intersection Observer pause for off-screen animated elements (NFR-005) (use devs:react-dev agent)
 - [ ] T246 [GIT] Commit: add intersection observer pause for off-screen elements
 - [ ] T247 [P] Verify max 10 concurrent animations rule (FR-009) across all components (use devs:react-dev agent)
