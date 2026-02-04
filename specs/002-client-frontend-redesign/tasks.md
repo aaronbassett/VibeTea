@@ -275,8 +275,8 @@
 - [x] T151 [GIT] Commit: add GPU optimization hints (skipped - already in place from Phase 3)
 - [x] T152 [US5] Run /sdd:map incremental for Phase 7 changes (skipped - not critical for MVP)
 - [x] T153 [GIT] Commit: update codebase documents for phase 7 (skipped with T152)
-- [ ] T154 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T155 [GIT] Commit: finalize phase 7 retro
+- [x] T154 [US5] Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative) - no critical learnings extracted
+- [x] T155 [GIT] Commit: finalize phase 7 retro
 
 ### Phase Completion
 - [ ] T156 [GIT] Push branch to origin (ensure pre-push hooks pass)
