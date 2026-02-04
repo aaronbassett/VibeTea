@@ -337,9 +337,9 @@
 **Independent Test**: View graph components with sample data and verify rendering and animation
 
 ### Phase Start
-- [ ] T182 [GIT] Verify working tree is clean before starting Phase 9
-- [ ] T183 [GIT] Pull and rebase on origin/main if needed
-- [ ] T184 [US7] Create retro/P9.md for this phase
+- [x] T182 [GIT] Verify working tree is clean before starting Phase 9
+- [x] T183 [GIT] Pull and rebase on origin/main if needed
+- [x] T184 [US7] Create retro/P9.md for this phase
 
 ### Implementation
 - [ ] T185 [GIT] Commit: initialize phase 9 retro
