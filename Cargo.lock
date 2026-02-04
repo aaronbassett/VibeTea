@@ -2594,6 +2594,7 @@ dependencies = [
  "chrono",
  "ed25519-dalek",
  "futures-util",
+ "rand",
  "reqwest",
  "serde",
  "serde_json",
@@ -2607,6 +2608,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "wiremock",
 ]
 
 [[package]]
