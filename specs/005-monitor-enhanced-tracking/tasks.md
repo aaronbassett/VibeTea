@@ -516,10 +516,10 @@
 - [x] T272D [GIT] Commit: add graceful shutdown handling (already committed in main.rs)
 
 ### Phase Completion
-- [ ] T273 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T274 [GIT] Create/update PR to main with phase summary
-- [ ] T275 [GIT] Verify all CI checks pass
-- [ ] T276 [GIT] Report PR ready status
+- [x] T273 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T274 [GIT] Create/update PR to main with phase summary
+- [x] T275 [GIT] Verify all CI checks pass
+- [x] T276 [GIT] Report PR ready status
 
 ---
 
