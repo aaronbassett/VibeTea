@@ -8,6 +8,8 @@
 //! |----------|----------|---------|-------------|
 //! | `VIBETEA_PUBLIC_KEYS` | Yes* | - | Format: `source1:pubkey1,source2:pubkey2` |
 //! | `VIBETEA_SUBSCRIBER_TOKEN` | Yes* | - | Auth token for Clients |
+//! | `VIBETEA_SUPABASE_URL` | Yes* | - | URL of the Supabase project |
+//! | `VIBETEA_SUPABASE_ANON_KEY` | Yes* | - | Supabase anon/public key for API calls |
 //! | `PORT` | No | 8080 | HTTP server port |
 //! | `VIBETEA_UNSAFE_NO_AUTH` | No | false | Disable all authentication (dev only) |
 //!
@@ -56,6 +58,12 @@ pub struct Config {
 
     /// When true, disables all authentication (development only).
     pub unsafe_no_auth: bool,
+
+    /// URL of the Supabase project (e.g., `https://xxx.supabase.co`).
+    pub supabase_url: Option<String>,
+
+    /// Supabase anon/public key for API calls.
+    pub supabase_anon_key: Option<String>,
 }
 
 impl Config {
@@ -81,12 +89,16 @@ impl Config {
         let port = parse_port()?;
         let public_keys = parse_public_keys()?;
         let subscriber_token = env::var("VIBETEA_SUBSCRIBER_TOKEN").ok();
+        let supabase_url = env::var("VIBETEA_SUPABASE_URL").ok();
+        let supabase_anon_key = env::var("VIBETEA_SUPABASE_ANON_KEY").ok();
 
         let config = Self {
             public_keys,
             subscriber_token,
             port,
             unsafe_no_auth,
+            supabase_url,
+            supabase_anon_key,
         };
 
         config.validate()?;
@@ -103,8 +115,9 @@ impl Config {
 
     /// Validate the configuration.
     ///
-    /// Ensures that either `unsafe_no_auth` is true, or both `public_keys` and
-    /// `subscriber_token` are properly configured.
+    /// Ensures that either `unsafe_no_auth` is true, or all required authentication
+    /// variables (`public_keys`, `subscriber_token`, `supabase_url`, and
+    /// `supabase_anon_key`) are properly configured.
     fn validate(&self) -> Result<(), ConfigError> {
         if self.unsafe_no_auth {
             return Ok(());
@@ -119,6 +132,18 @@ impl Config {
         if self.subscriber_token.is_none() {
             return Err(ConfigError::MissingEnvVar(
                 "VIBETEA_SUBSCRIBER_TOKEN".to_string(),
+            ));
+        }
+
+        if self.supabase_url.is_none() {
+            return Err(ConfigError::MissingEnvVar(
+                "VIBETEA_SUPABASE_URL".to_string(),
+            ));
+        }
+
+        if self.supabase_anon_key.is_none() {
+            return Err(ConfigError::MissingEnvVar(
+                "VIBETEA_SUPABASE_ANON_KEY".to_string(),
             ));
         }
 
@@ -246,12 +271,16 @@ mod tests {
         guard.set("VIBETEA_UNSAFE_NO_AUTH", "true");
         guard.remove("VIBETEA_PUBLIC_KEYS");
         guard.remove("VIBETEA_SUBSCRIBER_TOKEN");
+        guard.remove("VIBETEA_SUPABASE_URL");
+        guard.remove("VIBETEA_SUPABASE_ANON_KEY");
         guard.remove("PORT");
 
         let config = Config::from_env().expect("should parse config");
         assert!(config.unsafe_no_auth);
         assert!(config.public_keys.is_empty());
         assert!(config.subscriber_token.is_none());
+        assert!(config.supabase_url.is_none());
+        assert!(config.supabase_anon_key.is_none());
         assert_eq!(config.port, DEFAULT_PORT);
     }
 
@@ -265,6 +294,8 @@ mod tests {
             "source1:cHVia2V5MQ==,source2:cHVia2V5Mg==",
         );
         guard.set("VIBETEA_SUBSCRIBER_TOKEN", "secret-token");
+        guard.set("VIBETEA_SUPABASE_URL", "https://test.supabase.co");
+        guard.set("VIBETEA_SUPABASE_ANON_KEY", "test-anon-key");
         guard.set("PORT", "9090");
 
         let config = Config::from_env().expect("should parse config");
@@ -279,6 +310,11 @@ mod tests {
             Some(&"cHVia2V5Mg==".to_string())
         );
         assert_eq!(config.subscriber_token, Some("secret-token".to_string()));
+        assert_eq!(
+            config.supabase_url,
+            Some("https://test.supabase.co".to_string())
+        );
+        assert_eq!(config.supabase_anon_key, Some("test-anon-key".to_string()));
         assert_eq!(config.port, 9090);
     }
 
@@ -289,6 +325,8 @@ mod tests {
         guard.remove("VIBETEA_UNSAFE_NO_AUTH");
         guard.remove("VIBETEA_PUBLIC_KEYS");
         guard.set("VIBETEA_SUBSCRIBER_TOKEN", "secret-token");
+        guard.set("VIBETEA_SUPABASE_URL", "https://test.supabase.co");
+        guard.set("VIBETEA_SUPABASE_ANON_KEY", "test-anon-key");
 
         let result = Config::from_env();
         assert!(result.is_err());
@@ -303,6 +341,8 @@ mod tests {
         guard.remove("VIBETEA_UNSAFE_NO_AUTH");
         guard.set("VIBETEA_PUBLIC_KEYS", "source1:pubkey1");
         guard.remove("VIBETEA_SUBSCRIBER_TOKEN");
+        guard.set("VIBETEA_SUPABASE_URL", "https://test.supabase.co");
+        guard.set("VIBETEA_SUPABASE_ANON_KEY", "test-anon-key");
 
         let result = Config::from_env();
         assert!(result.is_err());
@@ -437,5 +477,74 @@ mod tests {
 
         let result = parse_port();
         assert!(result.is_err());
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_missing_supabase_url_without_unsafe_no_auth() {
+        let mut guard = EnvGuard::new();
+        guard.remove("VIBETEA_UNSAFE_NO_AUTH");
+        guard.set("VIBETEA_PUBLIC_KEYS", "source1:pubkey1");
+        guard.set("VIBETEA_SUBSCRIBER_TOKEN", "secret-token");
+        guard.remove("VIBETEA_SUPABASE_URL");
+        guard.set("VIBETEA_SUPABASE_ANON_KEY", "test-anon-key");
+
+        let result = Config::from_env();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, ConfigError::MissingEnvVar(ref v) if v == "VIBETEA_SUPABASE_URL"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_missing_supabase_anon_key_without_unsafe_no_auth() {
+        let mut guard = EnvGuard::new();
+        guard.remove("VIBETEA_UNSAFE_NO_AUTH");
+        guard.set("VIBETEA_PUBLIC_KEYS", "source1:pubkey1");
+        guard.set("VIBETEA_SUBSCRIBER_TOKEN", "secret-token");
+        guard.set("VIBETEA_SUPABASE_URL", "https://test.supabase.co");
+        guard.remove("VIBETEA_SUPABASE_ANON_KEY");
+
+        let result = Config::from_env();
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, ConfigError::MissingEnvVar(ref v) if v == "VIBETEA_SUPABASE_ANON_KEY")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_supabase_vars_optional_with_unsafe_no_auth() {
+        let mut guard = EnvGuard::new();
+        guard.set("VIBETEA_UNSAFE_NO_AUTH", "true");
+        guard.remove("VIBETEA_PUBLIC_KEYS");
+        guard.remove("VIBETEA_SUBSCRIBER_TOKEN");
+        guard.remove("VIBETEA_SUPABASE_URL");
+        guard.remove("VIBETEA_SUPABASE_ANON_KEY");
+
+        let config = Config::from_env().expect("should parse config");
+        assert!(config.unsafe_no_auth);
+        assert!(config.supabase_url.is_none());
+        assert!(config.supabase_anon_key.is_none());
+    }
+
+    #[test]
+    #[serial]
+    fn test_config_supabase_vars_can_be_set_with_unsafe_no_auth() {
+        let mut guard = EnvGuard::new();
+        guard.set("VIBETEA_UNSAFE_NO_AUTH", "true");
+        guard.remove("VIBETEA_PUBLIC_KEYS");
+        guard.remove("VIBETEA_SUBSCRIBER_TOKEN");
+        guard.set("VIBETEA_SUPABASE_URL", "https://test.supabase.co");
+        guard.set("VIBETEA_SUPABASE_ANON_KEY", "test-anon-key");
+
+        let config = Config::from_env().expect("should parse config");
+        assert!(config.unsafe_no_auth);
+        assert_eq!(
+            config.supabase_url,
+            Some("https://test.supabase.co".to_string())
+        );
+        assert_eq!(config.supabase_anon_key, Some("test-anon-key".to_string()));
     }
 }

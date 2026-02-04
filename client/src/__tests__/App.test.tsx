@@ -1,15 +1,33 @@
 /**
- * Tests for App component token handling and render paths.
+ * Tests for App component authentication routing.
  *
  * @vitest-environment happy-dom
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mock Supabase before importing App
+vi.mock('../services/supabase', () => ({
+  supabase: {
+    auth: {
+      getSession: vi
+        .fn()
+        .mockResolvedValue({ data: { session: null }, error: null }),
+      onAuthStateChange: vi.fn().mockReturnValue({
+        data: { subscription: { unsubscribe: vi.fn() } },
+      }),
+      signInWithOAuth: vi.fn().mockResolvedValue({ error: null }),
+      signOut: vi.fn().mockResolvedValue({ error: null }),
+    },
+  },
+  getSession: vi.fn().mockResolvedValue(null),
+}));
 
 import App from '../App';
 import { useEventStore } from '../hooks/useEventStore';
+import { supabase } from '../services/supabase';
 
 // Mock localStorage
 const localStorageMock = (() => {
@@ -86,121 +104,127 @@ beforeEach(() => {
     sessions: new Map(),
     filters: { sessionId: null, timeRange: null },
   });
+  vi.clearAllMocks();
 });
 
-describe('App Token Handling', () => {
-  it('renders token form when no token is stored', () => {
+describe('App Authentication Routing', () => {
+  it('shows loading state initially', () => {
+    // Mock getSession to delay
+    vi.mocked(supabase.auth.getSession).mockImplementation(
+      () => new Promise(() => {}) // Never resolves - keeps loading state
+    );
+
     render(<App />);
 
-    // Should show the ASCII header and token form
-    expect(
-      screen.getByRole('img', { name: /vibetea ascii logo/i })
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/enter your authentication token/i)
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText(/authentication token/i)).toBeInTheDocument();
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
-  it('renders dashboard when token exists', () => {
-    // Set token before rendering
-    localStorage.setItem('vibetea_token', 'test-token-123');
-
-    render(<App />);
-
-    // Should show the dashboard header and main sections
-    expect(screen.getByText('VibeTea Dashboard')).toBeInTheDocument();
-    expect(screen.getByText('Sessions')).toBeInTheDocument();
-    expect(screen.getByText('Event Stream')).toBeInTheDocument();
-  });
-
-  it('transitions from token form to dashboard when token is saved', async () => {
-    render(<App />);
-
-    // Initially shows token form
-    expect(
-      screen.getByText(/enter your authentication token/i)
-    ).toBeInTheDocument();
-
-    // Enter a token
-    const tokenInput = screen.getByLabelText(/authentication token/i);
-    fireEvent.change(tokenInput, { target: { value: 'new-test-token' } });
-
-    // Submit the form
-    const saveButton = screen.getByRole('button', { name: /save token/i });
-    fireEvent.click(saveButton);
-
-    // Wait for transition to dashboard
-    await waitFor(() => {
-      expect(screen.getByText('Sessions')).toBeInTheDocument();
+  it('renders login page when not authenticated', async () => {
+    // Mock no session
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: null },
+      error: null,
     });
 
-    // Token should be in localStorage
-    expect(localStorage.getItem('vibetea_token')).toBe('new-test-token');
-  });
-
-  it('allows updating token from settings', async () => {
-    // Start with a token
-    localStorage.setItem('vibetea_token', 'existing-token');
-
     render(<App />);
 
-    // Should show dashboard with Settings section
-    expect(screen.getByText('Sessions')).toBeInTheDocument();
-    expect(screen.getByText('Settings')).toBeInTheDocument();
-
-    // The token input should be visible in settings
-    const tokenInput = screen.getByLabelText(/authentication token/i);
-    expect(tokenInput).toBeInTheDocument();
-  });
-});
-
-describe('App Connection Status', () => {
-  it('shows connection status indicator', () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-
-    render(<App />);
-
-    // The ConnectionStatus component should show some status
-    // It shows "Connecting" initially due to our mock WebSocket
-    const statusElement = screen.getByRole('status', {
-      name: /connection status/i,
-    });
-    expect(statusElement).toBeInTheDocument();
-  });
-
-  it('initiates connection when token is available', async () => {
-    localStorage.setItem('vibetea_token', 'test-token');
-
-    render(<App />);
-
-    // Wait for async connection attempt
     await waitFor(() => {
-      const state = useEventStore.getState();
-      // Status should transition from 'disconnected'
-      // With our mock WebSocket, it will go to 'connecting' then 'connected'
-      expect(['connecting', 'connected', 'disconnected']).toContain(
-        state.status
-      );
+      expect(
+        screen.getByRole('button', { name: /sign in with github/i })
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('renders dashboard when authenticated', async () => {
+    // Mock authenticated session with all required fields
+    const mockUser = {
+      id: 'test-user-id',
+      email: 'test@example.com',
+      user_metadata: {
+        full_name: 'Test User',
+        avatar_url: 'https://example.com/avatar.jpg',
+      },
+    } as unknown;
+
+    const mockSession = {
+      user: mockUser,
+      access_token: 'test-access-token',
+      refresh_token: 'test-refresh-token',
+      expires_in: 3600,
+      token_type: 'bearer',
+    } as unknown;
+
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: mockSession },
+      error: null,
+    } as never);
+
+    // Also need to mock onAuthStateChange to emit the session
+    vi.mocked(supabase.auth.onAuthStateChange).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (callback: any) => {
+        // Immediately call with the session
+        setTimeout(() => callback('SIGNED_IN', mockSession), 0);
+        return {
+          data: {
+            subscription: { id: '1', callback, unsubscribe: vi.fn() },
+          },
+        };
+      }
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText('VibeTea Dashboard')).toBeInTheDocument();
+    });
+  });
+
+  it('shows sign out button when authenticated', async () => {
+    const mockUser = {
+      id: 'test-user-id',
+      email: 'test@example.com',
+      user_metadata: { full_name: 'Test User' },
+    } as unknown;
+
+    const mockSession = {
+      user: mockUser,
+      access_token: 'test-access-token',
+      refresh_token: 'test-refresh-token',
+      expires_in: 3600,
+      token_type: 'bearer',
+    } as unknown;
+
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: mockSession },
+      error: null,
+    } as never);
+
+    vi.mocked(supabase.auth.onAuthStateChange).mockImplementation(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (callback: any) => {
+        setTimeout(() => callback('SIGNED_IN', mockSession), 0);
+        return {
+          data: {
+            subscription: { id: '1', callback, unsubscribe: vi.fn() },
+          },
+        };
+      }
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: /sign out/i })
+      ).toBeInTheDocument();
     });
   });
 });
 
 describe('App Filter Integration', () => {
-  beforeEach(() => {
-    localStorage.setItem('vibetea_token', 'test-token');
-  });
-
-  it('does not show clear all when no filters are active', () => {
-    render(<App />);
-
-    // By default, no filters are active
-    expect(screen.queryByText(/clear all/i)).not.toBeInTheDocument();
-  });
-
   it('filter state can be updated via store actions', () => {
     // Test store actions directly without rendering component
-    // This avoids React re-render loops with the hasActiveFilters selector
     const { setSessionFilter, setTimeRangeFilter, clearFilters } =
       useEventStore.getState();
 

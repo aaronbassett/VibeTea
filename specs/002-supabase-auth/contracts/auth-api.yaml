@@ -1,0 +1,307 @@
+openapi: 3.0.3
+info:
+  title: VibeTea Authentication API
+  description: Authentication endpoints for VibeTea server
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://vibetea.fly.dev
+    description: Production
+
+paths:
+  /auth/session:
+    post:
+      summary: Exchange Supabase JWT for session token
+      description: |
+        Validates the Supabase JWT by calling Supabase's /auth/v1/user endpoint,
+        then generates a short-lived session token for WebSocket authentication.
+      operationId: createSession
+      tags:
+        - Authentication
+      security:
+        - supabaseJWT: []
+      responses:
+        '200':
+          description: Session token created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionTokenResponse'
+              example:
+                session_token: "vGhTy8kL2mN4pQ6rS0tU1wX3yZ5aB7cD9eF1gH3iJ5k"
+                expires_in: 300
+        '401':
+          description: Invalid or expired JWT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_jwt:
+                  summary: Invalid JWT
+                  value:
+                    error:
+                      code: "INVALID_TOKEN"
+                      message: "The provided JWT is invalid or expired"
+                missing_auth:
+                  summary: Missing Authorization header
+                  value:
+                    error:
+                      code: "MISSING_AUTH"
+                      message: "Authorization header is required"
+        '503':
+          description: Supabase service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "SERVICE_UNAVAILABLE"
+                  message: "Authentication service temporarily unavailable"
+
+  /ws:
+    get:
+      summary: WebSocket connection with session token
+      description: |
+        Establishes a WebSocket connection for receiving events.
+        Requires a valid session token obtained from POST /auth/session.
+        Token can be passed as query parameter or in Authorization header.
+      operationId: websocketConnect
+      tags:
+        - WebSocket
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: Session token (alternative to Authorization header)
+          schema:
+            type: string
+            minLength: 43
+            maxLength: 43
+        - name: source
+          in: query
+          required: false
+          description: Filter events by source ID
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          description: Filter events by event type
+          schema:
+            type: string
+            enum: [session, activity, tool, agent, summary, error]
+        - name: project
+          in: query
+          required: false
+          description: Filter events by project name
+          schema:
+            type: string
+      responses:
+        '101':
+          description: WebSocket upgrade successful
+        '401':
+          description: Invalid or expired session token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalid_token:
+                  summary: Invalid session token
+                  value:
+                    error:
+                      code: "INVALID_SESSION"
+                      message: "Session token is invalid or expired"
+                missing_token:
+                  summary: Missing token
+                  value:
+                    error:
+                      code: "MISSING_TOKEN"
+                      message: "Session token is required"
+
+  /events:
+    post:
+      summary: Submit events from monitor
+      description: |
+        Receives events from monitors. Requires Ed25519 signature
+        verified against registered public keys.
+      operationId: submitEvents
+      tags:
+        - Events
+      parameters:
+        - name: X-Source-ID
+          in: header
+          required: true
+          description: Monitor source identifier
+          schema:
+            type: string
+            minLength: 1
+        - name: X-Signature
+          in: header
+          required: true
+          description: Base64-encoded Ed25519 signature of request body
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Event'
+      responses:
+        '202':
+          description: Event accepted
+        '401':
+          description: Signature verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                unknown_source:
+                  summary: Unknown source ID
+                  value:
+                    error:
+                      code: "UNKNOWN_SOURCE"
+                      message: "Source ID not registered"
+                invalid_signature:
+                  summary: Invalid signature
+                  value:
+                    error:
+                      code: "INVALID_SIGNATURE"
+                      message: "Signature verification failed"
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: "RATE_LIMITED"
+                  message: "Rate limit exceeded, retry after 10 seconds"
+
+  /health:
+    get:
+      summary: Health check endpoint
+      operationId: healthCheck
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  securitySchemes:
+    supabaseJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase access token from GitHub OAuth
+
+    sessionToken:
+      type: apiKey
+      in: query
+      name: token
+      description: Session token from POST /auth/session
+
+  schemas:
+    SessionTokenResponse:
+      type: object
+      required:
+        - session_token
+        - expires_in
+      properties:
+        session_token:
+          type: string
+          description: Base64-URL encoded session token (43 characters)
+          minLength: 43
+          maxLength: 43
+          example: "vGhTy8kL2mN4pQ6rS0tU1wX3yZ5aB7cD9eF1gH3iJ5k"
+        expires_in:
+          type: integer
+          description: Seconds until token expires
+          example: 300
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              example: "INVALID_TOKEN"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "The provided token is invalid or expired"
+
+    Event:
+      type: object
+      required:
+        - id
+        - source
+        - timestamp
+        - type
+        - payload
+      properties:
+        id:
+          type: string
+          description: Event ID (evt_ prefix + 20 alphanumeric chars)
+          pattern: "^evt_[a-z0-9]{20}$"
+        source:
+          type: string
+          description: Source monitor identifier
+        timestamp:
+          type: string
+          format: date-time
+          description: RFC 3339 timestamp
+        type:
+          type: string
+          enum: [session, activity, tool, agent, summary, error]
+        payload:
+          type: object
+          description: Event-type-specific payload
+
+    HealthResponse:
+      type: object
+      required:
+        - status
+        - uptime_secs
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        uptime_secs:
+          type: integer
+          description: Server uptime in seconds
+
+tags:
+  - name: Authentication
+    description: Session token management
+  - name: WebSocket
+    description: Real-time event subscription
+  - name: Events
+    description: Event ingestion from monitors
+  - name: Health
+    description: Server health monitoring

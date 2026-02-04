@@ -38,6 +38,8 @@ fn unsafe_config() -> Config {
         subscriber_token: None,
         port: 0, // Will be overridden when binding
         unsafe_no_auth: true,
+        supabase_url: None,
+        supabase_anon_key: None,
     }
 }
 

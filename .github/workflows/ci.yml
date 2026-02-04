@@ -89,6 +89,10 @@ jobs:
 
       - name: Build
         run: pnpm build
+        env:
+          # Placeholder values for Lighthouse CI (app shows login page)
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder-anon-key
 
       - name: Check bundle size
         run: |

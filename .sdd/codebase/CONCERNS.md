@@ -2,7 +2,7 @@
 
 > **Purpose**: Document technical debt, known risks, bugs, fragile areas, and improvement opportunities.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-04
+> **Last Updated**: 2026-02-04 (Phase 3: Client OAuth flow)
 
 ## Security Concerns
 
@@ -13,6 +13,8 @@
 | SEC-001 | WebSocket authentication | Single static token for all clients allows no per-client revocation or auditing | High | Plan token rotation mechanism or client certificates | Open |
 | SEC-002 | Token management | Subscriber token hardcoded in environment variable with no expiration or rotation | High | Implement periodic token rotation and audit logging | Open |
 | SEC-003 | CORS policy | All origins allowed, no CORS validation in place | Medium | Add configurable CORS origin whitelist | Open |
+| SEC-013 | Session capacity (Phase 2+3) | In-memory session store limited to 10,000 concurrent sessions; exceeding raises HTTP 503 | Medium | Monitor capacity; consider persistent session storage for Phase 3+ | Open |
+| SEC-016 | OAuth callback security (Phase 3) | Supabase handles OAuth redirects; assumes Supabase security and HTTPS | Medium | Verify Supabase OAuth configuration; use secure redirect URI | Open |
 
 ### Medium Priority
 
@@ -27,17 +29,43 @@
 | SEC-010 | Composite action error handling | Action warns on network failure but continues workflow; potential silent monitoring failures | Medium | Document in README; monitor logs for warnings; consider explicit failure modes | Mitigated (Phase 6) |
 | SEC-011 | Key backup operation atomicity (Phase 9) | Private key backed up successfully but public key rename fails leaves orphaned backup | Medium | Best-effort restore implemented; consider explicit rollback transaction | Open |
 | SEC-012 | Key option display logic (Phase 9) | Conditional rendering based on `existing_keys_found` may allow invalid state if flag not properly set | Low | State machine should enforce invariant; current approach adequate | Mitigated |
+| SEC-014 | Supabase outage (Phase 2+3) | JWT validation via remote endpoint; if Supabase is down, authentication fails | High | Implement public key caching with 30-second refresh; fallback to cached keys | Mitigated |
+| SEC-015 | Session token timing attack (Phase 2+3) | Session tokens compared as strings (not constant-time) during validation | Low | Token comparison is via HashMap lookup (not user-controlled); low risk | Low risk |
+| SEC-017 | Client session storage (Phase 3) | GitHub user session stored in browser localStorage by Supabase SDK | Low | Consider HTTPS-only localStorage; verify Supabase SDK security | Open |
+| SEC-018 | Env var validation (Phase 3) | Client requires VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY; missing vars cause startup error | Low | Clear error message provided; validate both vars present | Mitigated |
+| SEC-019 | OAuth state parameter (Phase 3) | Supabase SDK handles OAuth state; verify CSRF protection is implemented | Low | Trust Supabase implementation; Supabase widely used for OAuth | Mitigated |
 
-## Security Improvements (Phase 3-9)
+## Security Improvements (Phase 1-9)
 
-### Phase 3 Features
+### Phase 1 Features (baseline)
+
+Foundation for signature-based authentication and WebSocket security.
+
+### Phase 2 Features (Supabase Authentication)
 
 | ID | Feature | Implementation | Status | Location |
 |----|---------|-----------------|--------|----------|
-| FR-019 | Never log private key value | Private key seed never converted to string for logging | Implemented | `monitor/src/crypto.rs` - no logging of sensitive values |
-| FR-020 | Memory zeroing for key material | Zeroize crate wipes intermediate buffers after SigningKey construction | Implemented | `monitor/src/crypto.rs:120,173,235,289` |
-| FR-021 | Standard Base64 RFC 4648 | All key encoding uses standard (not URL-safe) base64 | Implemented | `monitor/src/crypto.rs:152,216` uses `BASE64_STANDARD` |
-| FR-022 | Validate key material is exactly 32 bytes | Strict validation on load/decode, clear error messages | Implemented | `monitor/src/crypto.rs:161-168,219-226,276-283` |
+| FR-018 | Supabase JWT validation | Remote validation via `/auth/v1/user` endpoint | Implemented | `server/src/supabase.rs:244-318` |
+| FR-019 | Session token generation | 32-byte random, base64-url encoded (43 chars) | Implemented | `server/src/session.rs:564-568` |
+| FR-020 | Session TTL enforcement | 5-minute default with optional grace period | Implemented | `server/src/session.rs:50-54` |
+| FR-021 | Session capacity limits | 10,000 concurrent sessions with HTTP 503 on exceed | Implemented | `server/src/session.rs:57,268-277` |
+| FR-022 | One-time TTL extension | WebSocket TTL extends once for 30 seconds | Implemented | `server/src/session.rs:166-176` |
+| FR-023 | Public key refresh | 30-second cache refresh with exponential backoff | Implemented | `server/src/supabase.rs:410-452` |
+| FR-024 | Session store cleanup | Lazy cleanup on access + batch cleanup via API | Implemented | `server/src/session.rs:514-531` |
+| FR-025 | Privacy compliance | No tokens logged at any level; verified via tests | Implemented | `server/tests/auth_privacy_test.rs` |
+
+### Phase 3 Features (Client OAuth)
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-026 | GitHub OAuth provider | Supabase OAuth with GitHub provider | Implemented | `client/src/hooks/useAuth.ts` |
+| FR-027 | OAuth sign-in | `signInWithOAuth({ provider: 'github' })` method | Implemented | `client/src/hooks/useAuth.ts:125-137` |
+| FR-028 | Auth state listener | Subscribe to Supabase auth state changes | Implemented | `client/src/hooks/useAuth.ts:100-106` |
+| FR-029 | Session persistence | Browser localStorage via Supabase SDK | Implemented | `client/src/hooks/useAuth.ts` |
+| FR-030 | Login page UI | GitHub sign-in button with OAuth flow | Implemented | `client/src/pages/Login.tsx` |
+| FR-031 | Sign-out flow | Clear session and local state | Implemented | `client/src/hooks/useAuth.ts:144-158` |
+| FR-032 | useAuth hook | Centralized auth state management | Implemented | `client/src/hooks/useAuth.ts` |
+| FR-033 | Loading states | Show auth check status and sign-in progress | Implemented | `client/src/hooks/useAuth.ts:73`, `Login.tsx:98-123` |
 
 ### Phase 4 Features
 
@@ -84,6 +112,9 @@
 | TD-001 | Cleanup task | Rate limiter cleanup task in main.rs never terminates; cleanup_handle is dropped without cancellation | Cleanup runs until server shutdown | Low | Open |
 | TD-002 | Error handling | Some auth errors (InvalidPublicKey) could reveal server configuration details in logs | Debugging difficulty | Low | Open |
 | TD-011 | Key backup filesystem (Phase 9) | Backup operation not atomic at filesystem level; private key rename succeeds but public key fails | Data inconsistency risk | Medium | Open |
+| TD-014 | Session error details (Phase 2+3) | SessionError variants don't distinguish between "not found" and "expired" for debugging | Reduced observability | Low | Open |
+| TD-015 | Supabase client retry logging (Phase 2+3) | Backoff delays logged but actual retry intervals not visible for debugging | Operational difficulty | Low | Open |
+| TD-019 | Client error handling (Phase 3) | useAuth hook swallows errors in try-catch; errors not reported beyond console.error | Reduced observability | Low | Open |
 
 ### Medium Priority
 
@@ -95,6 +126,9 @@
 | TD-008 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
 | TD-009 | Composite action cleanup | Post-job cleanup requires manual SIGTERM step; no automatic cleanup mechanism | Potential zombie processes | Medium | Open |
 | TD-012 | Key option logic (Phase 9) | Complex conditional rendering based on `existing_keys_found` flag; hard to reason about state | Maintenance burden | Low | Open |
+| TD-016 | Session store persistence (Phase 2+3) | In-memory HashMap means all sessions lost on restart; no recovery mechanism | Service degradation on restart | High | Open |
+| TD-017 | Supabase response caching (Phase 2+3) | Public key response cached in local HashMap; stale keys persist until refresh interval | Delayed key rotation | Medium | Open |
+| TD-020 | Supabase env config (Phase 3) | Client throws on missing VITE_SUPABASE_* vars at module load time instead of runtime | Poor error messages | Low | Open |
 
 ### Low Priority
 
@@ -103,6 +137,7 @@
 | TD-006 | Documentation | VIBETEA_PRIVATE_KEY environment variable now documented in SECURITY.md | Developer confusion | Low | Resolved |
 | TD-007 | Error response codes | Health endpoint always returns 200 even during degradation; no status codes for partial failure | Monitoring complexity | Low | Open |
 | TD-013 | Key backup duplication (Phase 9) | `load_with_fallback()` duplicates env var decoding logic | Code duplication | Low | Open |
+| TD-018 | SessionStore RwLock contention (Phase 2+3) | All session operations serialize on single RwLock; could be bottleneck under high concurrency | Reduced throughput | Medium | Open |
 
 ## Known Bugs
 
@@ -111,6 +146,8 @@
 | BUG-001 | EnvGuard in tests modifies global env var state; tests must use `#[serial]` to avoid race conditions | Use `#[serial]` decorator on all env-var-touching tests | Medium | Mitigated in code |
 | BUG-002 | WebSocket client lagging causes skipped events (lagged count logged but events discarded) | No workaround; clients must reconnect to resume from current position | Medium | Documented in trace log |
 | BUG-003 | Export-key command integration tests expected to FAIL (implementation pending) | Implement CLI subcommand per `key_export_test.rs` spec | Medium | Pending (Phase 4) |
+| BUG-004 | Session store test parallelism (Phase 2+3) | Tests pass but cleanup timing could race under parallel execution | Use single-threaded test runner | Low | Mitigated via test setup |
+| BUG-005 | useAuth hook error swallowing (Phase 3) | Error thrown during signInWithGitHub is logged but not propagated to caller | Add error callback or error state | Medium | Open |
 
 ## Fragile Areas
 
@@ -127,6 +164,12 @@
 | `monitor/src/main.rs` | New export-key logic handles private key material and must not log it | Verify stdout purity in tests; all key writes are stderr only |
 | `.github/workflows/ci-with-monitor.yml` | Workflow manages private key and process; signal handling is critical | Test with dry-run first; ensure SIGTERM properly terminates and flushes |
 | `.github/actions/vibetea-monitor/action.yml` | Composite action manages binary download and monitor process lifecycle | Ensure secret masking works; test with actual GitHub Actions runner |
+| `server/src/session.rs` (Phase 2+3) | Session store with RwLock and TTL; concurrent access requires careful testing | Test concurrent operations; verify TTL enforcement; test cleanup logic |
+| `server/src/supabase.rs` (Phase 2+3) | Supabase client with network I/O and retry logic; mock server tests critical | Test all error paths; verify retry backoff; test timeout handling |
+| `server/tests/auth_privacy_test.rs` (Phase 2+3) | Privacy tests verify no token leakage; custom tracing subscriber infrastructure | Keep test coverage comprehensive; verify at TRACE level; test all code paths |
+| `client/src/hooks/useAuth.ts` (Phase 3) | Central auth hook; subscription cleanup and state management critical | Test subscription cleanup on unmount; verify auth state listener triggered properly |
+| `client/src/pages/Login.tsx` (Phase 3) | OAuth flow initiation; error handling and loading states visible to user | Test error scenarios; verify error messages clear and helpful |
+| `client/src/services/supabase.ts` (Phase 3) | Supabase client initialization; missing env vars cause startup error | Verify error thrown if env vars missing; clear error message shown |
 
 ## Deprecated Code
 
@@ -140,6 +183,8 @@
 |----------|------|----------|--------|
 | `monitor/tests/privacy_test.rs:319` | TODO regex in test assertion for security match | Medium | Open |
 | `monitor/tests/key_export_test.rs:29` | Implement `export-key` CLI subcommand | High | In progress (Phase 4) |
+| `server/src/supabase.rs` | TODO: Implement public key caching strategy for offline resilience (Phase 3) | High | Planned |
+| `server/src/session.rs` | TODO: Add metrics/observability for session store utilization (Phase 3) | Medium | Planned |
 
 ## Dependency Concerns
 
@@ -152,6 +197,10 @@
 | `base64` | Decoding; generally stable but validate error handling | No immediate action needed | Resolved |
 | `zeroize` | Critical for memory safety; wipes sensitive key material | Monitor for updates and best practices | Open |
 | `chrono` | Used for backup timestamp generation (Phase 9) | Monitor for updates; generally stable | Open |
+| `reqwest` (Phase 2+3) | HTTP client for Supabase API calls; network-facing | Monitor for security updates; use latest minor version | Open |
+| `rand` (Phase 2+3) | Random number generation for session tokens; critical for security | Keep updated; use cryptographically secure RNG only | Open |
+| `@supabase/supabase-js` (Phase 3) | Client SDK for OAuth and auth state; widely used but monitor for issues | Keep updated; follow Supabase security advisories | Open |
+| `framer-motion` (Phase 3) | Animation library; not security-critical but validate for vulnerabilities | Monitor for updates; low risk | Open |
 
 ## Performance Concerns
 
@@ -163,6 +212,9 @@
 | PERF-004 | GitHub Actions binary download | Release binary download on every workflow run | Network overhead | Consider caching binary or building from source |
 | PERF-005 | Composite action overhead | Action adds step overhead for binary download and validation | Minimal workflow slowdown | Overhead is ~5-10 seconds per workflow; acceptable for CI |
 | PERF-006 | Filesystem operations (Phase 9) | Key backup involves multiple rename calls; may impact startup time | Brief UI lag on setup | Acceptable: one-time operation; run on dedicated thread if needed |
+| PERF-007 | Session store RwLock (Phase 2+3) | All session operations serialize on single RwLock; could be bottleneck | Reduced throughput under load | Consider sharding or concurrent data structure if needed |
+| PERF-008 | Supabase retry delays (Phase 2+3) | Exponential backoff could delay server startup by up to 10s | Startup latency | Acceptable for reliability; monitor in production |
+| PERF-009 | Client bundle size (Phase 3) | Supabase SDK and Framer Motion add to bundle; ~150KB before tree-shake | Load time impact | Monitor bundle size; consider lazy loading if needed |
 
 ## Monitoring Gaps
 
@@ -176,6 +228,9 @@
 | GitHub Actions monitor | No metrics on monitor process uptime/failures in CI | Can't detect if monitoring silently fails | Consider structured logging to Actions output |
 | Composite action usage | No telemetry on adoption or failure rates | Can't track action usage patterns | Could add optional telemetry to action |
 | Key backup operations (Phase 9) | No metrics on successful/failed backups | Can't detect if key rotation is working | Consider adding structured logging |
+| Session store utilization (Phase 2+3) | No metrics on active sessions, TTL distribution, cleanup frequency | Can't detect capacity issues in advance | Consider adding Prometheus metrics |
+| Supabase client health (Phase 2+3) | No metrics on JWT validation latency, retry frequency, cache hit rate | Can't diagnose auth performance issues | Consider adding histograms for request latency |
+| Client auth flow (Phase 3) | No metrics on OAuth success rate, session establishment time | Can't detect OAuth failures in production | Consider adding basic client-side telemetry |
 
 ## Improvement Opportunities
 
@@ -191,6 +246,10 @@
 | GitHub Actions integration | Manual secret setup | Documentation or automated secret creation script | Easier onboarding for CI/CD |
 | Composite action | Basic functionality | Advanced features (log output, retry logic) | Better debugging and resilience |
 | Key backup atomicity (Phase 9) | Best-effort restore | Transactional backup with rollback | Guarantee consistency |
+| Session persistence (Phase 2+3) | In-memory only | Optional Redis/database backend | Survive server restarts |
+| Public key refresh (Phase 2+3) | 30-second refresh interval | Configurable interval with monitoring | Better balance of freshness vs load |
+| Client auth error reporting (Phase 3) | Console.error only | Error callback or error state in hook | Better user experience on auth failure |
+| OAuth redirect security (Phase 3) | Trust Supabase defaults | Explicit redirect URI validation | Prevent open redirect issues |
 
 ## Security Debt Items
 
@@ -204,6 +263,10 @@
 | DEBT-006 | GitHub Actions secret usage | Monitor process has access to private key; potential logging risk | Implement log filtering to never output env vars | Phase 5 risk |
 | DEBT-007 | Composite action versioning | Action pinned to @main; no semantic versioning | Implement version tags and GitHub releases | Phase 6 opportunity |
 | DEBT-008 | Key backup retention (Phase 9) | No automatic cleanup of old backup files | Implement retention policy (e.g., keep last N backups) | Open |
+| DEBT-009 | Session token rotation (Phase 2+3) | Session tokens generated once, never rotated | Implement periodic token refresh on request | Phase 3 improvement |
+| DEBT-010 | Public key distribution (Phase 2+3) | Keys distributed via Supabase edge function; no signature verification | Implement signed public key responses | Phase 3 improvement |
+| DEBT-011 | Client OAuth state validation (Phase 3) | OAuth state parameter handled by Supabase; trust their implementation | Document Supabase OAuth security assumptions | Phase 3 open item |
+| DEBT-012 | GitHub user data scope (Phase 3) | OAuth requests default GitHub user scope; could request additional data | Document current scope; review for privacy | Phase 3 open item |
 
 ## Potential Attack Vectors
 
@@ -226,6 +289,15 @@
 | Man-in-the-middle on binary download | Binary download from GitHub releases via HTTP curl | Mitigated by HTTPS (curl -fsSL) |
 | Key backup file leakage | Backup files have same permissions as originals (0600) | Mitigated by file permissions |
 | Backup restore collision | Backup timestamp could theoretically collide if gen twice per second | Mitigated by timestamp format; highly unlikely |
+| Session token guessing (Phase 2+3) | Tokens are 32 bytes of cryptographically random data | Very low probability; 256-bit entropy |
+| JWT token forgery (Phase 2+3) | JWTs validated remotely via Supabase; server never validates signature locally | Relies on Supabase security |
+| Supabase service compromise (Phase 2+3) | If Supabase is compromised, JWTs could be forged | Mitigation: public key caching as fallback (Phase 3 improvement) |
+| Session table enumeration (Phase 2+3) | Session tokens are opaque; no sequential IDs or patterns | Tokens are cryptographically random; enumeration infeasible |
+| Session fixation (Phase 2+3) | Client requests session, server generates random token | Client cannot choose token; session fixation not possible |
+| OAuth callback hijacking (Phase 3) | Supabase OAuth handles redirects; assumes HTTPS and proper redirect URI | Verify Supabase OAuth configuration; monitor for redirect issues |
+| GitHub token leakage in logs (Phase 3) | Supabase SDK manages GitHub tokens; never exposed to client app | Trust Supabase implementation; verify no logging of auth tokens |
+| Browser localStorage compromise (Phase 3) | Session stored in browser localStorage; vulnerable to XSS | Implement CSP; sanitize all user input; avoid dynamic innerHTML |
+| Session hijacking via storage (Phase 3) | If attacker gains localStorage access, can hijack session | HTTPS-only enforced; SameSite cookie attributes managed by Supabase |
 
 ---
 
@@ -240,4 +312,4 @@
 
 ---
 
-*This document tracks what needs attention. Update when concerns are resolved or discovered.*
+*This document tracks what needs attention. Update when concerns are resolved or discovered. Last updated with Phase 3 client OAuth integration analysis.*

@@ -1,0 +1,100 @@
+openapi: 3.0.3
+info:
+  title: VibeTea Public Keys Edge Function
+  description: Supabase edge function for serving monitor public keys
+  version: 1.0.0
+
+servers:
+  - url: https://YOUR_PROJECT.supabase.co/functions/v1
+    description: Supabase Edge Functions
+
+paths:
+  /public-keys:
+    get:
+      summary: Get active monitor public keys
+      description: |
+        Returns all active monitor public keys from the Supabase database.
+        This endpoint is public (no authentication required).
+        Called by VibeTea server every 30 seconds to refresh the key cache.
+      operationId: getPublicKeys
+      tags:
+        - Public Keys
+      responses:
+        '200':
+          description: List of active public keys
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicKeysResponse'
+              example:
+                keys:
+                  - source_id: "macbook-pro"
+                    public_key: "dGVzdHB1YmxpY2tleWJhc2U2NGVuY29kZWQ="
+                  - source_id: "github-runner-1"
+                    public_key: "YW5vdGhlcnB1YmxpY2tleWJhc2U2NA=="
+        '500':
+          description: Database error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Failed to fetch public keys"
+
+    options:
+      summary: CORS preflight
+      description: Handles CORS preflight requests
+      responses:
+        '200':
+          description: CORS headers returned
+          headers:
+            Access-Control-Allow-Origin:
+              schema:
+                type: string
+                example: "*"
+            Access-Control-Allow-Headers:
+              schema:
+                type: string
+                example: "authorization, x-client-info, apikey, content-type"
+
+components:
+  schemas:
+    PublicKeysResponse:
+      type: object
+      required:
+        - keys
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublicKey'
+
+    PublicKey:
+      type: object
+      required:
+        - source_id
+        - public_key
+      properties:
+        source_id:
+          type: string
+          description: Monitor source identifier
+          example: "macbook-pro"
+        public_key:
+          type: string
+          description: Base64-encoded Ed25519 public key (32 bytes -> 44 chars with padding)
+          pattern: "^[A-Za-z0-9+/]{43}=$"
+          example: "dGVzdHB1YmxpY2tleWJhc2U2NGVuY29kZWQ="
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: Error message
+          example: "Failed to fetch public keys"
+
+tags:
+  - name: Public Keys
+    description: Monitor public key management
