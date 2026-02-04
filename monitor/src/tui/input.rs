@@ -1041,7 +1041,10 @@ mod tests {
         assert_eq!(DashboardAction::ScrollUp, DashboardAction::ScrollUp);
         assert_eq!(DashboardAction::Quit, DashboardAction::Quit);
         assert_ne!(DashboardAction::ScrollUp, DashboardAction::ScrollDown);
-        assert_ne!(DashboardAction::ScrollToTop, DashboardAction::ScrollToBottom);
+        assert_ne!(
+            DashboardAction::ScrollToTop,
+            DashboardAction::ScrollToBottom
+        );
     }
 
     #[test]

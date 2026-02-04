@@ -47,7 +47,9 @@ use ratatui::{
     widgets::Widget,
 };
 
-use crate::tui::app::{DisplayEvent, DisplayEventType, EventBuffer, Symbols, Theme, UNICODE_SYMBOLS};
+use crate::tui::app::{
+    DisplayEvent, DisplayEventType, EventBuffer, Symbols, Theme, UNICODE_SYMBOLS,
+};
 
 /// Widget for rendering the event stream.
 ///
@@ -316,7 +318,9 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::app::{DisplayEvent, DisplayEventType, EventBuffer, Symbols, Theme, ASCII_SYMBOLS, UNICODE_SYMBOLS};
+    use crate::tui::app::{
+        DisplayEvent, DisplayEventType, EventBuffer, Symbols, Theme, ASCII_SYMBOLS, UNICODE_SYMBOLS,
+    };
 
     /// Helper to create a test event.
     fn test_event(id: &str, event_type: DisplayEventType, message: &str) -> DisplayEvent {
@@ -387,8 +391,16 @@ mod tests {
     #[test]
     fn event_stream_widget_renders_events() {
         let mut buffer = EventBuffer::new(100);
-        buffer.push(test_event("evt_1", DisplayEventType::Session, "Session started"));
-        buffer.push(test_event("evt_2", DisplayEventType::Tool, "Read file: main.rs"));
+        buffer.push(test_event(
+            "evt_1",
+            DisplayEventType::Session,
+            "Session started",
+        ));
+        buffer.push(test_event(
+            "evt_2",
+            DisplayEventType::Tool,
+            "Read file: main.rs",
+        ));
 
         let theme = Theme::default();
         let symbols = Symbols::detect();
@@ -410,10 +422,7 @@ mod tests {
             content.contains("Session started"),
             "Should render session event"
         );
-        assert!(
-            content.contains("Read file"),
-            "Should render tool event"
-        );
+        assert!(content.contains("Read file"), "Should render tool event");
     }
 
     #[test]
@@ -481,10 +490,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
             .collect();
-        assert!(
-            content.contains("[T]"),
-            "Should render ASCII tool icon"
-        );
+        assert!(content.contains("[T]"), "Should render ASCII tool icon");
     }
 
     #[test]
@@ -520,7 +526,11 @@ mod tests {
     fn event_stream_widget_visible_range_with_scroll() {
         let mut buffer = EventBuffer::new(100);
         for i in 0..50 {
-            buffer.push(test_event(&format!("evt_{}", i), DisplayEventType::Session, &format!("Event {}", i)));
+            buffer.push(test_event(
+                &format!("evt_{}", i),
+                DisplayEventType::Session,
+                &format!("Event {}", i),
+            ));
         }
 
         let theme = Theme::default();
@@ -539,7 +549,11 @@ mod tests {
     fn event_stream_widget_visible_range_at_bottom() {
         let mut buffer = EventBuffer::new(100);
         for i in 0..50 {
-            buffer.push(test_event(&format!("evt_{}", i), DisplayEventType::Session, &format!("Event {}", i)));
+            buffer.push(test_event(
+                &format!("evt_{}", i),
+                DisplayEventType::Session,
+                &format!("Event {}", i),
+            ));
         }
 
         let theme = Theme::default();
@@ -562,12 +576,30 @@ mod tests {
 
         let widget = EventStreamWidget::new(&buffer, &theme, &symbols, 0, 20);
 
-        assert_eq!(widget.event_type_style(DisplayEventType::Session), theme.event_type_session);
-        assert_eq!(widget.event_type_style(DisplayEventType::Activity), theme.event_type_activity);
-        assert_eq!(widget.event_type_style(DisplayEventType::Tool), theme.event_type_tool);
-        assert_eq!(widget.event_type_style(DisplayEventType::Agent), theme.event_type_agent);
-        assert_eq!(widget.event_type_style(DisplayEventType::Summary), theme.event_type_summary);
-        assert_eq!(widget.event_type_style(DisplayEventType::Error), theme.event_type_error);
+        assert_eq!(
+            widget.event_type_style(DisplayEventType::Session),
+            theme.event_type_session
+        );
+        assert_eq!(
+            widget.event_type_style(DisplayEventType::Activity),
+            theme.event_type_activity
+        );
+        assert_eq!(
+            widget.event_type_style(DisplayEventType::Tool),
+            theme.event_type_tool
+        );
+        assert_eq!(
+            widget.event_type_style(DisplayEventType::Agent),
+            theme.event_type_agent
+        );
+        assert_eq!(
+            widget.event_type_style(DisplayEventType::Summary),
+            theme.event_type_summary
+        );
+        assert_eq!(
+            widget.event_type_style(DisplayEventType::Error),
+            theme.event_type_error
+        );
     }
 
     #[test]
@@ -632,11 +664,23 @@ mod tests {
     #[test]
     fn event_stream_widget_renders_all_event_types() {
         let mut buffer = EventBuffer::new(100);
-        buffer.push(test_event("evt_1", DisplayEventType::Session, "Session event"));
-        buffer.push(test_event("evt_2", DisplayEventType::Activity, "Activity event"));
+        buffer.push(test_event(
+            "evt_1",
+            DisplayEventType::Session,
+            "Session event",
+        ));
+        buffer.push(test_event(
+            "evt_2",
+            DisplayEventType::Activity,
+            "Activity event",
+        ));
         buffer.push(test_event("evt_3", DisplayEventType::Tool, "Tool event"));
         buffer.push(test_event("evt_4", DisplayEventType::Agent, "Agent event"));
-        buffer.push(test_event("evt_5", DisplayEventType::Summary, "Summary event"));
+        buffer.push(test_event(
+            "evt_5",
+            DisplayEventType::Summary,
+            "Summary event",
+        ));
         buffer.push(test_event("evt_6", DisplayEventType::Error, "Error event"));
 
         let theme = Theme::default();
@@ -667,7 +711,11 @@ mod tests {
     fn event_stream_widget_scroll_offset_clamped() {
         let mut buffer = EventBuffer::new(100);
         for i in 0..10 {
-            buffer.push(test_event(&format!("evt_{}", i), DisplayEventType::Session, &format!("Event {}", i)));
+            buffer.push(test_event(
+                &format!("evt_{}", i),
+                DisplayEventType::Session,
+                &format!("Event {}", i),
+            ));
         }
 
         let theme = Theme::default();
