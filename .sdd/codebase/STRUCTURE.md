@@ -70,6 +70,11 @@ VibeTea/
 │   ├── package.json
 │   └── tsconfig.json
 │
+├── .github/
+│   └── workflows/
+│       ├── ci.yml                    # Primary CI workflow (tests, linting, build)
+│       └── ci-with-monitor.yml       # Example workflow with VibeTea monitoring (Phase 5)
+│
 ├── discovery/                  # AI assistant discovery module (future expansion)
 │   └── src/
 │
@@ -184,6 +189,21 @@ The Monitor now supports three subcommands:
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
 
+### `.github/workflows/` - GitHub Actions Integration (Phase 5)
+
+| File | Purpose | Usage |
+|------|---------|-------|
+| `ci.yml` | Primary CI workflow | Runs on push/PR, tests + lint + build |
+| `ci-with-monitor.yml` | Example workflow with VibeTea monitoring | Template for tracking Claude Code events in CI |
+
+**ci-with-monitor.yml Details:**
+- Lines 16-24: Workflow trigger (manual via `workflow_dispatch`)
+- Lines 34-39: Environment variables (private key, server URL, source ID)
+- Lines 46-57: Download VibeTea monitor binary from GitHub releases
+- Lines 60-70: Start monitor in background before CI steps
+- Lines 91-101: CI steps (formatting, linting, tests, build)
+- Lines 105-113: Graceful shutdown with SIGTERM
+
 ## Module Boundaries
 
 ### Monitor Module
@@ -274,6 +294,7 @@ client/src/App.tsx (root)
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
 | **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
+| **GitHub Actions workflow** | `.github/workflows/` (copy ci-with-monitor.yml as template) | `.github/workflows/ci-with-custom-setup.yml` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
 | **Tests** | Colocate with source: `file.rs` → `file_test.rs` (Rust), `file.ts` → `__tests__/file.test.ts` (TS) | — |
 

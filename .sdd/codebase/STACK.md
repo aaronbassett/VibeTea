@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 4 Enhancement - Export-key CLI command and integration tests for GitHub Actions
+**Status**: Phase 5 - GitHub Actions integration workflow example
 **Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
@@ -110,6 +110,7 @@
 | WebSocket Proxy | Vite dev server proxies /ws to localhost:8080 |
 | File System Monitoring | Rust notify crate (inotify/FSEvents) for JSONL tracking |
 | CLI Support | clap Subcommand enum for command parsing (init, run, export-key via clap derive macros, Phase 4) |
+| CI/CD Integration | GitHub Actions workflow with monitor deployment and background execution (Phase 5) |
 
 ## Communication Protocols & Formats
 
@@ -119,6 +120,7 @@
 | Server → Client | WebSocket | JSON | Bearer token |
 | Client → Server | WebSocket | JSON | Bearer token |
 | Monitor → File System | Native | JSONL | N/A (local file access) |
+| GitHub Actions | SSH/HTTPS | Binary download + env var injection | GitHub Actions secrets |
 
 ## Data Serialization
 
@@ -135,7 +137,7 @@
 | Component | Output | Format | Deployment |
 |-----------|--------|--------|-----------|
 | Server | Binary | ELF (Linux) | Docker container on Fly.io |
-| Monitor | Binary | ELF/Mach-O/PE | Standalone executable for users |
+| Monitor | Binary | ELF/Mach-O/PE | Standalone executable for users or GitHub Actions |
 | Client | Static files | JS + CSS (Brotli compressed) | CDN (Netlify/Vercel/Cloudflare) |
 
 ## Module Organization
@@ -188,7 +190,37 @@
 |-----------|--------|-----------|-------|
 | Server | Fly.io | Docker | Single Rust binary, minimal base image |
 | Client | CDN | Static files | Optimized builds with compression |
-| Monitor | Local | Native binary | Users download and run locally |
+| Monitor | Local + GitHub Actions | Native binary + workflow | Users download locally or use in CI workflows (Phase 5) |
+
+## GitHub Actions Integration (Phase 5)
+
+### Workflow File
+**Location**: `.github/workflows/ci-with-monitor.yml`
+
+### Features:
+- **Monitor Binary Download**: Fetches pre-built monitor from releases (x86_64-unknown-linux-gnu)
+- **Background Execution**: Starts monitor daemon in background with `./vibetea-monitor run &`
+- **Environment Setup**: Sets VIBETEA_PRIVATE_KEY and VIBETEA_SERVER_URL from GitHub secrets
+- **Source ID Tracking**: Uses `github-{owner}/{repo}-{run_id}` format for workflow traceability
+- **Graceful Shutdown**: Sends SIGTERM to monitor at workflow end with 2-second flush window
+- **Non-Blocking**: Network failures don't fail workflow (monitor exits gracefully)
+- **CI Integration**: Runs alongside existing Rust/TypeScript tests and builds
+- **Binary Caching**: Uses standard GitHub Actions cache for cargo dependencies
+
+### Configuration:
+- Private key from `secrets.VIBETEA_PRIVATE_KEY` (base64-encoded via export-key)
+- Server URL from `secrets.VIBETEA_SERVER_URL`
+- Custom source ID format enables filtering events by workflow run
+- Monitor captures Claude Code events during PR reviews, linting, testing, builds
+
+### Workflow Steps:
+1. Checkout code
+2. Download monitor binary from releases (with graceful fallback)
+3. Start monitor in background before CI steps
+4. Run standard CI jobs (formatting, linting, tests, builds)
+5. Stop monitor gracefully on workflow completion (always runs)
+
+---
 
 ## Phase 2 Enhancements
 
@@ -328,6 +360,16 @@
 - FR-028: Round-trip verified with signature validation
 
 ## Phase 5 Additions
+
+**GitHub Actions Workflow Example** (`.github/workflows/ci-with-monitor.yml` - 114 lines):
+- **Purpose**: Demonstrates monitor deployment in GitHub Actions for tracking Claude Code events during CI
+- **Binary Download**: Fetches pre-built monitor from releases with graceful fallback
+- **Background Execution**: Starts monitor daemon before CI jobs run
+- **Environment Setup**: Uses GitHub Actions secrets for VIBETEA_PRIVATE_KEY and VIBETEA_SERVER_URL
+- **Source ID Format**: `github-{owner}/{repo}-{run_id}` for workflow traceability and filtering
+- **Non-Blocking**: Network/monitor failures don't affect workflow success
+- **Graceful Shutdown**: Sends SIGTERM at workflow completion with event flush window
+- **Integration**: Works alongside existing Rust and TypeScript CI jobs
 
 **Monitor Privacy Module** (`monitor/src/privacy.rs` - 1039 lines):
 - **PrivacyConfig**: Configuration for privacy filtering with optional extension allowlist

@@ -152,7 +152,7 @@
 | Key fingerprint | Only 8-char prefix logged for identification | `monitor/src/crypto.rs:429` |
 | Source identification | KeySource enum distinguishes env var vs file | `monitor/src/crypto.rs:42` |
 
-## Key Export Functionality (Phase 4)
+## Key Export Functionality (Phase 4-5)
 
 ### Export-Key Command
 
@@ -169,11 +169,21 @@
 
 ### Export Use Cases
 
-| Use Case | Purpose | Integration |
-|----------|---------|-------------|
-| GitHub Actions setup | Export key for CI/CD environment | Pipe output to GitHub secret creation |
-| Key migration | Move keys between systems | Base64 output compatible with `VIBETEA_PRIVATE_KEY` |
-| Backup verification | Verify exported key roundtrips | Integration tests verify signing consistency |
+| Use Case | Purpose | Integration | Phase |
+|----------|---------|-------------|-------|
+| GitHub Actions setup | Export key for CI/CD environment | Pipe output to GitHub secret creation | Phase 5 |
+| Key migration | Move keys between systems | Base64 output compatible with `VIBETEA_PRIVATE_KEY` | Phase 4 |
+| Backup verification | Verify exported key roundtrips | Integration tests verify signing consistency | Phase 4 |
+
+### GitHub Actions Integration (Phase 5)
+
+| Component | Implementation | Location |
+|-----------|-----------------|----------|
+| Private key secret | Stored as `VIBETEA_PRIVATE_KEY` | `.github/workflows/ci-with-monitor.yml:35` |
+| Server URL secret | Stored as `VIBETEA_SERVER_URL` | `.github/workflows/ci-with-monitor.yml:36` |
+| Source ID | Dynamic: `github-{repo}-{run_id}` | `.github/workflows/ci-with-monitor.yml:39` |
+| Binary download | Pre-built binary from releases | `.github/workflows/ci-with-monitor.yml:49-50` |
+| Process management | Background task with signal handling | `.github/workflows/ci-with-monitor.yml:63-70, 108-113` |
 
 ### Security Properties of Export
 
@@ -218,13 +228,13 @@
 
 ### Secrets Storage
 
-| Environment | Method |
-|-------------|--------|
-| Development | `.env` files (gitignored) or export statements |
-| CI/CD | GitHub Secrets or equivalent |
-| Production | Environment variables via container orchestration |
-| Private keys (file) | File-based (~/.vibetea/key.priv with mode 0600) |
-| Private keys (env var) | Environment variable (base64-encoded) |
+| Environment | Method | Security Notes |
+|-------------|--------|-----------------|
+| Development | `.env` files (gitignored) or export statements | File-based, cleartext |
+| GitHub Actions | GitHub Secrets | AES-128 encrypted at rest, rotatable |
+| Production | Environment variables via container orchestration | Depends on orchestration platform |
+| Private keys (file) | File-based (~/.vibetea/key.priv with mode 0600) | Owner-only readable |
+| Private keys (env var) | Environment variable (base64-encoded) | Visible in process listing; GitHub Secrets encrypted |
 
 ### Key Provisioning
 
@@ -236,6 +246,15 @@
 | Key export for external use | `monitor/src/main.rs:181-202` - run_export_key() |
 | Server registration | Manual environment variable setup |
 | Public key fingerprint | `monitor/src/crypto.rs:429` - public_key_fingerprint() (8 chars) |
+
+### GitHub Actions Key Management (Phase 5)
+
+| Step | Command | Security |
+|------|---------|----------|
+| 1. Export | `vibetea-monitor export-key` | Outputs base64 key to stdout only |
+| 2. Store | Add to GitHub Secrets as `VIBETEA_PRIVATE_KEY` | GitHub encrypts at rest |
+| 3. Use | Injected as env var during workflow | Masked in logs; available to monitor process |
+| 4. Cleanup | Automatically cleared after workflow | GitHub Actions cleanup |
 
 ## Security Headers
 

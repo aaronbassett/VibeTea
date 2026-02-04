@@ -250,7 +250,7 @@ console.error('[useWebSocket] Failed to create WebSocket:', error);
 
 ## Common Patterns
 
-### CLI Subcommand Pattern (New - Phase 12)
+### CLI Subcommand Pattern (Phase 12)
 
 The monitor binary uses clap for CLI commands with structured parsing:
 
@@ -295,6 +295,56 @@ Key conventions:
 - **Arguments**: Structured using clap attributes (`#[arg]`)
 - **Error handling**: Returns `Result<()>` with context-rich errors
 - **Stdout vs stderr**: Diagnostics go to stderr, output data to stdout (e.g., keys)
+
+### GitHub Actions Environment Pattern (Phase 5)
+
+When deploying monitor in CI/CD, use standard environment variable conventions:
+
+```yaml
+# .github/workflows/ci-with-monitor.yml
+env:
+  VIBETEA_PRIVATE_KEY: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+  VIBETEA_SERVER_URL: ${{ secrets.VIBETEA_SERVER_URL }}
+  VIBETEA_SOURCE_ID: "github-${{ github.repository }}-${{ github.run_id }}"
+```
+
+Key conventions:
+- **Secrets**: Private key and server URL stored as GitHub repository secrets
+- **Source ID**: Includes repository and run ID for traceability (format: `github-owner/repo-run-id`)
+- **Background execution**: Monitor runs in background with `./vibetea-monitor run &`
+- **Graceful shutdown**: Uses `kill -TERM` for non-blocking flush of buffered events
+- **Error resilience**: Monitor failure doesn't block workflow (wrapped in conditional checks)
+
+Workflow structure (from `.github/workflows/ci-with-monitor.yml`):
+
+```yaml
+steps:
+  # 1. Download or build monitor binary
+  - name: Download VibeTea Monitor
+    run: curl -fsSL -o vibetea-monitor "https://github.com/aaronbassett/VibeTea/releases/latest/..."
+
+  # 2. Start monitor in background
+  - name: Start VibeTea Monitor
+    run: |
+      if [ -f vibetea-monitor ] && [ -n "$VIBETEA_PRIVATE_KEY" ]; then
+        ./vibetea-monitor run &
+        MONITOR_PID=$!
+        echo "MONITOR_PID=$MONITOR_PID" >> $GITHUB_ENV
+      fi
+
+  # 3. Run CI steps (events captured during this time)
+  - name: Run tests
+    run: cargo test --workspace -- --test-threads=1
+
+  # 4. Graceful shutdown
+  - name: Stop VibeTea Monitor
+    if: always()
+    run: |
+      if [ -n "$MONITOR_PID" ]; then
+        kill -TERM $MONITOR_PID 2>/dev/null || true
+        sleep 2
+      fi
+```
 
 ### Event-Driven Architecture
 
@@ -572,7 +622,7 @@ fn roundtrip_generate_export_import_sign_verify() {
 }
 ```
 
-### CLI Testing Pattern (New - Phase 12)
+### CLI Testing Pattern (Phase 12)
 
 Integration tests for CLI commands use subprocess execution:
 
@@ -980,12 +1030,13 @@ Format: `type(scope): description`
 |------|-------|---------|
 | feat | New feature | `feat(monitor): add export-key subcommand for GitHub Actions` |
 | fix | Bug fix | `fix(client): add vite-env.d.ts for ImportMeta.env types` |
-| docs | Documentation | `docs: add specs for 5 new features` |
+| docs | Documentation | `docs: add GitHub Actions setup section to README` |
 | style | Formatting | `style: fix indentation in error.rs` |
 | refactor | Code restructure | `refactor(monitor): rename load_with_env to load_with_fallback` |
 | test | Adding/updating tests | `test(monitor): add export-key integration tests (12 tests)` |
 | chore | Maintenance | `chore: update Cargo.lock for zeroize dependency` |
 | security | Security improvements | `security(monitor): zero intermediate key material buffers` |
+| ci | CI/CD pipeline changes | `ci: add example workflow with VibeTea monitoring` |
 
 ### Branch Naming
 

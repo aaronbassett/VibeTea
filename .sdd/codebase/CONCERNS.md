@@ -23,8 +23,9 @@
 | SEC-006 | Rate limiting overhead | Per-source token bucket tracking could consume memory with many unique sources | Medium | Implement stale entry cleanup (partially done); add configurable limits | Open |
 | SEC-007 | Event persistence | Events are in-memory only; no persistence means events lost on restart | Medium | Document as design decision; recommend replay mechanism at application level | Open |
 | SEC-008 | Export-key stdout purity | Diagnostic/error messages must be stderr-only to enable safe piping | Low | Export-key explicitly prints errors to stderr; only key goes to stdout | Mitigated (Phase 4) |
+| SEC-009 | GitHub Actions secret exposure | Private key accessible in GitHub Actions environment; potential exposure via leaked logs | Medium | Use GitHub secret masking; never log VIBETEA_PRIVATE_KEY; minimize output from monitor process | Mitigated (Phase 5) |
 
-## Security Improvements (Phase 3-4)
+## Security Improvements (Phase 3-5)
 
 ### Phase 3 Features
 
@@ -44,6 +45,14 @@
 | FR-026 | Exit code semantics | 0 for success, 1 for configuration error (missing key) | Implemented | `monitor/src/main.rs:199` |
 | FR-027 | Integration tests | Tests verify exported key roundtrips via `VIBETEA_PRIVATE_KEY` | Implemented | `monitor/tests/key_export_test.rs:148-221` |
 | FR-028 | Signature consistency | Ed25519 deterministic; tests verify identical signatures after export-import | Implemented | `monitor/tests/key_export_test.rs:229-264` |
+
+### Phase 5 Features
+
+| ID | Feature | Implementation | Status | Location |
+|----|---------|-----------------|--------|----------|
+| FR-029 | GitHub Actions workflow example | Example CI workflow showing monitor integration with export-key setup | Implemented | `.github/workflows/ci-with-monitor.yml` |
+| FR-030 | Dynamic source ID in Actions | Source ID includes repo and run ID for traceability | Implemented | `.github/workflows/ci-with-monitor.yml:39` |
+| FR-031 | Graceful monitor shutdown | SIGTERM handler flushes buffered events before exit | Documented | `.github/workflows/ci-with-monitor.yml:105-113` |
 
 ## Technical Debt
 
@@ -88,6 +97,7 @@
 | `monitor/tests/env_key_test.rs` | Environment variable tests must serialize to avoid race conditions | All tests use `#[serial]` decorator (24 env-var-touching tests) |
 | `monitor/tests/key_export_test.rs` | Export-key tests modify env vars and spawn subprocesses; must use `#[serial]` | All tests use `#[serial]` decorator (15 export-key tests) |
 | `monitor/src/main.rs` | New export-key logic handles private key material and must not log it | Verify stdout purity in tests; all key writes are stderr only |
+| `.github/workflows/ci-with-monitor.yml` | Workflow manages private key and process; signal handling is critical | Test with dry-run first; ensure SIGTERM properly terminates and flushes |
 
 ## Deprecated Code
 
@@ -119,6 +129,7 @@
 | PERF-001 | Rate limiter memory | Hash map of source_id -> TokenBucket grows unbounded until cleanup | Memory leak over time | Cleanup task removes stale entries (60s timeout) |
 | PERF-002 | Event broadcast | Broadcaster uses bounded channel; lagging subscribers lose events | Client experience degrades | Expected behavior; clients reconnect |
 | PERF-003 | JSON serialization | Every event serialized per WebSocket subscriber | CPU under high load | No mitigation; consider compression |
+| PERF-004 | GitHub Actions binary download | Release binary download on every workflow run | Network overhead | Consider caching binary or building from source |
 
 ## Monitoring Gaps
 
@@ -129,6 +140,7 @@
 | Authentication success rate | No metrics on auth successes vs failures | Can't detect brute force attempts | Would require counter instrumentation |
 | WebSocket health | No metrics on connection duration or message throughput | Hard to diagnose subscription issues | Consider adding connection metrics |
 | Export-key usage | No audit trail of key exports | Can't track which systems have exported keys | Consider adding telemetry or structured logging |
+| GitHub Actions monitor | No metrics on monitor process uptime/failures in CI | Can't detect if monitoring silently fails | Consider structured logging to Actions output |
 
 ## Improvement Opportunities
 
@@ -141,16 +153,18 @@
 | Event filtering | Client-side by query params | Server-side filtering with ACLs | Reduced bandwidth, better security |
 | Private key rotation | Manual process | Automated rotation with versioning | Reduced risk of key compromise |
 | Export-key defaults | Explicit --path flag required | Auto-discovery of ~/.vibetea or env var | Smoother UX for end users |
+| GitHub Actions integration | Manual secret setup | Documentation or automated secret creation script | Easier onboarding for CI/CD |
 
 ## Security Debt Items
 
 | ID | Area | Description | Mitigation Strategy | Status |
-|----|------|-------------|-------------|--------|
+|----|------|-------------|------------|--------|
 | DEBT-001 | WebSocket token | Same token for all clients across all time | Implement token rotation every N days or on deployment | Open |
 | DEBT-002 | Key registration | Public keys hardcoded in environment variable | Implement key management API with dynamic updates | Open |
 | DEBT-003 | Audit trail | Minimal logging of auth events | Add structured audit logging to database/file | Open |
 | DEBT-004 | Client identity | WebSocket clients are anonymous beyond token | Add optional client ID/name for audit purposes | Open |
 | DEBT-005 | Key export audit | No record of when/where keys are exported | Implement export logging with timestamp/system info | Open |
+| DEBT-006 | GitHub Actions secret usage | Monitor process has access to private key; potential logging risk | Implement log filtering to never output env vars | Phase 5 risk |
 
 ## Potential Attack Vectors
 
@@ -168,6 +182,7 @@
 | Whitespace in env var key | Trimmed before base64 decoding | Mitigated (Phase 3) |
 | Export-key output leakage | Diagnostic messages sent to stderr only | Mitigated (Phase 4) |
 | Key export in cleartext | Keys exported as base64; assumes secure transport (HTTPS/CI secrets) | Requires operator discipline |
+| GitHub Actions log leakage | Private key is env var, subject to accidental logging | Partially mitigated by GitHub secret masking (Phase 5) |
 
 ---
 

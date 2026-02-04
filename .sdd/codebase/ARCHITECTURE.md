@@ -22,6 +22,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **Producer-Consumer** | Monitors are event producers, Clients are event consumers, Server mediates asynchronous delivery |
 | **Privacy-First** | Events contain only structural metadata (timestamps, tool names, file basenames), never code or sensitive content |
 | **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
+| **CI/CD Integration** | Environment variable key loading enables monitor deployment in containerized and GitHub Actions environments |
 
 ## Core Components
 
@@ -36,10 +37,12 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Event buffering and exponential backoff retry
   - Graceful shutdown with event flushing
   - Key export functionality for GitHub Actions integration
+  - Dual-source key loading (environment variable with file fallback)
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events`)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
 - **Dependents**: None (source component)
+- **Deployment Context**: Can run locally, in Docker, or in GitHub Actions via environment variable key injection
 
 ### Server (Hub)
 
@@ -87,6 +90,20 @@ Claude Code → Monitor → Server → Client:
 9. Client receives via useWebSocket hook
 10. Zustand store adds event (FIFO eviction at 1000 limit)
 11. React renders updated event list, session overview, heatmap
+
+### GitHub Actions Integration Flow (Phase 5)
+
+GitHub Actions workflow → Monitor (via env var key) → Server → Client:
+1. Workflow downloads VibeTea monitor binary from releases
+2. Monitor binary started in background before CI steps
+3. Environment variables set: `VIBETEA_PRIVATE_KEY`, `VIBETEA_SERVER_URL`, `VIBETEA_SOURCE_ID`
+4. Monitor loads private key from `VIBETEA_PRIVATE_KEY` environment variable
+5. During CI/CD steps (tests, builds, Claude Code operations), monitor captures events
+6. Events signed and buffered using env var key
+7. Events transmitted to server via HTTP with retry logic
+8. Server authenticates using pre-registered public key
+9. Clients receive events in real-time dashboard
+10. Workflow terminates, monitor receives SIGTERM and flushes remaining events
 
 ### Detailed Request/Response Cycle
 
@@ -349,6 +366,14 @@ info!(
 - **CI/CD Integration**: Enables headless key management in GitHub Actions
 - **Clean Output**: stdout contains only the key for direct piping to secret tools
 - **Auditability**: Separate invocation leaves clear audit trail in CI logs
+
+### Why GitHub Actions Integration (Phase 5)?
+
+- **Non-blocking**: Monitor failures don't fail the workflow
+- **Standard patterns**: Follows existing GitHub Actions secrets management
+- **Graceful shutdown**: Monitor flushes events on SIGTERM before workflow ends
+- **Source tracking**: Custom `VIBETEA_SOURCE_ID` enables tracing events to specific CI runs
+- **Release distribution**: Binary releases for multiple platforms enable easy setup
 
 ---
 

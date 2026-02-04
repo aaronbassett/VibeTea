@@ -547,6 +547,68 @@ async fn test_oversized_event_does_not_block_normal_events() {
 }
 ```
 
+### GitHub Actions Integration Testing (Phase 5)
+
+File: `.github/workflows/ci-with-monitor.yml` (Example workflow)
+
+The example workflow demonstrates how to test the monitor in CI/CD environments:
+
+```yaml
+# .github/workflows/ci-with-monitor.yml
+name: CI with VibeTea Monitoring
+
+# Tests demonstrate:
+# 1. Binary download from releases (or build from source)
+# 2. Background process execution with environment variable configuration
+# 3. Non-blocking operation (monitor failures don't fail workflow)
+# 4. Graceful shutdown with SIGTERM (flushes buffered events)
+# 5. Private key via GitHub secrets (VIBETEA_PRIVATE_KEY)
+# 6. Server URL via GitHub secrets (VIBETEA_SERVER_URL)
+# 7. Source ID formatting for traceability (github-owner/repo-run-id)
+
+jobs:
+  build-with-monitoring:
+    runs-on: ubuntu-latest
+    env:
+      VIBETEA_PRIVATE_KEY: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+      VIBETEA_SERVER_URL: ${{ secrets.VIBETEA_SERVER_URL }}
+      VIBETEA_SOURCE_ID: "github-${{ github.repository }}-${{ github.run_id }}"
+
+    steps:
+      # Download binary or build from source
+      - name: Download VibeTea Monitor
+        run: curl -fsSL -o vibetea-monitor "..."
+
+      # Start in background (non-blocking)
+      - name: Start VibeTea Monitor
+        run: |
+          if [ -f vibetea-monitor ] && [ -n "$VIBETEA_PRIVATE_KEY" ]; then
+            ./vibetea-monitor run &
+            MONITOR_PID=$!
+            echo "MONITOR_PID=$MONITOR_PID" >> $GITHUB_ENV
+          fi
+
+      # Run CI steps (events captured during this time)
+      - name: Run tests
+        run: cargo test --workspace -- --test-threads=1
+
+      # Graceful shutdown (flush events, don't block)
+      - name: Stop VibeTea Monitor
+        if: always()
+        run: |
+          if [ -n "$MONITOR_PID" ]; then
+            kill -TERM $MONITOR_PID 2>/dev/null || true
+            sleep 2
+          fi
+```
+
+Key testing patterns for GitHub Actions:
+- **Binary delivery**: Tests can use pre-built releases or cargo build
+- **Environment variable configuration**: All settings via env vars and secrets
+- **Non-blocking operation**: Monitor never blocks workflow (wrapped in conditionals)
+- **Graceful shutdown**: SIGTERM handling with event flush before exit
+- **Source tracking**: Includes repository and run ID for traceability
+
 ### Mocking Strategy
 
 | Layer | Mock Strategy | Location |
@@ -683,6 +745,20 @@ Tests for previously fixed bugs:
 - name: Run tests
   run: pnpm test
 ```
+
+### GitHub Actions Example Workflow
+
+The example workflow (`.github/workflows/ci-with-monitor.yml`) demonstrates:
+
+1. **Monitor binary deployment** - Download from releases or build locally
+2. **Background execution** - Non-blocking operation with PID tracking
+3. **Event capture during CI** - Events captured while running tests/builds
+4. **Graceful shutdown** - SIGTERM handling for clean shutdown
+5. **Secret configuration** - Private key and server URL via GitHub secrets
+6. **Error resilience** - Monitor failures don't fail workflows
+7. **Source tracking** - Unique identifiers for traceability
+
+This serves as a reference implementation for teams wanting to integrate VibeTea monitoring into their CI pipelines.
 
 ### Required Checks
 

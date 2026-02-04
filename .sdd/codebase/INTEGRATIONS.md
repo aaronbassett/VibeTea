@@ -1,12 +1,12 @@
 # External Integrations
 
-**Status**: Phase 4 Enhancement - Export-key CLI command and integration tests for GitHub Actions
+**Status**: Phase 5 - GitHub Actions monitoring integration (`.github/workflows/ci-with-monitor.yml`)
 **Last Updated**: 2026-02-04
 
 ## Summary
 
 VibeTea is designed as a distributed event system with three components:
-- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4).
+- **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server via HTTP. Supports `export-key` command for GitHub Actions integration (Phase 4). Can be deployed in GitHub Actions workflows (Phase 5).
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
 - **Client**: Subscribes to server events via WebSocket for visualization with token-based authentication
 
@@ -559,6 +559,183 @@ pub struct SenderConfig {
 - HTTPS recommended for production
 - HTTP allowed for local development
 
+## GitHub Actions Integration (Phase 5)
+
+### Workflow File
+
+**Location**: `.github/workflows/ci-with-monitor.yml` (114 lines)
+
+### Features
+
+**Monitor Binary Download**:
+- Fetches pre-built monitor from GitHub releases
+- Target: x86_64-unknown-linux-gnu (Linux x86_64)
+- URL pattern: `https://github.com/aaronbassett/VibeTea/releases/latest/download/vibetea-monitor-x86_64-unknown-linux-gnu`
+- Graceful fallback: Continues if download fails (with warning)
+- Exit code validation: Checks for successful execution
+
+**Background Execution**:
+- Starts monitor daemon: `./vibetea-monitor run &`
+- Executes before main CI jobs (formatting, linting, tests, builds)
+- Captures PID: `MONITOR_PID=$!` for later termination
+- Non-blocking: Doesn't halt workflow on start failures
+
+**Environment Setup**:
+- **VIBETEA_PRIVATE_KEY**: From GitHub Actions secret
+  - Base64-encoded 32-byte Ed25519 seed
+  - Generated via `vibetea-monitor export-key`
+  - Securely stored in repository secrets
+- **VIBETEA_SERVER_URL**: From GitHub Actions secret
+  - Server endpoint (e.g., `https://vibetea.fly.dev`)
+  - Must be running and accessible
+- **VIBETEA_SOURCE_ID**: Custom format for traceability
+  - Format: `github-{owner}/{repo}-{run_id}`
+  - Example: `github-aaronbassett/VibeTea-12345678`
+  - Enables filtering events by workflow run in dashboards
+
+**Graceful Shutdown**:
+- Condition: `if: always()` (runs even if previous steps fail)
+- Signal: `kill -TERM $MONITOR_PID`
+- Grace period: 2-second flush window (`sleep 2`)
+- Flushes buffered events before termination
+- Prevents event loss on workflow completion
+
+**Non-Blocking Behavior**:
+- Network failures: Don't fail workflow
+- Monitor startup failures: Don't fail workflow
+- HTTP errors: Monitor retries with exponential backoff
+- Rate limiting: Monitor respects Retry-After header
+
+**CI Integration**:
+- Runs alongside standard Rust/TypeScript checks
+- Monitors active during: formatting, linting, tests, builds
+- Events captured: All Claude Code activity during CI
+- Example use cases: Track code generation, tool usage, agent decisions
+
+**Binary Caching**:
+- Uses GitHub Actions cache for cargo registry and dependencies
+- Cache keys: `${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}`
+- Fallback keys: `${{ runner.os }}-cargo-`
+- Reduces build times on subsequent runs
+
+### Configuration
+
+**Required Secrets** (set in repository settings):
+
+1. **VIBETEA_PRIVATE_KEY**
+   ```bash
+   # Generate on local machine
+   vibetea-monitor init         # If needed
+   vibetea-monitor export-key   # Outputs base64-encoded key
+
+   # Store in GitHub:
+   # Settings → Secrets and variables → Actions → New repository secret
+   # Name: VIBETEA_PRIVATE_KEY
+   # Value: <paste output from export-key>
+   ```
+
+2. **VIBETEA_SERVER_URL**
+   ```bash
+   # Set to your running VibeTea server
+   # Examples:
+   # - https://vibetea.fly.dev
+   # - https://your-domain.example.com
+   # - http://localhost:3000 (not recommended for public workflows)
+   ```
+
+**Monitor Configuration**:
+- Public key registration: Server must have corresponding public key registered
+  - Formula: Export public key from local machine (`cat ~/.vibetea/key.pub`)
+  - Register with server: `VIBETEA_PUBLIC_KEYS="github-{owner}/{repo}:{public_key}"`
+  - Pattern: Source ID prefix matches monitor source ID in workflow
+
+**Source ID Tracking**:
+- Custom format enables filtering events by workflow run
+- Dashboard can filter: `WHERE source = "github-aaronbassett/VibeTea-12345678"`
+- Useful for correlating events with specific CI runs
+- Prevents mixing events from multiple workflows
+
+### Workflow Steps
+
+1. **Checkout code**
+   - Action: `actions/checkout@v4`
+   - Prepares repository for CI jobs
+
+2. **Download monitor binary**
+   - Downloads pre-built monitor from releases
+   - Sets execute permission if successful
+   - Logs warning if download fails (graceful degradation)
+
+3. **Start VibeTea Monitor**
+   - Checks for binary and secrets
+   - Starts background daemon
+   - Captures PID for later shutdown
+   - Logs source ID for tracking
+
+4. **Install Rust toolchain**
+   - Action: `dtolnay/rust-toolchain@stable`
+   - Includes rustfmt and clippy
+
+5. **Setup cache**
+   - Caches cargo registry, git, and build artifacts
+   - Improves subsequent build times
+
+6. **Check formatting**
+   - Command: `cargo fmt --all -- --check`
+   - Validates code formatting
+
+7. **Run clippy**
+   - Command: `cargo clippy --all-targets -- -D warnings`
+   - Lints code with clippy
+
+8. **Run tests**
+   - Command: `cargo test --workspace -- --test-threads=1`
+   - Executes all tests sequentially (for env var isolation)
+
+9. **Build release**
+   - Command: `cargo build --workspace --release`
+   - Produces optimized binaries
+
+10. **Stop VibeTea Monitor**
+    - Sends SIGTERM to background process
+    - Allows 2-second grace period for event flushing
+    - Runs even if previous steps failed
+
+### Event Tracking During CI
+
+**What Gets Captured**:
+- Claude Code session events during workflow execution
+- Tool usage: Read, Write, Grep, Bash, etc.
+- Activity events: User interactions
+- Agent state changes
+- Session start/end markers
+
+**What Doesn't Get Sent**:
+- Code content (privacy filtered)
+- Prompts or responses (privacy filtered)
+- Full file paths (reduced to basenames)
+- Sensitive command arguments (stripped)
+
+**Dashboard Integration**:
+- Filter by source: `github-{owner}/{repo}-{run_id}`
+- Correlate with GitHub Actions run
+- Track tool usage across CI jobs
+- Analyze patterns in automated sessions
+
+### Example Workflow Configuration
+
+```yaml
+# In GitHub repository settings:
+# Secrets → VIBETEA_PRIVATE_KEY
+# Value: base64-encoded key from vibetea-monitor export-key
+
+# Secrets → VIBETEA_SERVER_URL
+# Value: https://your-vibetea-server.example.com
+
+# On server, register public key:
+# export VIBETEA_PUBLIC_KEYS="github-owner/repo:$(cat ~/.vibetea/key.pub)"
+```
+
 ## CLI & Key Management
 
 ### Phase 6: Monitor CLI
@@ -875,371 +1052,6 @@ interface TokenFormProps {
    - Input cleared after successful save
    - Token masked as password field
 
-### Event Stream Component (Phase 8)
-
-**Module Location**: `client/src/components/EventStream.tsx` (425 lines)
-
-**Features**:
-
-1. **Virtual Scrolling Performance**
-   - Uses `@tanstack/react-virtual` for efficient large-list rendering
-   - Estimated row height: 64 pixels
-   - Overscan: 5 items (renders items beyond viewport)
-   - Supports 1000+ events without performance degradation
-   - Memory-efficient: Only visible items rendered
-
-2. **Auto-Scroll Behavior**
-   - Automatically scrolls to latest event when new events arrive
-   - Auto-scroll disabled when user scrolls up 50+ pixels from bottom
-   - "Jump to Latest" button appears when auto-scroll is paused
-   - Button shows count of new events available
-   - Clicking button re-enables auto-scroll and scrolls to bottom
-
-3. **Event Display**
-   - **EventRow sub-component**: Renders single event
-   - Event type icon (emoji): Unique symbol for each event type
-   - Color-coded badge: Type-specific Tailwind CSS colors
-   - Description: Concise event summary from payload
-   - Source/Session ID: Source and truncated session ID
-   - Timestamp: RFC 3339 converted to HH:MM:SS format
-
-4. **Event Type Styling**
-   - session: Purple badge with rocket emoji
-   - activity: Green badge with comment emoji
-   - tool: Blue badge with wrench emoji
-   - agent: Amber badge with robot emoji
-   - summary: Cyan badge with clipboard emoji
-   - error: Red badge with warning emoji
-
-5. **Event Description Extraction**
-   - Session: "Session started: project-name" or "Session ended: project-name"
-   - Activity: "Activity in project-name" or "Activity heartbeat"
-   - Tool: "tool-name status" with optional context
-   - Agent: "Agent state: state-name"
-   - Summary: First 80 chars of summary text + ellipsis
-   - Error: "Error: error-category"
-
-6. **Empty State**
-   - Friendly message when no events available
-   - Icon and descriptive text
-   - Guides user to wait for events
-
-7. **Accessibility**
-   - `role="log"` for semantic event stream
-   - `aria-live="polite"` for live region updates
-   - `role="list"` and `role="listitem"` for event items
-   - Proper `aria-label` attributes for elements
-   - Event count in aria-label
-   - Timestamp as `<time>` element with `dateTime` attribute
-
-8. **Integration with Zustand Store**
-   - Selective subscription: only re-renders when events change
-   - Uses `useEventStore` hook with selector
-   - Gets `events` array (newest-first ordering)
-   - Reverses array for display (oldest at top, newest at bottom)
-
-### Session Overview Component (Phase 10)
-
-**Module Location**: `client/src/components/SessionOverview.tsx` (484 lines)
-
-**Features**:
-
-1. **Session Cards Display**
-   - Real-time activity indicators with pulsing dots
-   - Project name as title
-   - Source identifier
-   - Session duration (formatted)
-   - Status badges (Active, Idle, Ended)
-   - Event count for active sessions
-   - "Last active" timestamp for inactive sessions
-
-2. **Activity Indicators**
-   - Pulsing dot showing activity level (variable speed)
-   - 1-5 events in 60s: 1Hz pulse (slow)
-   - 6-15 events in 60s: 2Hz pulse (medium)
-   - 16+ events in 60s: 3Hz pulse (fast)
-   - Inactive sessions: Gray dot, no pulse
-
-3. **Status Badges**
-   - Active: Green badge with "Active" label
-   - Inactive: Yellow badge with "Idle" label
-   - Ended: Gray badge with "Ended" label
-
-4. **Session Sorting**
-   - Active sessions first
-   - Then by last event time descending
-   - Maintains consistent ordering across renders
-
-5. **Recent Event Counting**
-   - 60-second window for activity calculation
-   - Uses most recent event timestamp as reference
-   - Pure render behavior with memoization
-
-6. **Click Handlers & Filtering**
-   - Optional `onSessionClick` callback
-   - Future feature: filter events by session
-   - Keyboard support (Enter/Space)
-
-7. **Accessibility**
-   - `role="region"` for container
-   - `role="list"` and `role="listitem"` for cards
-   - `aria-label` describing session info
-   - Keyboard focus support
-   - Full keyboard navigation
-
-8. **Styling**
-   - Dark mode Tailwind CSS
-   - Opacity changes for inactive sessions
-   - Hover effects for active cards
-   - Color-coded status badges
-
-9. **Sub-components**:
-   - `ActivityIndicator`: Pulsing dot with animation
-   - `StatusBadge`: Color-coded status label
-   - `SessionCard`: Individual session display
-   - `EmptyState`: Message when no sessions
-
-### Session Timeout Management (Phase 10)
-
-**Module Location**: `client/src/hooks/useSessionTimeouts.ts` (48 lines)
-
-**Hook Features**:
-
-1. **Session State Transitions**
-   - Active → Inactive: After 5 minutes without events
-   - Inactive/Ended → Removed: After 30 minutes without events
-   - Managed by `useEventStore` action `updateSessionStates()`
-
-2. **Periodic Checking**
-   - Interval: 30 seconds (SESSION_CHECK_INTERVAL_MS)
-   - Called once per interval
-   - Non-blocking check with minimal overhead
-
-3. **Integration**
-   - Calls `updateSessionStates()` from Zustand store
-   - No state management in hook itself
-   - Uses only store action
-
-4. **Lifecycle Management**
-   - Cleanup on unmount
-   - Clears interval when component unmounts
-   - Prevents memory leaks
-   - No dependencies on props
-
-5. **App-level Usage**
-   - Should be called once at root level (App.tsx)
-   - Sets up monitoring for all sessions
-   - No parameters required
-
-**Store Integration**:
-```typescript
-const updateSessionStates = useEventStore(
-  (state) => state.updateSessionStates
-);
-
-useEffect(() => {
-  const intervalId = setInterval(() => {
-    updateSessionStates();
-  }, SESSION_CHECK_INTERVAL_MS);
-
-  return () => {
-    clearInterval(intervalId);
-  };
-}, [updateSessionStates]);
-```
-
-### Zustand Store Enhancement (Phase 10)
-
-**Location**: `client/src/hooks/useEventStore.ts`
-
-**Session State Machine**:
-- New events → Active (fresh session)
-- Active + no events for 5min → Inactive
-- Inactive + event → Active
-- Any state + summary → Ended
-- Ended/Inactive + no events for 30min → Removed
-
-**Session Interface**:
-```typescript
-interface Session {
-  readonly sessionId: string;      // Unique identifier
-  readonly source: string;         // Monitor source ID
-  readonly project: string;        // Project name
-  readonly startedAt: Date;        // Session start
-  readonly lastEventAt: Date;      // Last event time
-  readonly eventCount: number;     // Total events
-  readonly status: SessionStatus;  // 'active' | 'inactive' | 'ended'
-}
-```
-
-**New Action - updateSessionStates()**:
-- Transitions sessions based on time thresholds
-- Called every 30 seconds by useSessionTimeouts
-- Updates lastEventAt for new events in addEvent()
-- Removes sessions after 30 minutes inactivity
-- Maintains state machine invariants
-
-**Constants**:
-- `INACTIVE_THRESHOLD_MS = 300,000` (5 minutes)
-- `REMOVAL_THRESHOLD_MS = 1,800,000` (30 minutes)
-- `SESSION_CHECK_INTERVAL_MS = 30,000` (30 seconds)
-
-### Formatting Utilities (Phase 8)
-
-**Module Location**: `client/src/utils/formatting.ts` (331 lines)
-
-**Formatting Functions**:
-
-1. **Timestamp Formatting**
-   - `formatTimestamp(timestamp)`: RFC 3339 → "HH:MM:SS"
-   - `formatTimestampFull(timestamp)`: RFC 3339 → "YYYY-MM-DD HH:MM:SS"
-   - Both use local timezone for display
-   - Fallback strings for invalid input
-
-2. **Relative Time Formatting**
-   - `formatRelativeTime(timestamp, now?)`: Relative time display
-   - Returns: "just now", "5m ago", "2h ago", "yesterday", "3d ago", "2w ago"
-   - Optional `now` parameter for testing with fixed reference time
-   - Handles future timestamps as "just now"
-
-3. **Duration Formatting**
-   - `formatDuration(milliseconds)`: Duration → "1h 30m", "5m 30s", "30s"
-   - Shows up to two most significant units
-   - Omits seconds when hours present
-   - Fallback "0s" for invalid/zero/negative input
-
-4. **Compact Duration Formatting**
-   - `formatDurationShort(milliseconds)`: Duration → "1:30:00", "5:30", "0:30"
-   - H:MM:SS format for durations >= 1 hour
-   - M:SS format for durations < 1 hour
-   - Fallback "0:00" for invalid/zero/negative input
-
-5. **Helper Functions**
-   - `parseTimestamp()`: Safely parse RFC 3339 to Date
-   - `padZero()`: Pad numbers with leading zeros
-   - `isSameDay()`: Check if dates are same calendar day
-   - `isYesterday()`: Check if date1 is yesterday relative to date2
-
-6. **Error Handling**
-   - All functions handle invalid input gracefully
-   - Return sensible fallback strings
-   - No exceptions thrown
-   - No side effects (pure functions)
-
-7. **Usage in Components**
-   - SessionOverview uses formatDuration() for session duration
-   - SessionOverview uses formatRelativeTime() for last active time
-   - EventStream uses formatTimestamp() for event timestamps
-   - Heatmap uses formatCellDateTime() for cell labels
-
-## Event Validation & Types
-
-### Shared Event Schema
-
-All components use a unified event schema for message passing:
-
-**Event Structure** (from `server/src/types.rs`):
-```
-Event {
-  id: String,           // evt_<20-char-alphanumeric>
-  source: String,       // Source identifier (e.g., hostname)
-  timestamp: DateTime,  // RFC 3339 UTC
-  type: EventType,      // session, activity, tool, agent, summary, error
-  payload: EventPayload // Type-specific data (EventPayload enum)
-}
-```
-
-**Supported Event Types**:
-| Type | Payload Fields | Purpose |
-|------|----------------|---------|
-| `session` | sessionId, action (started/ended), project | Track session lifecycle |
-| `activity` | sessionId, project (optional) | Heartbeat events |
-| `tool` | sessionId, tool, status (started/completed), context, project | Tool usage tracking |
-| `agent` | sessionId, state | Agent state changes |
-| `summary` | sessionId, summary | End-of-session summary |
-| `error` | sessionId, category | Error reporting |
-
-**Schema Locations**:
-- Rust types: `server/src/types.rs`, `monitor/src/types.rs`
-- TypeScript types: `client/src/types/events.ts`
-- Event validation: Serde deserialization with untagged union handling
-
-**Phase 4 Parser Integration** (`monitor/src/parser.rs`):
-- Maps Claude Code JSONL → ParsedEvent (privacy-first extraction)
-- SessionParser converts ParsedEventKind → VibeTea Event types
-- Tool invocations tracked with extracted context (file basenames)
-- Session lifecycle inferred from JSONL file creation/removal and summary markers
-
-**Phase 5 Privacy Integration** (`monitor/src/privacy.rs`):
-- ProcessedEvent payloads through PrivacyPipeline before transmission
-- Sensitive contexts stripped according to tool type
-- Paths reduced to basenames with extension filtering
-- Summary text neutralized to privacy-safe message
-
-**Phase 6 Signing Integration** (`monitor/src/crypto.rs` + `monitor/src/sender.rs`):
-- Events signed with Ed25519 private key
-- Signature in X-Signature header (base64-encoded)
-- Server verifies using registered public key
-- Constant-time comparison prevents timing attacks
-
-**Phase 7 Client Reception** (new):
-- `useWebSocket` receives and validates events
-- TypeScript type guards ensure type safety
-- Zustand store aggregates events by session
-- Components render session data from store
-
-**Phase 8 Display** (new):
-- EventStream renders events with virtual scrolling
-- Formatting utilities provide consistent timestamp/duration display
-- Color-coded badges and icons for event types
-- Event descriptions extracted from payloads
-
-**Phase 10 Session Management** (new):
-- Sessions created from first event with sessionId
-- Session state transitions based on event timing
-- Activity indicators updated from event frequency
-- Session timeout management with periodic checking
-
-### Client Event Store Integration
-
-**Location**: `client/src/hooks/useEventStore.ts`
-
-**Zustand Store State**:
-```typescript
-export interface EventStore {
-  status: ConnectionStatus;              // 'connecting' | 'connected' | 'disconnecting' | 'reconnecting'
-  events: readonly VibeteaEvent[];       // Last 1000 events, newest first
-  sessions: Map<string, Session>;        // Active sessions keyed by sessionId
-
-  addEvent: (event: VibeteaEvent) => void;
-  setStatus: (status: ConnectionStatus) => void;
-  clearEvents: () => void;
-  updateSessionStates: () => void;       // Phase 10 addition
-}
-```
-
-**Event Processing**:
-- FIFO eviction: Keeps last 1000 events, newest first
-- Session aggregation: Derives Session objects from events
-- Session status transitions: 'active' → 'ended' on summary event
-- Event counting: Increments eventCount per session
-- Project tracking: Updates project field if present in event payload
-- Timeout management: Session state transitions via updateSessionStates()
-
-**Selector Utilities**:
-- `selectEventsBySession(state, sessionId)` - Filter events by session
-- `selectActiveSessions(state)` - Get sessions with status !== 'ended'
-- `selectSession(state, sessionId)` - Get single session by ID
-
-**Serialization Formats**
-
-| Component | Format | Field Naming | Location |
-|-----------|--------|--------------|----------|
-| Server/Monitor | JSON (serde) | snake_case in payloads | Rust source |
-| Client | TypeScript types | camelCase in UI/API | `client/src/types/events.ts` |
-| Wire Protocol | JSON | Both (depends on layer) | Event payloads |
-| Claude Code Files | JSONL | Mixed (JSON structure) | `~/.claude/projects/**/*.jsonl` |
-
 ## Network Communication
 
 ### Monitor → Server (Event Publishing)
@@ -1511,305 +1323,60 @@ RUST_LOG=debug                                   # Logging level
 - Connection pooling: 10 max idle connections per host
 - 30-second request timeout
 
-### Local Client Setup
+### GitHub Actions Setup (Phase 5)
 
-**Development Server**:
-- Runs on port 5173 (Vite default)
-- WebSocket proxy to localhost:8080
+**Prerequisites**:
+1. A running VibeTea server with your public key registered
+2. An existing keypair on your local machine (run `vibetea-monitor init` if needed)
 
-**Environment**: None required for local dev
-- Token hardcoded in future phases
-- Currently uses Vite proxy configuration
+**Step 1: Export Your Private Key**
+```bash
+# Export to clipboard (macOS)
+vibetea-monitor export-key | pbcopy
 
-**Build Configuration**: `client/vite.config.ts`
-```typescript
-server: {
-  proxy: {
-    '/ws': {
-      target: 'ws://localhost:8080',
-      ws: true
-    }
-  }
-}
+# Export to stdout (Linux/Windows)
+vibetea-monitor export-key
 ```
 
-**Vite Build Features**:
-- React Fast Refresh via @vitejs/plugin-react
-- Tailwind CSS integration via @tailwindcss/vite
-- Brotli compression for production builds
-- Code splitting: react-vendor, state, virtual chunks
-- Target: ES2020
+**Step 2: Register GitHub Actions Secret**
+```bash
+# Using GitHub CLI
+gh secret set VIBETEA_PRIVATE_KEY --body "$(vibetea-monitor export-key)"
 
-**Phase 7-10 Client Features**:
-- Token management via TokenForm component
-- Connection status visualization via ConnectionStatus component
-- WebSocket connection management via useWebSocket hook
-- Event display and session tracking via Zustand store
-- Virtual scrolling with EventStream component (Phase 8)
-- Timestamp and duration formatting with utilities (Phase 8)
-- Activity heatmap with Heatmap component (Phase 9)
-- Session overview with SessionOverview component (Phase 10)
-- Session timeout management via useSessionTimeouts hook (Phase 10)
-- localStorage persistence for authentication token
+# Or manually in GitHub web interface:
+# Settings → Secrets and variables → Actions → New repository secret
+# Name: VIBETEA_PRIVATE_KEY
+# Value: <paste output from export-key command>
+```
 
-## Error Handling & Validation
+**Step 3: Register Server URL Secret**
+```bash
+# Using GitHub CLI
+gh secret set VIBETEA_SERVER_URL --body "https://your-vibetea-server.example.com"
 
-### Server-Side Error Handling
+# Or manually in GitHub web interface:
+# Settings → Secrets and variables → Actions → New repository secret
+# Name: VIBETEA_SERVER_URL
+# Value: https://your-vibetea-server.example.com
+```
 
-**Error Types** (from `server/src/error.rs`):
-- `ConfigError` - Configuration loading/validation failures
-- `ServerError` - Runtime errors (Auth, Validation, RateLimit, WebSocket, Internal)
+**Step 4: Register Public Key with Server**
+```bash
+# Export public key from local machine
+cat ~/.vibetea/key.pub
 
-**Validation Points**:
-1. Configuration validation on startup (`config.rs`)
-   - Port number must be valid u16
-   - If unsafe_no_auth is false, both public_keys and subscriber_token required
-   - Public keys format: `source_id:pubkey` pairs
-2. Event signature validation on POST (with constant-time comparison)
-3. Event schema validation (serde untagged enum)
-4. Bearer token validation on WebSocket connect
+# On server, register with source ID pattern:
+export VIBETEA_PUBLIC_KEYS="github-{owner}/{repo}:$(cat ~/.vibetea/key.pub)"
 
-**Config Error Types** (comprehensive):
-- MissingEnvVar(String) - Required variable not found
-- InvalidFormat { var: String, message: String } - Format/parsing error
-- InvalidPort(ParseIntError) - Port not valid u16
-- ValidationError(String) - Config validation failed
+# Example:
+export VIBETEA_PUBLIC_KEYS="github-aaronbassett/VibeTea:dGVzdHB1YmtleTExYWJjZGVmZ2hpams="
+```
 
-**Auth Error Types** (`server/src/auth.rs`):
-- UnknownSource(String) - Source not found in public keys
-- InvalidSignature - Signature verification failed
-- InvalidBase64(String) - Base64 decoding failed
-- InvalidPublicKey - Malformed public key
-- InvalidToken - Bearer token mismatch
-
-### Monitor-Side Error Handling
-
-**Error Types** (from `monitor/src/error.rs`):
-- Configuration errors (missing env vars, invalid paths)
-- File watching errors (permission denied, path not found)
-- HTTP request errors (connection refused, timeout)
-- Cryptographic errors (invalid private key)
-- Phase 4: JSONL parsing errors (invalid JSON, malformed events)
-- Phase 5: Privacy processing errors (path parsing failures)
-- Phase 6: Key management errors (missing/invalid keys)
-- Phase 6: HTTP sender errors (connection, rate limit, signature)
-
-**Config Error Types**:
-- MissingEnvVar(String) - VIBETEA_SERVER_URL required
-- InvalidValue { key: String, message: String } - Invalid parsed value
-- NoHomeDirectory - Cannot determine home directory
-
-**Parser Error Types** (`monitor/src/parser.rs`):
-- InvalidJson - Failed to parse JSONL line
-- InvalidPath - Malformed file path format
-- InvalidSessionId - UUID parsing failure
-
-**Watcher Error Types** (`monitor/src/watcher.rs`):
-- WatcherInit - File system watcher initialization failure
-- Io - File system I/O errors
-- DirectoryNotFound - Watch directory missing or inaccessible
-
-**Crypto Error Types** (`monitor/src/crypto.rs` - Phase 3):
-- Io - File system errors during key I/O
-- InvalidKey - Key format invalid or wrong size
-- Base64 - Public key base64 decoding error
-- KeyExists - Key files already present (can overwrite)
-- EnvVar - Environment variable missing or empty (Phase 3)
-
-**Sender Error Types** (`monitor/src/sender.rs` - Phase 6):
-- Http - Network/HTTP client error
-- ServerError - Non-202 response from server
-- AuthFailed - 401 Unauthorized (signature/source mismatch)
-- RateLimited - 429 Too Many Requests
-- BufferOverflow - Events evicted due to full buffer
-- MaxRetriesExceeded - All retry attempts exhausted
-- Json - Event serialization failure
-
-**Client-Side Error Handling** (Phase 7-10):
-- WebSocket connection errors logged to console
-- Message parsing failures handled gracefully
-- Invalid events silently discarded
-- No crashes on connection drops (auto-reconnect)
-- Token missing handled with warning log
-- Formatting functions handle invalid timestamps/durations with fallback strings
-- Session timeout checking handles missing sessions gracefully
-- No runtime errors from formatting utility functions
-
-**Resilience**:
-- Continues watching even if individual file operations fail
-- Retries HTTP requests with exponential backoff (Phase 6)
-- Logs errors via `tracing` crate with structured context
-- Validates VIBETEA_BUFFER_SIZE as positive integer
-- Graceful degradation on malformed JSONL lines
-- Privacy processing failures logged without exposing sensitive data
-- Sender buffers events if network unavailable, retries with backoff
-- Client maintains event store even if connection drops
-- Virtual scrolling gracefully handles empty event lists and large datasets
-- Session management handles edge cases (removed sessions, missing data)
-
-## File System Monitoring
-
-### Monitor File Watching
-
-**Library**: `notify` crate (version 8.0)
-**Behavior**: Cross-platform file system events (inotify on Linux, FSEvents on macOS)
-
-**Configuration**:
-- Directory: `VIBETEA_CLAUDE_DIR` (default: `~/.claude`)
-- Buffer capacity: `VIBETEA_BUFFER_SIZE` (default: 1000 events)
-- Optional allowlist: `VIBETEA_BASENAME_ALLOWLIST` (comma-separated file patterns)
-
-**Events Captured**:
-- File creation, modification, deletion
-- Directory changes
-- Filtering based on file extension allowlist (if configured)
-
-**Location**: `monitor/src/config.rs` and `monitor/src/main.rs`
-
-**Phase 4 Enhancements** (`monitor/src/watcher.rs`):
-- Position tracking for efficient file tailing
-- Detects and emits only new lines appended to JSONL files
-- Automatic cleanup of removed files from tracking state
-- Thread-safe position map for concurrent access
-
-## Logging & Observability
-
-### Structured Logging
-
-**Framework**: `tracing` + `tracing-subscriber`
-**Configuration**: Environment variable `RUST_LOG`
-
-**Features**:
-- JSON output support (via `tracing-subscriber` with json feature)
-- Environment-based filtering
-- Structured context in logs
-
-**Components**:
-- Server: Logs configuration, connection events, errors, rate limiting
-- Monitor: Logs file system events, HTTP requests, signing operations (Phase 6)
-- Phase 4: Parser logs invalid JSONL events with context
-- Phase 4: Watcher logs file tracking updates and position management
-- Phase 5: Privacy pipeline logs filtering decisions and sensitive tool detection
-- Phase 6: Crypto logs key generation, loading, and signature operations
-- Phase 6: Sender logs buffering, retry, rate limit decisions
-- Phase 3: Key loading from environment variable or file with source tracking
-- Warning logged when VIBETEA_UNSAFE_NO_AUTH is enabled
-
-**No External Service Integration** (Phase 5):
-- Logs to stdout/stderr only
-- Future: Integration with logging services (e.g., ELK, Datadog)
-
-## Security Considerations
-
-### Cryptographic Authentication
-
-**Ed25519 Signatures** (Phase 6):
-- Library: `ed25519-dalek` crate (version 2.1)
-- Key generation: 32-byte seed via OS RNG
-- Signature verification: Base64-encoded public keys per source
-- Private key storage: User's filesystem (unencrypted)
-- File permissions: 0600 (owner read/write only)
-- Public key permissions: 0644 (owner read/write, others read)
-- Timing attack prevention: `subtle::ConstantTimeEq` for comparison
-
-**Memory Safety** (Phase 3):
-- zeroize crate securely wipes sensitive memory
-- Applied to seed bytes after key generation
-- Applied to decoded buffers in load_from_env()
-- Applied on error paths to prevent data leakage
-- Complies with FR-020 security requirement
-
-**Security Implications**:
-- Private keys must be protected with file permissions
-- Public keys registered on server must match monitor's keys
-- Signature validation prevents spoofed events
-- Constant-time comparison prevents timing attacks on verification
-- Ed25519 prevents signature forgery even if attacker has public key
-- Phase 6: Enables cryptographic proof of event origin
-- Phase 3: Memory safety prevents sensitive key material from lingering in memory
-
-### Token-Based Client Authentication
-
-**Bearer Token**:
-- Currently a static string per deployment
-- No encryption in transit (relies on TLS via HTTPS)
-- No expiration or refresh (Phase 5 limitation)
-
-**Security Implications**:
-- Token should be treated like a password
-- Compromise affects all connected clients
-- Future: Implement token rotation, per-user tokens
-- localStorage exposure could compromise token
-
-### Rate Limiting Security
-
-**Token Bucket Protection**:
-- Per-source rate limiting prevents single monitor from overwhelming server
-- Default 100 events/second per source
-- Automatic cleanup prevents memory leaks from zombie sources
-- Retry-After header guides clients on backoff strategy
-
-### Data in Transit
-
-**TLS Encryption**:
-- Production deployments use HTTPS (Monitor → Server)
-- Production deployments use WSS (Server ↔ Client)
-- Local development may use unencrypted HTTP/WS
-
-### Privacy
-
-**Claude Code JSONL** (Phase 4-5):
-- Parser never extracts code content, prompts, or responses
-- Only metadata stored: tool names, timestamps, file basenames
-- File paths used only for project name extraction
-- PrivacyPipeline (Phase 5) ensures sensitive data not transmitted:
-  - Full paths reduced to basenames
-  - Sensitive tool contexts always stripped
-  - Extension allowlist filtering applied
-  - Summary text neutralized
-- Event contents never logged or stored unencrypted
-- All transformations logged without revealing sensitive data
-
-### Client-Side Security
-
-**localStorage Token Storage** (Phase 7):
-- Token persisted to browser localStorage
-- Accessible to any script running in same origin
-- XSS vulnerability could expose token
-- Cross-site scripting protection recommended
-- Consider HTTPOnly cookies as future enhancement
-
-**WebSocket Token Transmission** (Phase 7):
-- Token passed as query parameter in URL
-- Visible in browser network tab
-- Should use WSS (WebSocket Secure) in production
-- Token in header would be preferable (future enhancement)
-
-### Sender Security
-
-**HTTP Client Security** (Phase 6):
-- Connection pooling prevents connection-based attacks
-- Timeout prevents hanging connections
-- Exponential backoff prevents amplification attacks
-- No credentials in URLs or request bodies (signature-based only)
-- X-Signature header prevents man-in-the-middle spoofing
-- Event buffering prevents replay of failed requests (forward secrecy)
-
-## Future Integration Points
-
-### Planned (Not Yet Integrated)
-
-- **Main Event Loop**: Integrate file watcher, parser, privacy pipeline, and HTTP sender (Phase 6 in progress)
-- **Database/Persistence**: Store events beyond memory (Phase 5+)
-- **Authentication Providers**: OAuth2, API key rotation (Phase 5+)
-- **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 5+)
-- **Message Queues**: Redis, RabbitMQ for event buffering (Phase 5+)
-- **Webhooks**: External service notifications (Phase 6+)
-- **Background Task Spawning**: Async watcher and sender pipeline (Phase 6+)
-- **Session Persistence**: Store events in database for replay (Phase 7+)
-- **Advanced Authentication**: Per-user tokens, OAuth2 flows (Phase 7+)
-- **Event Search/Filtering**: Full-text search and advanced filtering UI (Phase 7+)
-- **Performance Monitoring**: Client-side performance metrics (Phase 8+)
+**Step 5: Add Workflow File**
+- Copy `.github/workflows/ci-with-monitor.yml` example
+- Customize for your repository and CI needs
+- Commit and push to main branch
+- Workflow will run on next push/PR
 
 ## Configuration Quick Reference
 
@@ -1840,69 +1407,24 @@ server: {
 
 *Either VIBETEA_PRIVATE_KEY (env) or VIBETEA_KEY_PATH/key.priv (file) required
 
-### Client Environment Variables
+### Client localStorage Keys (Phase 7)
 
-None required for production (future configuration planned).
-
-**Client localStorage Keys** (Phase 7):
 | Key | Purpose | Format |
 |-----|---------|--------|
 | `vibetea_token` | WebSocket authentication token | String |
 
-## Phase Changes Summary
+## Future Integration Points
 
-### Phase 4: Export-Key CLI Command and Integration Tests
+### Planned (Not Yet Integrated)
 
-**Monitor CLI Enhancements** (`monitor/src/main.rs` - 566 lines):
-- **Clap integration**: Replaced manual argument parsing with clap Subcommand/Parser derive macros
-- **ExportKey subcommand**: New command for exporting private key to stdout
-- **Integration test suite**: 13 comprehensive tests using serial_test for env var isolation
-
-**Key Features**:
-- Command: `vibetea-monitor export-key [--path <PATH>]`
-- Output: Base64-encoded 32-byte seed + single newline to stdout
-- Diagnostics: All messages to stderr
-- Exit codes: 0 on success, 1 on error
-- Piping-friendly: No ANSI codes, no carriage returns
-- GitHub Actions ready: Suitable for use in workflows and secret management
-
-**Test Coverage**:
-- Round-trip: generate → save → export → load → sign → verify
-- Output format: Exact base64+newline verification
-- Diagnostic separation: stdout/stderr validation
-- Exit codes: Success (0) and error (1) paths
-- Edge cases: Paths with spaces, ANSI code absence, binary format validation
-
-**Requirements Addressed**:
-- FR-003: Export functionality with clean output
-- FR-023: Proper stdout/stderr separation
-- FR-026: Correct exit codes
-- FR-027: Exported key loadable via VIBETEA_PRIVATE_KEY
-- FR-028: Round-trip and signature compatibility
-
-### Phase 3: Memory Safety & Environment Variable Key Loading
-
-**Crypto Module Enhancements** (`monitor/src/crypto.rs`):
-- **zeroize crate**: Securely wipes sensitive memory (seed bytes, decoded buffers)
-- **load_from_env()**: Loads Ed25519 private key from VIBETEA_PRIVATE_KEY environment variable
-- **load_with_fallback()**: Tries environment variable first, then file with proper error handling
-- **seed_base64()**: Exports private key as base64 for environment variable storage
-- **CryptoError::EnvVar**: New error variant for environment variable issues
-- **Memory safety**: Prevents sensitive key material from remaining in memory dumps
-- **Backward compatible**: File-based loading continues to work as before
-
-**Use Cases**:
-- Load keys from environment variables in containerized deployments
-- Export keys for secure storage in secret management systems
-- Flexible key management without code changes
-- Memory-safe handling complies with FR-020 security requirement
-
-**Example Workflow**:
-```bash
-# Export key from monitor
-export EXPORTED_KEY=$(vibetea-monitor export-key)
-
-# Use in different environment
-export VIBETEA_PRIVATE_KEY=$EXPORTED_KEY
-vibetea-monitor run
-```
+- **Main event loop**: Integrate file watcher, parser, privacy pipeline, and HTTP sender (Phase 6 in progress)
+- **Database/Persistence**: Store events beyond memory (Phase 5+)
+- **Authentication Providers**: OAuth2, API key rotation (Phase 5+)
+- **Monitoring Services**: Datadog, New Relic, CloudWatch (Phase 5+)
+- **Message Queues**: Redis, RabbitMQ for event buffering (Phase 5+)
+- **Webhooks**: External service notifications (Phase 6+)
+- **Background Task Spawning**: Async watcher and sender pipeline (Phase 6+)
+- **Session Persistence**: Store events in database for replay (Phase 7+)
+- **Advanced Authentication**: Per-user tokens, OAuth2 flows (Phase 7+)
+- **Event Search/Filtering**: Full-text search and advanced filtering UI (Phase 7+)
+- **Performance Monitoring**: Client-side performance metrics (Phase 8+)
