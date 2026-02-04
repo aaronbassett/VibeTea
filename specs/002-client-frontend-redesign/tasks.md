@@ -316,15 +316,17 @@
 - [x] T174 [US6] Run /sdd:map incremental for Phase 8 changes (skipped - not critical for MVP)
 - [x] T175 [GIT] Commit: update codebase documents for phase 8 (skipped with T174)
 - [x] T176 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative) - no critical learnings extracted
-- [ ] T177 [GIT] Commit: finalize phase 8 retro
+- [x] T177 [GIT] Commit: finalize phase 8 retro
 
 ### Phase Completion
-- [ ] T178 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T179 [GIT] Create/update PR to main with phase summary
-- [ ] T180 [GIT] Verify all CI checks pass
-- [ ] T181 [GIT] Report PR ready status
+- [x] T178 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T179 [GIT] Create/update PR to main with phase summary
+- [x] T180 [GIT] Verify all CI checks pass
+- [x] T181 [GIT] Report PR ready status
 
 **Checkpoint**: User Story 6 (Connection Status) fully functional - pulse, ring, and warning states working
+
+**Status**: PR #6 ready - https://github.com/aaronbassett/VibeTea/pull/6
 
 ---
 
