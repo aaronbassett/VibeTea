@@ -1709,6 +1709,25 @@ pub enum DisplayEventType {
     Summary,
     /// Error event.
     Error,
+    // Enhanced tracking event types
+    /// Agent spawn event (Task tool).
+    AgentSpawn,
+    /// Skill/slash command invocation.
+    SkillInvocation,
+    /// Token usage event.
+    TokenUsage,
+    /// Session metrics event.
+    SessionMetrics,
+    /// Activity pattern event.
+    ActivityPattern,
+    /// Model distribution event.
+    ModelDistribution,
+    /// Todo progress event.
+    TodoProgress,
+    /// File change event.
+    FileChange,
+    /// Project activity event.
+    ProjectActivity,
 }
 
 impl DisplayEventType {
@@ -1733,6 +1752,15 @@ impl DisplayEventType {
             Self::Agent => "AGENT",
             Self::Summary => "SUMMARY",
             Self::Error => "ERROR",
+            Self::AgentSpawn => "SPAWN",
+            Self::SkillInvocation => "SKILL",
+            Self::TokenUsage => "TOKENS",
+            Self::SessionMetrics => "METRICS",
+            Self::ActivityPattern => "PATTERN",
+            Self::ModelDistribution => "MODEL",
+            Self::TodoProgress => "TODO",
+            Self::FileChange => "FILE",
+            Self::ProjectActivity => "PROJECT",
         }
     }
 
@@ -1752,12 +1780,21 @@ impl DisplayEventType {
     #[must_use]
     pub const fn icon(&self) -> &'static str {
         match self {
-            Self::Session => "\u{1F4AC}",  // speech balloon
-            Self::Activity => "\u{1F49A}", // green heart (activity/heartbeat)
-            Self::Tool => "\u{1F527}",     // wrench
-            Self::Agent => "\u{1F916}",    // robot face
-            Self::Summary => "\u{1F4CB}",  // clipboard
-            Self::Error => "\u{26A0}",     // warning sign
+            Self::Session => "\u{1F4AC}",       // speech balloon
+            Self::Activity => "\u{1F49A}",      // green heart (activity/heartbeat)
+            Self::Tool => "\u{1F527}",          // wrench
+            Self::Agent => "\u{1F916}",         // robot face
+            Self::Summary => "\u{1F4CB}",       // clipboard
+            Self::Error => "\u{26A0}",          // warning sign
+            Self::AgentSpawn => "\u{1F4E4}",    // outbox tray (spawning)
+            Self::SkillInvocation => "\u{2728}", // sparkles (magic/skill)
+            Self::TokenUsage => "\u{1F4B0}",    // money bag (tokens/cost)
+            Self::SessionMetrics => "\u{1F4CA}", // bar chart (metrics)
+            Self::ActivityPattern => "\u{1F551}", // clock (time pattern)
+            Self::ModelDistribution => "\u{1F3AF}", // direct hit (model)
+            Self::TodoProgress => "\u{2705}",   // check mark (todos)
+            Self::FileChange => "\u{1F4DD}",    // memo (file edit)
+            Self::ProjectActivity => "\u{1F4C1}", // folder (project)
         }
     }
 
@@ -1780,6 +1817,15 @@ impl DisplayEventType {
             Self::Agent => "[G]",
             Self::Summary => "[M]",
             Self::Error => "[!]",
+            Self::AgentSpawn => "[>]",
+            Self::SkillInvocation => "[*]",
+            Self::TokenUsage => "[$]",
+            Self::SessionMetrics => "[#]",
+            Self::ActivityPattern => "[@]",
+            Self::ModelDistribution => "[%]",
+            Self::TodoProgress => "[x]",
+            Self::FileChange => "[F]",
+            Self::ProjectActivity => "[P]",
         }
     }
 }
@@ -1797,6 +1843,15 @@ impl From<EventType> for DisplayEventType {
             EventType::Agent => Self::Agent,
             EventType::Summary => Self::Summary,
             EventType::Error => Self::Error,
+            EventType::AgentSpawn => Self::AgentSpawn,
+            EventType::SkillInvocation => Self::SkillInvocation,
+            EventType::TokenUsage => Self::TokenUsage,
+            EventType::SessionMetrics => Self::SessionMetrics,
+            EventType::ActivityPattern => Self::ActivityPattern,
+            EventType::ModelDistribution => Self::ModelDistribution,
+            EventType::TodoProgress => Self::TodoProgress,
+            EventType::FileChange => Self::FileChange,
+            EventType::ProjectActivity => Self::ProjectActivity,
         }
     }
 }
@@ -1994,6 +2049,48 @@ impl From<&Event> for DisplayEvent {
                 }
             }
             EventPayload::Error { category, .. } => format!("Error: {}", category),
+            // Enhanced tracking event variants
+            EventPayload::AgentSpawn(agent_event) => {
+                format!("Agent spawned: {} - {}", agent_event.agent_type, agent_event.description)
+            }
+            EventPayload::SkillInvocation(skill_event) => {
+                format!("Skill: /{}", skill_event.skill_name)
+            }
+            EventPayload::TokenUsage(token_event) => {
+                format!(
+                    "Tokens: {} in / {} out ({})",
+                    token_event.input_tokens, token_event.output_tokens, token_event.model
+                )
+            }
+            EventPayload::SessionMetrics(metrics) => {
+                format!("Metrics: {} sessions, {} messages", metrics.total_sessions, metrics.total_messages)
+            }
+            EventPayload::ActivityPattern(activity) => {
+                format!("Activity pattern: {} hours tracked", activity.hour_counts.len())
+            }
+            EventPayload::ModelDistribution(dist) => {
+                format!("Model usage: {} models", dist.model_usage.len())
+            }
+            EventPayload::TodoProgress(todo) => {
+                format!(
+                    "Todos: {}/{} complete",
+                    todo.completed,
+                    todo.completed + todo.pending + todo.in_progress
+                )
+            }
+            EventPayload::FileChange(file_change) => {
+                format!(
+                    "File: +{} -{} lines",
+                    file_change.lines_added, file_change.lines_removed
+                )
+            }
+            EventPayload::ProjectActivity(project) => {
+                if project.is_active {
+                    format!("Project active: {}", project.project_path)
+                } else {
+                    format!("Project inactive: {}", project.project_path)
+                }
+            }
         };
 
         Self {
