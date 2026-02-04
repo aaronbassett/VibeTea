@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 5 Implementation - Client Supabase Integration with MSW Testing
+**Status**: Phase 6 Implementation - Persistence Feature Detection & Historic Data Integration
 **Last Updated**: 2026-02-04
 
 ## Summary
@@ -8,7 +8,7 @@
 VibeTea is designed as a distributed event system with four main components:
 - **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server or Supabase (with optional async event batching)
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
-- **Client**: Subscribes to server events via WebSocket and queries historical data from Supabase (Phase 5)
+- **Client**: Subscribes to server events via WebSocket and queries historical data from Supabase (Phase 5), with feature detection for conditional rendering (Phase 6)
 - **Supabase**: Managed backend with PostgreSQL database for persistence, Edge Functions for authentication and data aggregation (Phase 3), and ingest endpoint for event persistence (Phase 4)
 
 All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication and privacy-by-design data handling.
@@ -688,6 +688,82 @@ pub persistence: Option<PersistenceConfig>
 - Mock HourlyAggregate response data
 - Error response mocking (401, 400)
 
+### Phase 6: Persistence Feature Detection & Heatmap Integration
+
+**Client-Side Feature Detection** (`client/src/utils/persistence.ts`):
+- **isPersistenceEnabled()**: Checks `VITE_SUPABASE_URL` environment variable
+  - Returns `true` when persistence is enabled and ready to use
+  - Allows Heatmap component to conditionally render historic data features
+  - Zero-cost abstraction: only checks environment once at import time
+
+- **getSupabaseUrl()**: Safely retrieves Supabase endpoint URL
+  - Returns URL or `null` if not configured
+  - Used by useHistoricData hook to determine API endpoint
+
+- **isAuthTokenConfigured()**: Validates bearer token availability
+  - Checks if `VITE_SUPABASE_TOKEN` is set
+  - Confirms full configuration readiness
+
+- **getPersistenceStatus()**: Provides detailed configuration status
+  - Returns `PersistenceStatus` interface with `enabled`, `hasUrl`, `hasToken`, `message`
+  - Supports debugging and configuration validation
+  - Helps identify missing configuration pieces
+
+**Heatmap Historic Data Integration** (`client/src/components/Heatmap.tsx`):
+
+**Conditional Rendering**:
+- Component returns `null` when `isPersistenceEnabled()` is `false`
+  - Feature-gated visibility eliminates heatmap when persistence disabled
+  - Prevents errors from missing environment configuration
+  - Enables graceful degradation in non-persistence deployments
+
+**Data Merging Architecture**:
+- `mergeEventCounts()` function combines real-time and historic data
+- Merging logic:
+  1. Historic data provides baseline (UTC bucketed counts)
+  2. Real-time events provide fresh current-hour data
+  3. Current hour uses real-time for immediate visibility
+  4. Past hours use historic to preserve longer patterns
+  5. Falls back to real-time if historic data not yet available
+
+**Time Bucket Conversion**:
+- `getBucketKeyFromUtc(dateStr, utcHour)`: Converts UTC to local timezone
+  - Parses UTC date and hour into timestamp
+  - Converts to local timezone bucket key format
+  - Ensures visual alignment with user's local clock perception
+
+**Loading & Error States**:
+- Spinner: Shows for initial fetch (up to 5 seconds)
+- Timeout: Fallback to real-time after 5 second timeout
+- Error: Shows retry button if fetch fails
+- Graceful fallback: Always renders something, even if historic fails
+
+**View Duration Support**:
+- 7-day view: Calls useHistoricData(7)
+- 30-day view: Calls useHistoricData(30)
+- Dynamic refetch on view change
+- SWR caching integrated with hook
+
+**Environment Variables** (Phase 6):
+- `VITE_SUPABASE_URL` - Optional Supabase edge function base URL
+  - When set: Enables heatmap persistence features
+  - When empty/missing: Heatmap disabled entirely
+  - Example: `http://127.0.0.1:54321/functions/v1`
+
+- `VITE_SUPABASE_TOKEN` - Optional bearer token for query endpoint
+  - Used by useHistoricData hook
+  - Sent in Authorization header
+  - Example: `dev-token-for-testing`
+
+**Data Flow** (Phase 6):
+1. Client loads environment variables at startup
+2. isPersistenceEnabled() checks VITE_SUPABASE_URL
+3. Heatmap component conditionally renders if enabled
+4. useHistoricData hook fetches from query endpoint
+5. mergeEventCounts combines historic and real-time
+6. Heatmap displays merged data with color scale
+7. Cell clicks filter event stream to hour range
+
 ### Monitor → Server (Event Publishing)
 
 **Endpoint**: `https://<server-url>/events`
@@ -1074,12 +1150,12 @@ deno test --allow-env --allow-net supabase/functions/_tests/rls.test.ts
 
 ## Configuration Quick Reference
 
-### Client Environment (Phase 5)
+### Client Environment (Phase 5+)
 
 | Variable | Type | Required | Purpose |
 |----------|------|----------|---------|
-| SUPABASE_URL | string | Yes (if using real Supabase) | Supabase project URL for edge function calls |
-| VIBETEA_SUBSCRIBER_TOKEN | string | Yes | Bearer token for query endpoint authentication |
+| VITE_SUPABASE_URL | string | No | Supabase edge function base URL (enables persistence features) |
+| VITE_SUPABASE_TOKEN | string | No | Bearer token for query endpoint authentication |
 
 ### Supabase Environment Variables (Phase 3+)
 

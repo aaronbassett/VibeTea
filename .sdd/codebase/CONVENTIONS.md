@@ -2,7 +2,7 @@
 
 **Purpose**: Document code style, naming conventions, error handling, and common patterns.
 **Generated**: 2026-02-04
-**Last Updated**: 2026-02-04 (Phase 5: Historic data UI and testing)
+**Last Updated**: 2026-02-04 (Phase 6: Persistence utilities and Heatmap component)
 
 ## Code Style
 
@@ -18,7 +18,7 @@
 
 ### Style Rules
 
-#### TypeScript/Client (Phase 5 focus)
+#### TypeScript/Client (Phase 6 update)
 
 | Rule | Convention | Example |
 |------|------------|---------|
@@ -41,31 +41,32 @@
 
 ## Naming Conventions
 
-### TypeScript/Client (Phase 5)
+### TypeScript/Client (Phase 6)
 
 #### Files & Directories
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Components | PascalCase | `EventStream.tsx`, `HeatmapView.tsx` |
+| Components | PascalCase | `EventStream.tsx`, `Heatmap.tsx` |
 | Hooks | camelCase with `use` prefix | `useHistoricData.ts`, `useEventStore.ts` |
-| Utilities | camelCase | `formatDate.ts`, `parseEvent.ts` |
+| Utilities | camelCase | `formatDate.ts`, `persistence.ts` |
 | Types | PascalCase in `types/` | `types/events.ts` |
 | Mocks | In `mocks/` directory | `mocks/handlers.ts`, `mocks/data.ts` |
-| Tests | `__tests__/` directory + `.test.ts` suffix | `__tests__/events.test.ts` |
+| Tests | `__tests__/` directory + `.test.ts` suffix | `__tests__/components/Heatmap.test.tsx` |
 
 #### Code Elements
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Variables | camelCase | `historicData`, `fetchStatus` |
-| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `STALE_THRESHOLD_MS` |
-| Functions | camelCase, verb prefix | `createHourlyAggregate()`, `parseEvents()` |
-| React components | PascalCase | `App`, `EventStream`, `SessionList` |
+| Variables | camelCase | `historicData`, `fetchStatus`, `hoveredCell` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `LOADING_TIMEOUT_MS`, `HOURS_IN_DAY` |
+| Functions | camelCase, verb prefix | `isPersistenceEnabled()`, `getBucketKey()`, `mergeEventCounts()` |
+| React components | PascalCase | `App`, `Heatmap`, `EventStream` |
 | Store hooks | `useStoreName` | `useEventStore` |
 | Custom hooks | `use` + descriptor | `useHistoricData`, `useWebSocket` |
-| Types/Interfaces | PascalCase | `VibeteaEvent`, `Session`, `EventFilters` |
-| Event types | lowercase string literals | `'session'`, `'tool'`, `'summary'` |
+| Types/Interfaces | PascalCase | `VibeteaEvent`, `HeatmapProps`, `PersistenceStatus` |
+| Event types | lowercase string literals | `'session'`, `'activity'`, `'summary'` |
+| Sub-components | PascalCase, descriptive | `LoadingIndicator`, `ErrorMessage`, `ViewToggle` |
 
 ### Rust/Server/Monitor (Phase 4)
 
@@ -178,9 +179,196 @@ try {
 | info | State changes and milestones | `info!("Batch of {count} events submitted successfully", count)` |
 | debug | Diagnostic information | `debug!("Retry policy configured: initial={ms}ms, max={max}ms", ms, max)` |
 
-## Common Patterns (Phase 5 Update)
+## Common Patterns (Phase 6 Update)
 
-### MSW Handler Pattern (Phase 5 - New)
+### Persistence Detection Pattern (Phase 6 - New)
+
+Utility module for checking Supabase configuration:
+
+```typescript
+// utils/persistence.ts
+/**
+ * Check if Supabase persistence is enabled.
+ *
+ * Persistence is considered enabled when VITE_SUPABASE_URL is set to a
+ * non-empty string.
+ *
+ * @returns true if persistence is configured, false otherwise
+ */
+export function isPersistenceEnabled(): boolean {
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+  return supabaseUrl !== undefined && supabaseUrl !== '';
+}
+
+/**
+ * Get the persistence configuration status.
+ *
+ * @returns Configuration status object
+ */
+export interface PersistenceStatus {
+  readonly enabled: boolean;
+  readonly hasUrl: boolean;
+  readonly hasToken: boolean;
+  readonly message: string;
+}
+
+export function getPersistenceStatus(): PersistenceStatus {
+  const hasUrl = isPersistenceEnabled();
+  const hasToken = isAuthTokenConfigured();
+  const enabled = hasUrl && hasToken;
+
+  let message: string;
+  if (enabled) {
+    message = 'Persistence enabled';
+  } else if (!hasUrl && !hasToken) {
+    message = 'Persistence not configured';
+  } else if (!hasUrl) {
+    message = 'Missing VITE_SUPABASE_URL';
+  } else {
+    message = 'Missing VITE_SUPABASE_TOKEN';
+  }
+
+  return { enabled, hasUrl, hasToken, message };
+}
+```
+
+Key utility patterns (Phase 6):
+1. **Environment checks**: Check import.meta.env early in components
+2. **Status objects**: Return detailed status for debugging
+3. **Early returns**: Return null when persistence disabled (Heatmap pattern)
+4. **Readonly interfaces**: Use `readonly` modifiers for immutability
+
+### Heatmap Component Patterns (Phase 6 - New)
+
+Complex component with sub-components, data merging, and state management:
+
+```typescript
+// components/Heatmap.tsx
+/**
+ * Activity heatmap displaying event frequency over time.
+ *
+ * Features:
+ * - CSS Grid layout with hours on X-axis and days on Y-axis
+ * - Color scale from dark (0 events) to bright green (51+ events)
+ * - Toggle between 7-day and 30-day views
+ * - Timezone-aware hour bucketing using local time
+ * - Historic data integration with real-time event merging
+ * - Conditional rendering based on persistence configuration
+ */
+export function Heatmap({ className = '', onCellClick }: HeatmapProps) {
+  // Check if persistence is enabled - hide component entirely if not
+  const persistenceEnabled = isPersistenceEnabled();
+  if (!persistenceEnabled) {
+    return null;
+  }
+
+  // ... rest of component logic
+}
+```
+
+Key Heatmap component patterns (Phase 6):
+1. **Early return for disabled features**: Return null when persistence disabled
+2. **Type-safe props**: Use readonly interfaces for immutability
+3. **Helper functions**: Extract complex logic (getBucketKey, mergeEventCounts)
+4. **Timezone handling**: Convert UTC server data to local bucket keys
+5. **Memoization**: Use useMemo for expensive computations (event counting, cell generation)
+6. **Composed sub-components**: LoadingIndicator, ErrorMessage, ViewToggle, CellTooltip, etc.
+7. **ARIA accessibility**: Proper roles, labels, and keyboard navigation
+
+#### Data Merging Pattern (Phase 6)
+
+Merge historic aggregates with real-time events:
+
+```typescript
+/**
+ * Merge historic aggregates with real-time event counts.
+ *
+ * For the current hour: use real-time event counts (more fresh)
+ * For past hours: use historic aggregate counts
+ *
+ * @param historicData - Array of hourly aggregates from the server (UTC)
+ * @param realtimeCounts - Map of bucket keys to real-time event counts (local)
+ * @returns Merged map of bucket keys to counts
+ */
+function mergeEventCounts(
+  historicData: readonly HourlyAggregate[],
+  realtimeCounts: Map<string, number>
+): Map<string, number> {
+  const merged = new Map<string, number>();
+  const currentHourKey = getCurrentHourBucketKey();
+
+  // First, add all historic data (converting from UTC to local bucket keys)
+  for (const aggregate of historicData) {
+    const bucketKey = getBucketKeyFromUtc(aggregate.date, aggregate.hour);
+    // Skip the current hour - we'll use real-time data for that
+    if (bucketKey !== currentHourKey) {
+      const existing = merged.get(bucketKey) ?? 0;
+      merged.set(bucketKey, existing + aggregate.eventCount);
+    }
+  }
+
+  // For the current hour, use real-time counts
+  const currentHourCount = realtimeCounts.get(currentHourKey);
+  if (currentHourCount !== undefined) {
+    merged.set(currentHourKey, currentHourCount);
+  }
+
+  // For buckets not in historic data but in real-time (edge case),
+  // add real-time counts for past hours only if not already present
+  for (const [key, count] of realtimeCounts) {
+    if (key === currentHourKey) continue;
+    if (!merged.has(key)) {
+      merged.set(key, count);
+    }
+  }
+
+  return merged;
+}
+```
+
+Key data merging patterns (Phase 6):
+1. **Current hour priority**: Real-time data always takes precedence for current hour
+2. **Timezone conversion**: Convert UTC server data to local bucket keys
+3. **Edge case handling**: Handle missing historic data gracefully
+4. **Map-based counting**: Use Map for O(1) lookups instead of arrays
+
+#### Loading/Error State Pattern (Phase 6)
+
+Manage async data fetch with timeout:
+
+```typescript
+// Handle loading timeout - only the timer callback sets state
+useEffect(() => {
+  // Only set up timeout when status is loading
+  if (status !== 'loading') {
+    return undefined;
+  }
+
+  const timeoutId = setTimeout(() => {
+    setLoadingTimedOut(true);
+  }, LOADING_TIMEOUT_MS);
+
+  return () => {
+    clearTimeout(timeoutId);
+  };
+}, [status]);
+
+// Determine if we should show loading state
+const showLoading =
+  status === 'loading' && historicData.length === 0 && !loadingTimedOut;
+
+// Determine if we should show error state
+const showError =
+  status === 'error' || (loadingTimedOut && status === 'loading');
+```
+
+Key loading/error patterns (Phase 6):
+1. **Timeout-based error**: Show error after 5 seconds if still loading with no data
+2. **Cache-aware loading**: Don't show loading if cached data exists
+3. **Clean up timers**: Always clear timers in cleanup function
+4. **Combined conditions**: Check both status and timeout state
+
+### MSW Handler Pattern (Phase 5)
 
 Mock Service Worker handlers for testing data fetching:
 
@@ -226,7 +414,7 @@ Key MSW patterns:
 3. **Response simulation**: Return `HttpResponse.json()` with status code
 4. **Handler arrays**: Export as readonly array for spread into server setup
 
-### Mock Data Factory Pattern (Phase 5 - New)
+### Mock Data Factory Pattern (Phase 5)
 
 Generate realistic test data:
 
@@ -254,36 +442,6 @@ export function createHourlyAggregate(
     eventCount: Math.floor(Math.random() * 200) + 10,
     ...overrides,
   };
-}
-
-export function generateMockAggregates(
-  days: 7 | 30,
-  source: string = MOCK_SOURCE
-): HourlyAggregate[] {
-  const aggregates: HourlyAggregate[] = [];
-
-  for (let dayOffset = 0; dayOffset < days; dayOffset++) {
-    const date = new Date(now);
-    date.setUTCDate(date.getUTCDate() - dayOffset);
-    const dateStr = date.toISOString().split('T')[0];
-
-    // Higher event counts during work hours (9-17)
-    for (let hour = 0; hour < 24; hour++) {
-      if (Math.random() < 0.3) continue; // Skip some hours for realism
-
-      const isWorkHour = hour >= 9 && hour <= 17;
-      const baseCount = isWorkHour ? 80 : 20;
-      const variance = isWorkHour ? 120 : 30;
-      const eventCount = baseCount + Math.floor(Math.random() * variance);
-
-      aggregates.push({ source, date: dateStr, hour, eventCount });
-    }
-  }
-
-  return aggregates.sort((a, b) => {
-    const dateCompare = b.date.localeCompare(a.date);
-    return dateCompare !== 0 ? dateCompare : b.hour - a.hour;
-  });
 }
 ```
 
@@ -542,51 +700,53 @@ import { render, screen } from '@testing-library/react';
 | TODO | Planned work | `// TODO: description` |
 | FIXME | Known issues | `// FIXME: description` |
 
-Example module documentation (Phase 5):
+Example module documentation (Phase 6):
 
 ```typescript
 /**
- * Hook for fetching and caching historic event aggregates
- * with stale-while-revalidate pattern.
+ * Persistence feature detection utilities.
  *
- * This hook provides automatic background refetching when cached data
- * becomes stale (older than 5 minutes), while immediately returning
- * the cached data for a responsive user experience.
+ * Provides helpers for detecting whether Supabase persistence is enabled
+ * based on environment configuration.
+ */
+
+/**
+ * Activity heatmap component for visualizing event frequency over time.
  *
- * @example
- * ```tsx
- * function HeatmapView() {
- *   const { data, status, error, refetch } = useHistoricData(7);
+ * Displays a grid of cells where each cell represents one hour, with color
+ * intensity indicating the number of events. Supports 7-day and 30-day views
+ * with timezone-aware hour alignment.
  *
- *   if (status === 'loading' && data.length === 0) {
- *     return <LoadingSpinner />;
- *   }
- *
- *   return <Heatmap data={data} />;
- * }
- * ```
+ * Features:
+ * - CSS Grid layout with hours on X-axis and days on Y-axis
+ * - Color scale from dark (0 events) to bright green (51+ events)
+ * - Toggle between 7-day and 30-day views
+ * - Timezone-aware hour bucketing using local time
+ * - Cell click filtering to select events from a specific hour
+ * - Historic data integration with real-time event merging
+ * - Conditional rendering based on persistence configuration
  */
 ```
 
 ## Git Conventions
 
-### Commit Messages (Phase 5 Update)
+### Commit Messages (Phase 6 Update)
 
 Format: `type(scope): description`
 
-Phase 5 examples:
-- `feat(client): implement historic data hook with stale-while-revalidate`
-- `feat(client): add MSW handlers for query endpoint`
-- `feat(client): implement Zustand store async data fetching`
-- `test(client): add hook tests using renderHook and MSW`
-- `test(client): add App component tests with store mocking`
+Phase 6 examples:
+- `feat(client): add persistence detection utility module`
+- `feat(client): implement Heatmap component with data merging`
+- `test(client): add 36 comprehensive Heatmap component tests`
+- `feat(client): implement loading timeout and error recovery`
+- `feat(client): add timezone-aware hour bucketing for historic data`
 
 ### Branch Naming
 
 Format: `{type}/{ticket}-{description}`
 
-Example: `feat/005-historic-data-ui`
+Example: `feat/001-supabase-persistence`
 
 ---
 
-*This document defines HOW to write code for Phase 5 (Historic data UI). Update when conventions change.*
+*This document defines HOW to write code for Phase 6 (Persistence utilities and Heatmap). Update when conventions change.*

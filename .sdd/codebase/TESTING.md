@@ -2,18 +2,18 @@
 
 **Purpose**: Document test frameworks, patterns, organization, and coverage requirements.
 **Generated**: 2026-02-04
-**Last Updated**: 2026-02-04 (Phase 5: Historic data UI and hook testing)
+**Last Updated**: 2026-02-04 (Phase 6: Heatmap component testing with fake timers and store mocking)
 
 ## Test Framework
 
-### TypeScript/Client (Updated for Phase 5)
+### TypeScript/Client (Updated for Phase 6)
 
 | Type | Framework | Configuration | Status |
 |------|-----------|---------------|--------|
 | Unit | Vitest | `vite.config.ts` test config | In use |
-| Component | @testing-library/react | jsdom environment | In use (Phase 5) |
+| Component | @testing-library/react | jsdom/happy-dom environment | In use (Phase 6) |
 | E2E | Not selected | TBD | Not started |
-| Mocks | Mock Service Worker (MSW) | `client/src/mocks/` | New (Phase 5) |
+| Mocks | Mock Service Worker (MSW) | `client/src/mocks/` | In use (Phase 5+) |
 
 ### Rust/Server and Monitor (Phase 4)
 
@@ -25,13 +25,14 @@
 
 ### Running Tests
 
-#### TypeScript/Client (Phase 5)
+#### TypeScript/Client (Phase 6)
 
 | Command | Purpose |
 |---------|---------|
 | `npm test` | Run all tests in watch mode |
 | `npm run test` | Run all tests once |
 | `npm run test:watch` | Run tests in watch mode |
+| `npm run test:coverage` | Run with coverage report |
 
 #### Rust/Server and Monitor (Phase 4)
 
@@ -48,29 +49,41 @@
 
 ## Test Organization
 
-### TypeScript/Client Directory Structure (Phase 5)
+### TypeScript/Client Directory Structure (Phase 6)
 
 ```
 client/
 ├── src/
-│   ├── __tests__/                  # Test directory
-│   │   ├── App.test.tsx            # App component tests
-│   │   ├── events.test.ts          # Event type tests
-│   │   └── formatting.test.ts      # Utility tests
-│   ├── hooks/                      # React hooks
-│   │   ├── useEventStore.ts        # Zustand store hook
-│   │   ├── useHistoricData.ts      # Historic data hook with auto-fetch
-│   │   ├── useWebSocket.ts         # WebSocket connection hook
-│   │   └── useSessionTimeouts.ts   # Session timeout logic
-│   ├── mocks/                      # MSW mock setup (NEW Phase 5)
-│   │   ├── handlers.ts             # MSW handlers for endpoints
-│   │   ├── server.ts               # MSW server setup
-│   │   ├── data.ts                 # Mock data factories
-│   │   └── index.ts                # Barrel export
+│   ├── __tests__/                           # Test directory
+│   │   ├── App.test.tsx                     # App component tests
+│   │   ├── components/
+│   │   │   └── Heatmap.test.tsx             # Heatmap component tests (36 tests, Phase 6)
+│   │   ├── hooks/
+│   │   │   └── useHistoricData.test.tsx     # Hook tests with MSW
+│   │   ├── events.test.ts                   # Event type tests
+│   │   └── formatting.test.ts               # Utility tests
+│   ├── components/
+│   │   ├── Heatmap.tsx                      # Heatmap component (Phase 6)
+│   │   ├── EventStream.tsx
+│   │   └── ...
+│   ├── hooks/                               # React hooks
+│   │   ├── useEventStore.ts
+│   │   ├── useHistoricData.ts
+│   │   ├── useWebSocket.ts
+│   │   └── useSessionTimeouts.ts
+│   ├── mocks/                               # MSW mock setup
+│   │   ├── handlers.ts
+│   │   ├── server.ts
+│   │   ├── data.ts
+│   │   └── index.ts
+│   ├── utils/
+│   │   ├── persistence.ts                   # Persistence utilities (Phase 6)
+│   │   ├── formatDate.ts
+│   │   └── ...
 │   ├── types/
-│   │   └── events.ts               # Event type definitions
-│   └── App.tsx                     # Main app component
-└── vite.config.ts                  # Vitest configuration
+│   │   └── events.ts
+│   └── App.tsx
+└── vite.config.ts                           # Vitest configuration
 ```
 
 ### Rust/Monitor Directory Structure (Phase 4)
@@ -78,216 +91,58 @@ client/
 ```
 monitor/
 ├── src/
-│   ├── config.rs               # Config module with inline tests
-│   ├── error.rs                # Error module with inline tests
-│   ├── types.rs                # Types module with inline tests
-│   ├── watcher.rs              # File watching implementation
-│   ├── parser.rs               # JSONL parser implementation
-│   ├── privacy.rs              # Privacy pipeline with 38 inline unit tests
-│   ├── crypto.rs               # Ed25519 crypto with 14 inline unit tests (Phase 6)
-│   ├── sender.rs               # HTTP sender with 8 inline unit tests (Phase 6)
-│   ├── persistence.rs          # Event batching and persistence (Phase 4)
-│   ├── lib.rs                  # Library entrypoint
-│   └── main.rs                 # Binary entrypoint (CLI)
+│   ├── config.rs
+│   ├── error.rs
+│   ├── types.rs
+│   ├── watcher.rs
+│   ├── parser.rs
+│   ├── privacy.rs
+│   ├── crypto.rs
+│   ├── sender.rs
+│   ├── persistence.rs
+│   ├── lib.rs
+│   └── main.rs
 └── tests/
-    ├── privacy_test.rs         # Integration tests for privacy compliance (17 tests)
-    └── sender_recovery_test.rs # Sender retry logic with wiremock (Phase 4)
+    ├── privacy_test.rs
+    └── sender_recovery_test.rs
 ```
 
 ## Test Patterns
 
-### MSW Handler Testing (Phase 5 - New)
+### Component Testing with Store Setup (Phase 6 - New)
 
-Setup MSW server in tests to mock HTTP endpoints:
-
-```typescript
-// mocks/server.ts
-import { setupServer } from 'msw/node';
-import { queryHandlers } from './handlers';
-
-export const server = setupServer(...queryHandlers);
-```
-
-Use in tests with beforeAll/afterEach/afterAll hooks:
+Test components that use Zustand store with direct state management:
 
 ```typescript
-// Example test setup (if added to future hook tests)
-import { server } from '../mocks/server';
+/**
+ * Tests for Heatmap component.
+ *
+ * Tests the activity heatmap including persistence checks, data merging,
+ * loading/error states, view toggles, and cell interactions.
+ *
+ * @vitest-environment happy-dom
+ */
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
-```
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-Key MSW patterns:
-1. **Server setup**: Use `setupServer(...handlers)` with handlers array
-2. **Lifecycle**: `listen()` → tests → `resetHandlers()` → `close()`
-3. **Request matching**: Match by method, path, headers, body
-4. **Response templates**: Return `HttpResponse.json()` with status
-5. **Handler override**: Use `server.use()` to override for specific tests
+import { useEventStore } from '../../hooks/useEventStore';
+import { Heatmap } from '../../components/Heatmap';
 
-Example handler override in a test:
+// Store original env values
+const originalSupabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const originalSupabaseToken = import.meta.env.VITE_SUPABASE_TOKEN;
 
-```typescript
-import { server } from '../mocks/server';
-import { http, HttpResponse } from 'msw';
-
-it('handles API errors gracefully', () => {
-  // Override handler for this test
-  server.use(
-    http.get('*/functions/v1/query', () => {
-      return HttpResponse.json(
-        { error: 'internal_error', message: 'Database query failed' },
-        { status: 500 }
-      );
-    })
-  );
-
-  // Test that error is handled
-});
-```
-
-### Component Testing with renderHook (Phase 5 - New)
-
-Test React hooks and store interactions without full component renders:
-
-```typescript
-import { renderHook, act, waitFor } from '@testing-library/react';
-import { useEventStore } from '../hooks/useEventStore';
-
-describe('useEventStore', () => {
-  beforeEach(() => {
-    // Reset store before each test
-    useEventStore.setState({
-      status: 'disconnected',
-      events: [],
-      sessions: new Map(),
-      filters: { sessionId: null, timeRange: null },
-    });
-  });
-
-  it('adds events to the buffer', () => {
-    const { result } = renderHook(() => useEventStore());
-
-    act(() => {
-      result.current.addEvent(mockEvent);
-    });
-
-    expect(result.current.events).toHaveLength(1);
-    expect(result.current.events[0]).toEqual(mockEvent);
-  });
-
-  it('enforces MAX_EVENTS limit', () => {
-    const { result } = renderHook(() => useEventStore());
-
-    act(() => {
-      // Add more than MAX_EVENTS
-      for (let i = 0; i < 1001; i++) {
-        result.current.addEvent(createMockEvent(i));
-      }
-    });
-
-    expect(result.current.events).toHaveLength(1000);
-  });
-
-  it('transitions sessions from active to inactive', () => {
-    const { result } = renderHook(() => useEventStore());
-
-    act(() => {
-      result.current.addEvent(mockEvent);
-    });
-
-    const sessionId = mockEvent.payload.sessionId;
-    expect(result.current.sessions.get(sessionId)?.status).toBe('active');
-
-    // Simulate time passing and update session states
-    act(() => {
-      vi.useFakeTimers();
-      vi.advanceTimersByTime(5 * 60 * 1001); // 5 minutes + 1 second
-      result.current.updateSessionStates();
-    });
-
-    expect(result.current.sessions.get(sessionId)?.status).toBe('inactive');
-
-    vi.useRealTimers();
-  });
-});
-```
-
-Key renderHook patterns:
-1. **Reset state**: Use `setState()` in `beforeEach`
-2. **Wrap updates in act()**: All state changes must be in `act()`
-3. **Access hook result**: Use `result.current` to access hook values
-4. **Test async effects**: Use `waitFor()` for async operations
-5. **Fake timers**: Use `vi.useFakeTimers()` for time-dependent logic
-
-### Store Direct Testing (Phase 5)
-
-Test Zustand store state without rendering:
-
-```typescript
-// __tests__/App.test.tsx
-import { useEventStore } from '../hooks/useEventStore';
-
-beforeEach(() => {
-  localStorage.clear();
-  useEventStore.setState({
-    status: 'disconnected',
-    events: [],
-    sessions: new Map(),
-    filters: { sessionId: null, timeRange: null },
-  });
-});
-
-describe('Filter State Management', () => {
-  it('updates session filter via store actions', () => {
-    const { setSessionFilter, clearFilters } = useEventStore.getState();
-
-    // Call action
-    setSessionFilter('test-session-id');
-
-    // Assert state changed
-    expect(useEventStore.getState().filters.sessionId).toBe('test-session-id');
-
-    // Clear filters
-    clearFilters();
-    expect(useEventStore.getState().filters.sessionId).toBeNull();
-  });
-
-  it('maintains time range filter independently', () => {
-    const { setTimeRangeFilter, clearFilters } = useEventStore.getState();
-
-    const start = new Date('2024-01-01T10:00:00Z');
-    const end = new Date('2024-01-01T11:00:00Z');
-
-    setTimeRangeFilter({ start, end });
-
-    expect(useEventStore.getState().filters.timeRange).toEqual({ start, end });
-
-    clearFilters();
-    expect(useEventStore.getState().filters.timeRange).toBeNull();
-  });
-});
-```
-
-Key direct testing patterns:
-1. **No rendering overhead**: Test logic without React component rendering
-2. **Direct state access**: Use `getState()` to read state
-3. **Direct action calls**: Call actions via `getState()`
-4. **Deterministic tests**: No async timing or effect complications
-5. **Fast feedback**: No component lifecycle overhead
-
-### Zustand Store Mocking (Phase 5)
-
-Mock the store in component tests:
-
-```typescript
-// __tests__/App.test.tsx
-import { render, screen } from '@testing-library/react';
-import { useEventStore } from '../hooks/useEventStore';
-
-beforeEach(() => {
-  // Reset store to clean initial state
+/**
+ * Helper to reset store state properly
+ */
+function resetStore(): void {
   useEventStore.setState({
     status: 'disconnected',
     events: [],
@@ -298,192 +153,837 @@ beforeEach(() => {
     historicDataFetchedAt: null,
     historicDataError: null,
   });
+}
+
+beforeEach(() => {
+  // Reset timers and mocks
+  vi.clearAllMocks();
+
+  // Enable persistence by default
+  import.meta.env.VITE_SUPABASE_URL = 'https://test.supabase.co';
+  import.meta.env.VITE_SUPABASE_TOKEN = 'test-token';
+
+  // Reset store state
+  resetStore();
 });
 
-it('renders with initial store state', () => {
-  render(<App />);
+afterEach(() => {
+  // Restore env values
+  import.meta.env.VITE_SUPABASE_URL = originalSupabaseUrl;
+  import.meta.env.VITE_SUPABASE_TOKEN = originalSupabaseToken;
 
-  // Component should use store's initial state
-  expect(screen.getByText('VibeTea Dashboard')).toBeInTheDocument();
-});
+  // Reset store state
+  resetStore();
 
-it('updates view when store state changes', () => {
-  const { rerender } = render(<App />);
-
-  // Update store state
-  useEventStore.setState({ status: 'connected' });
-  rerender(<App />);
-
-  // Component should reflect new state
-});
-
-it('localStorage persists token across renders', () => {
-  localStorage.setItem('vibetea_token', 'test-token-123');
-
-  render(<App />);
-
-  expect(screen.getByText('Sessions')).toBeInTheDocument();
+  // Cleanup timers if used
+  vi.useRealTimers();
 });
 ```
 
-Key mocking patterns:
-1. **State reset**: Use `setState()` to set known initial state
-2. **No vi.mock() needed**: Zustand hooks don't need explicit mocking
-3. **Direct state mutation**: Modify store directly for test setup
-4. **Render verification**: Assert component responds to store state
-5. **localStorage mocking**: Vitest handles globals, just set/get items
+Key component testing patterns (Phase 6):
+1. **Environment isolation**: Save and restore env vars in setup/teardown
+2. **Store reset**: Use `setState` to reset to clean state before each test
+3. **Happy-dom environment**: Use `@vitest-environment happy-dom` for lighter DOM
+4. **Fake timers**: Use `vi.useFakeTimers()` for time-dependent logic
+5. **Cleanup timers**: Always restore with `vi.useRealTimers()` in afterEach
 
-### Component Testing with MSW (Phase 5)
+### Persistence Check Tests (Phase 6 - New)
 
-Test components that fetch data:
+Test feature detection and early returns:
 
 ```typescript
-import { render, screen, waitFor } from '@testing-library/react';
-import { server } from '../mocks/server';
-import App from '../App';
+describe('Heatmap - Persistence Check', () => {
+  it('should return null when isPersistenceEnabled() returns false', () => {
+    // Disable persistence
+    import.meta.env.VITE_SUPABASE_URL = '';
+    import.meta.env.VITE_SUPABASE_TOKEN = '';
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+    const { container } = render(<Heatmap />);
 
-it('displays historic data when fetch succeeds', async () => {
-  localStorage.setItem('vibetea_token', 'test-token');
-
-  render(<App />);
-
-  // Wait for async fetch to complete
-  await waitFor(() => {
-    expect(screen.getByText(/heatmap/i)).toBeInTheDocument();
+    // Component should render nothing
+    expect(container.firstChild).toBeNull();
   });
-});
 
-it('displays error message when fetch fails', async () => {
-  localStorage.setItem('vibetea_token', 'invalid-token');
+  it('should render when persistence is enabled', () => {
+    // Persistence enabled in beforeEach
+    render(<Heatmap />);
 
-  // Override handler for this test
-  server.use(
-    http.get('*/functions/v1/query', () => {
-      return HttpResponse.json(
-        { error: 'invalid_token', message: 'Bearer token is invalid' },
-        { status: 401 }
-      );
-    })
-  );
-
-  render(<App />);
-
-  // Wait for error message
-  await waitFor(() => {
-    expect(screen.getByText(/invalid token/i)).toBeInTheDocument();
+    // Component should render the activity heading
+    expect(
+      screen.getByRole('region', { name: 'Activity heatmap' })
+    ).toBeInTheDocument();
   });
 });
 ```
 
-Key component + MSW patterns:
-1. **Server lifecycle**: Setup in `beforeAll`, reset in `afterEach`, close in `afterAll`
-2. **Override handlers**: Use `server.use()` for test-specific behavior
-3. **Async expectations**: Use `waitFor()` for fetch completion
-4. **Error scenarios**: Test both success and error paths
-5. **User interactions**: Test fetch triggering on user action
+Key persistence test patterns (Phase 6):
+1. **Feature gates**: Test that components return null when disabled
+2. **Environment variables**: Manipulate VITE_ constants for testing
+3. **Container assertions**: Check `container.firstChild` for null rendering
+4. **Region/heading checks**: Verify component structure when enabled
 
-### Type Tests (Phase 5)
+### Data Merging Tests (Phase 6 - New)
 
-Test event type structure:
+Test complex data combination logic:
 
 ```typescript
-// __tests__/events.test.ts
-import { describe, it, expect } from 'vitest';
-import type { VibeteaEvent, EventType } from '../types/events';
+describe('Heatmap - Data Merging Logic', () => {
+  it('should use real-time events for current hour over historic data', async () => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentDateStr = now.toISOString().split('T')[0];
 
-describe('Event Types', () => {
-  it('should create a valid session event', () => {
-    const event: VibeteaEvent<'session'> = {
-      id: 'evt_test123456789012345',
-      source: 'test-source',
-      timestamp: new Date().toISOString(),
-      type: 'session',
-      payload: {
-        sessionId: '123e4567-e89b-12d3-a456-426614174000',
-        action: 'started',
-        project: 'test-project',
-      },
-    };
-
-    expect(event.type).toBe('session');
-    expect(event.payload.action).toBe('started');
-  });
-
-  it('should support all event types', () => {
-    const eventTypes: EventType[] = [
-      'session',
-      'activity',
-      'tool',
-      'agent',
-      'summary',
-      'error',
+    // Set up historic data for current hour with 5 events
+    const historicData: HourlyAggregate[] = [
+      createHourlyAggregate({
+        date: currentDateStr,
+        hour: currentHour,
+        eventCount: 5, // Historic says 5 events
+      }),
     ];
 
-    expect(eventTypes).toHaveLength(6);
+    // Add 10 real-time events for current hour
+    const realtimeEvents: VibeteaEvent[] = [];
+    for (let i = 0; i < 10; i++) {
+      realtimeEvents.push(createMockEvent());
+    }
+
+    // Set up store state with fresh historic data and real-time events
+    await act(async () => {
+      useEventStore.setState({
+        events: realtimeEvents,
+        historicData,
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    });
+
+    render(<Heatmap />);
+
+    // The grid should be rendered (we have events)
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument();
+    });
+
+    // Find cells and verify the current hour shows real-time count (10), not historic (5)
+    const cells = screen.getAllByRole('gridcell');
+    const currentHourCell = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('10 events')
+    );
+    expect(currentHourCell).toBeInTheDocument();
+  });
+
+  it('should use historic data for past hours', async () => {
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayDateStr = yesterday.toISOString().split('T')[0];
+
+    // Set up historic data for yesterday at noon with 50 events
+    const historicData: HourlyAggregate[] = [
+      createHourlyAggregate({
+        date: yesterdayDateStr,
+        hour: 12,
+        eventCount: 50,
+      }),
+    ];
+
+    await act(async () => {
+      useEventStore.setState({
+        events: [],
+        historicData,
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    });
+
+    render(<Heatmap />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument();
+    });
+
+    // Grid should render with cells
+    const cells = screen.getAllByRole('gridcell');
+    expect(cells.length).toBeGreaterThan(0);
   });
 });
 ```
 
-Key type test patterns:
-1. **Type instantiation**: Create typed objects to verify structure
-2. **Discriminated unions**: Test type discrimination works
-3. **Runtime validation**: Verify values match TypeScript types
-4. **Type coverage**: Test all event variants
+Key data merging test patterns (Phase 6):
+1. **Timestamp manipulation**: Use `new Date()` and `setDate()` for date control
+2. **Store act wrapper**: Wrap all state changes in `act()`
+3. **Multiple assertions**: Test both presence and counts
+4. **Aria-label matching**: Use regex to find cells by event count
+5. **Grid structure**: Verify grid renders with expected cell count
 
-### Integration Tests (Rust) - Persistence Module (Phase 4)
+### Loading State with Fake Timers (Phase 6 - New)
 
-Larger tests using wiremock to test event batching and retry logic:
+Test async operations and timeouts:
 
-```rust
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+```typescript
+describe('Heatmap - Loading State', () => {
+  it('should show "Fetching historic data..." with spinner when loading', () => {
+    // Set up loading state
+    useEventStore.setState({
+      events: [],
+      historicData: [],
+      historicDataStatus: 'loading',
+      historicDataFetchedAt: null,
+      historicDataError: null,
+    });
 
-#[tokio::test]
-async fn test_oversized_event_does_not_block_normal_events() {
-    let mock_server = MockServer::start().await;
+    render(<Heatmap />);
 
-    // First request: oversized chunk -> 413
-    Mock::given(method("POST"))
-        .and(path("/events"))
-        .respond_with(ResponseTemplate::new(413).set_body_string("Payload too large"))
-        .up_to_n_times(1)
-        .mount(&mock_server)
-        .await;
+    // Should show loading indicator
+    expect(screen.getByText('Fetching historic data...')).toBeInTheDocument();
 
-    // Second request: normal chunk -> 200
-    Mock::given(method("POST"))
-        .and(path("/events"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&mock_server)
-        .await;
+    // Should have a spinner (svg with animate-spin class)
+    const spinner = document.querySelector('svg.animate-spin');
+    expect(spinner).toBeInTheDocument();
+  });
 
-    let mut sender = create_test_sender(&mock_server.uri());
+  it('should transition loading state to error after 5 second timeout', async () => {
+    vi.useFakeTimers();
 
-    // Queue events: [normal, oversized, normal]
-    sender.queue(create_small_event());
-    sender.queue(create_oversized_event());
-    sender.queue(create_small_event());
+    // Mock that maintains loading state (never resolves to success)
+    const loadingMock = vi.fn().mockImplementation(() => {
+      // Keep the loading state - don't change it
+      return Promise.resolve();
+    });
 
-    // Flush should succeed overall
-    let result = sender.flush().await;
-    assert!(result.is_ok(), "Flush should succeed: {:?}", result);
-    assert!(sender.is_empty(), "Buffer should be empty after flush");
-}
+    useEventStore.setState({
+      fetchHistoricData: loadingMock,
+      historicData: [],
+      historicDataStatus: 'loading',
+      historicDataFetchedAt: null,
+      historicDataError: null,
+    });
+
+    render(<Heatmap />);
+
+    // Initially should show loading
+    expect(screen.getByText('Fetching historic data...')).toBeInTheDocument();
+
+    // Advance time by 5 seconds (the LOADING_TIMEOUT_MS)
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+
+    // After timeout, should show error message
+    expect(
+      screen.getByText(
+        'Unable to load historic data. Showing real-time events only.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('should not show loading indicator when historic data exists', () => {
+    // Still loading but have cached data
+    const historicData: HourlyAggregate[] = [
+      createHourlyAggregate({ eventCount: 10 }),
+    ];
+
+    useEventStore.setState({
+      events: [],
+      historicData,
+      historicDataStatus: 'loading',
+      historicDataFetchedAt: Date.now() - 6 * 60 * 1000, // 6 minutes ago (stale)
+      historicDataError: null,
+    });
+
+    render(<Heatmap />);
+
+    // Should NOT show loading indicator when we have cached data
+    expect(
+      screen.queryByText('Fetching historic data...')
+    ).not.toBeInTheDocument();
+  });
+});
 ```
 
-Key patterns for Phase 4 integration tests:
-1. **Helper functions**: Reusable test event creation
-2. **wiremock MockServer**: Lightweight HTTP mocking without external services
-3. **Async tests with #[tokio::test]**: Test async code patterns
-4. **Response templates**: Match requests and return configured responses
-5. **Scenario-based tests**: Test recovery paths (413, 500, timeout)
-6. **Buffer verification**: Check buffer state after operations
+Key fake timer test patterns (Phase 6):
+1. **useFakeTimers**: Enable with `vi.useFakeTimers()` at start of test
+2. **advanceTimersByTime**: Skip forward by milliseconds in tests
+3. **act wrapper**: Always wrap timer advances in `act()`
+4. **Cleanup**: Call `vi.useRealTimers()` in afterEach
+5. **Cache-aware logic**: Test that cached data prevents loading state
 
-## Mocking Strategy (Phase 5 Update)
+### Error State Tests (Phase 6)
+
+Test error handling and recovery:
+
+```typescript
+describe('Heatmap - Error State', () => {
+  it('should show error message when status is error', async () => {
+    const errorMock = vi.fn().mockImplementation(() => {
+      return Promise.resolve();
+    });
+
+    await act(async () => {
+      useEventStore.setState({
+        fetchHistoricData: errorMock,
+        events: [],
+        historicData: [],
+        historicDataStatus: 'error',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: 'Database query failed',
+      });
+    });
+
+    render(<Heatmap />);
+
+    expect(
+      screen.getByText(
+        'Unable to load historic data. Showing real-time events only.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('should show Retry button that triggers refetch', async () => {
+    let refetchCalled = false;
+
+    const mockFetch = vi.fn().mockImplementation(() => {
+      refetchCalled = true;
+      useEventStore.setState({
+        historicData: [],
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+      return Promise.resolve();
+    });
+
+    await act(async () => {
+      useEventStore.setState({
+        fetchHistoricData: mockFetch,
+        events: [],
+        historicData: [],
+        historicDataStatus: 'error',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: 'Network error',
+      });
+    });
+
+    render(<Heatmap />);
+
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    expect(retryButton).toBeInTheDocument();
+
+    fireEvent.click(retryButton);
+
+    await waitFor(() => {
+      expect(refetchCalled).toBe(true);
+    });
+  });
+
+  it('should still display real-time data during error state', async () => {
+    const realtimeEvents = [
+      createMockEvent(),
+      createMockEvent(),
+      createMockEvent(),
+    ];
+
+    const errorMock = vi.fn().mockImplementation(() => Promise.resolve());
+
+    await act(async () => {
+      useEventStore.setState({
+        fetchHistoricData: errorMock,
+        events: realtimeEvents,
+        historicData: [],
+        historicDataStatus: 'error',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: 'Server error',
+      });
+    });
+
+    render(<Heatmap />);
+
+    // Error message should be shown
+    expect(
+      screen.getByText(
+        'Unable to load historic data. Showing real-time events only.'
+      )
+    ).toBeInTheDocument();
+
+    // But the grid should still be rendered with real-time data
+    expect(screen.getByRole('grid')).toBeInTheDocument();
+
+    // Should have cells showing the 3 events
+    const cells = screen.getAllByRole('gridcell');
+    const cellWithEvents = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('3 events')
+    );
+    expect(cellWithEvents).toBeInTheDocument();
+  });
+});
+```
+
+Key error state patterns (Phase 6):
+1. **Error message verification**: Check specific error text appears
+2. **Retry button testing**: Find and click retry, verify action called
+3. **Graceful degradation**: Show real-time data even on error
+4. **Mock function tracking**: Use boolean flags to track callback invocation
+
+### View Toggle Tests (Phase 6)
+
+Test view switching and data fetching:
+
+```typescript
+describe('Heatmap - View Toggle', () => {
+  it('should render 7-day and 30-day toggle buttons', () => {
+    useEventStore.setState({
+      historicData: [createHourlyAggregate({ eventCount: 5 })],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+    });
+
+    render(<Heatmap />);
+
+    expect(screen.getByRole('button', { name: '7 Days' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '30 Days' })).toBeInTheDocument();
+  });
+
+  it('should have 7-day view selected by default', () => {
+    useEventStore.setState({
+      historicData: [createHourlyAggregate({ eventCount: 5 })],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+    });
+
+    render(<Heatmap />);
+
+    const sevenDayButton = screen.getByRole('button', { name: '7 Days' });
+    expect(sevenDayButton).toHaveAttribute('aria-pressed', 'true');
+
+    const thirtyDayButton = screen.getByRole('button', { name: '30 Days' });
+    expect(thirtyDayButton).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('should switch to 30-day view when clicked', () => {
+    useEventStore.setState({
+      historicData: [createHourlyAggregate({ eventCount: 5 })],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+    });
+
+    render(<Heatmap />);
+
+    const thirtyDayButton = screen.getByRole('button', { name: '30 Days' });
+    fireEvent.click(thirtyDayButton);
+
+    expect(thirtyDayButton).toHaveAttribute('aria-pressed', 'true');
+
+    const sevenDayButton = screen.getByRole('button', { name: '7 Days' });
+    expect(sevenDayButton).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('should render more cells in 30-day view', async () => {
+    const events = [createMockEvent()];
+
+    const preservingMock = vi.fn().mockImplementation(() => {
+      const state = useEventStore.getState();
+      useEventStore.setState({
+        historicData: state.historicData,
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+      return Promise.resolve();
+    });
+
+    await act(async () => {
+      useEventStore.setState({
+        fetchHistoricData: preservingMock,
+        events,
+        historicData: [],
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    });
+
+    render(<Heatmap />);
+
+    // Wait for grid to render
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument();
+    });
+
+    // In 7-day view, should have 7 * 24 = 168 cells
+    let cells = screen.getAllByRole('gridcell');
+    expect(cells.length).toBe(7 * 24);
+
+    // Switch to 30-day view
+    fireEvent.click(screen.getByRole('button', { name: '30 Days' }));
+
+    // In 30-day view, should have 30 * 24 = 720 cells
+    cells = screen.getAllByRole('gridcell');
+    expect(cells.length).toBe(30 * 24);
+  });
+});
+```
+
+Key view toggle patterns (Phase 6):
+1. **aria-pressed attribute**: Check toggle button state
+2. **Cell count verification**: Verify grid size changes
+3. **Button interaction**: Click buttons and verify state changes
+4. **Rerender handling**: Grid updates when view changes
+
+### Cell Interaction Tests (Phase 6)
+
+Test user interactions and callbacks:
+
+```typescript
+describe('Heatmap - Cell Interaction', () => {
+  it('should show tooltip with correct count on hover', async () => {
+    const events = [createMockEvent(), createMockEvent(), createMockEvent()];
+
+    useEventStore.setState({
+      events,
+      historicData: [],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+      historicDataError: null,
+    });
+
+    render(<Heatmap />);
+
+    // Find the cell with 3 events
+    const cells = screen.getAllByRole('gridcell');
+    const cellWith3Events = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('3 events')
+    );
+
+    if (cellWith3Events) {
+      fireEvent.mouseEnter(cellWith3Events);
+    }
+
+    // Tooltip should appear
+    await waitFor(() => {
+      expect(screen.getByRole('tooltip')).toBeInTheDocument();
+      expect(screen.getByText('3 events')).toBeInTheDocument();
+    });
+  });
+
+  it('should call onCellClick with correct time range when cell is clicked', async () => {
+    const onCellClick = vi.fn();
+
+    const events = [createMockEvent()];
+
+    useEventStore.setState({
+      events,
+      historicData: [],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+      historicDataError: null,
+    });
+
+    render(<Heatmap onCellClick={onCellClick} />);
+
+    // Find a cell with event and click it
+    const cells = screen.getAllByRole('gridcell');
+    const cellWithEvent = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('1 event')
+    );
+
+    if (cellWithEvent) {
+      fireEvent.click(cellWithEvent);
+    }
+
+    // onCellClick should be called with start and end times
+    expect(onCellClick).toHaveBeenCalledTimes(1);
+
+    const [startTime, endTime] = onCellClick.mock.calls[0] as [Date, Date];
+
+    // Verify times are Date objects
+    expect(startTime).toBeInstanceOf(Date);
+    expect(endTime).toBeInstanceOf(Date);
+
+    // End time should be exactly 1 hour after start time
+    const timeDiff = endTime.getTime() - startTime.getTime();
+    expect(timeDiff).toBe(60 * 60 * 1000); // 1 hour in ms
+  });
+
+  it('should support keyboard navigation with Enter key', () => {
+    const onCellClick = vi.fn();
+
+    const events = [createMockEvent()];
+
+    useEventStore.setState({
+      events,
+      historicData: [],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+      historicDataError: null,
+    });
+
+    render(<Heatmap onCellClick={onCellClick} />);
+
+    const cells = screen.getAllByRole('gridcell');
+    const cellWithEvent = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('1 event')
+    );
+
+    if (cellWithEvent) {
+      cellWithEvent.focus();
+      fireEvent.keyDown(cellWithEvent, { key: 'Enter' });
+      expect(onCellClick).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('should support keyboard navigation with Space key', () => {
+    const onCellClick = vi.fn();
+
+    const events = [createMockEvent()];
+
+    useEventStore.setState({
+      events,
+      historicData: [],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+      historicDataError: null,
+    });
+
+    render(<Heatmap onCellClick={onCellClick} />);
+
+    const cells = screen.getAllByRole('gridcell');
+    const cellWithEvent = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('1 event')
+    );
+
+    if (cellWithEvent) {
+      cellWithEvent.focus();
+      fireEvent.keyDown(cellWithEvent, { key: ' ' });
+      expect(onCellClick).toHaveBeenCalledTimes(1);
+    }
+  });
+});
+```
+
+Key cell interaction patterns (Phase 6):
+1. **Hover interactions**: Use `fireEvent.mouseEnter` for tooltips
+2. **Click handling**: Fire click events on cells
+3. **Callback verification**: Check mock function calls and arguments
+4. **Time range validation**: Verify 1-hour duration calculations
+5. **Keyboard support**: Test Enter and Space key interactions
+
+### Accessibility Tests (Phase 6)
+
+Test ARIA labels and keyboard navigation:
+
+```typescript
+describe('Heatmap - Accessibility', () => {
+  it('should have proper ARIA labels on cells', async () => {
+    const events = [createMockEvent()];
+
+    await act(async () => {
+      useEventStore.setState({
+        events,
+        historicData: [],
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    });
+
+    render(<Heatmap />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument();
+    });
+
+    const cells = screen.getAllByRole('gridcell');
+
+    // All cells should have aria-label
+    cells.forEach((cell) => {
+      expect(cell).toHaveAttribute('aria-label');
+    });
+
+    // Check format of aria-label (should include event count and time)
+    const cellWithEvent = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('event')
+    );
+    expect(cellWithEvent?.getAttribute('aria-label')).toMatch(
+      /\d+ events? on .+ at \d{2}:00/
+    );
+  });
+
+  it('should have proper region role and label', () => {
+    render(<Heatmap />);
+
+    const region = screen.getByRole('region', { name: 'Activity heatmap' });
+    expect(region).toBeInTheDocument();
+  });
+
+  it('should have accessible view toggle buttons', async () => {
+    await act(async () => {
+      useEventStore.setState({
+        historicData: [createHourlyAggregate({ eventCount: 5 })],
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+      });
+    });
+
+    render(<Heatmap />);
+
+    const group = screen.getByRole('group', { name: 'View range selector' });
+    expect(group).toBeInTheDocument();
+
+    const buttons = screen.getAllByRole('button');
+    const toggleButtons = buttons.filter(
+      (btn) =>
+        btn.textContent?.includes('Days') && btn.hasAttribute('aria-pressed')
+    );
+    expect(toggleButtons.length).toBe(2);
+  });
+
+  it('should have focusable cells with tabIndex', async () => {
+    const events = [createMockEvent()];
+
+    await act(async () => {
+      useEventStore.setState({
+        events,
+        historicData: [],
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    });
+
+    render(<Heatmap />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument();
+    });
+
+    const cells = screen.getAllByRole('gridcell');
+
+    // All cells should be focusable
+    cells.forEach((cell) => {
+      expect(cell).toHaveAttribute('tabIndex', '0');
+    });
+  });
+});
+```
+
+Key accessibility test patterns (Phase 6):
+1. **ARIA label validation**: Check aria-label format with regex
+2. **Region/role verification**: Verify semantic structure
+3. **Group roles**: Check button groups are properly labeled
+4. **TabIndex**: Ensure interactive elements are focusable
+5. **Role matching**: Use semantic roles in queries
+
+### Empty State and Color Scale Tests (Phase 6)
+
+Test edge cases and visual states:
+
+```typescript
+describe('Heatmap - Empty State', () => {
+  it('should show empty state when no events exist', () => {
+    useEventStore.setState({
+      events: [],
+      historicData: [],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+      historicDataError: null,
+    });
+
+    render(<Heatmap />);
+
+    expect(screen.getByText('No activity data')).toBeInTheDocument();
+    expect(
+      screen.getByText('Events will appear here as they occur')
+    ).toBeInTheDocument();
+  });
+
+  it('should not show grid when there are no events', () => {
+    useEventStore.setState({
+      events: [],
+      historicData: [],
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+      historicDataError: null,
+    });
+
+    render(<Heatmap />);
+
+    expect(screen.queryByRole('grid')).not.toBeInTheDocument();
+  });
+});
+
+describe('Heatmap - Color Scale', () => {
+  it('should render legend with color scale', async () => {
+    const events = [createMockEvent()];
+
+    await act(async () => {
+      useEventStore.setState({
+        events,
+        historicData: [],
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    });
+
+    render(<Heatmap />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Less')).toBeInTheDocument();
+    expect(screen.getByText('More')).toBeInTheDocument();
+  });
+
+  it('should apply different colors based on event count', async () => {
+    const now = new Date();
+    const events: VibeteaEvent[] = [];
+
+    // Add 55 events to get bright green color (51+)
+    for (let i = 0; i < 55; i++) {
+      events.push(createMockEvent({ timestamp: now.toISOString() }));
+    }
+
+    await act(async () => {
+      useEventStore.setState({
+        events,
+        historicData: [],
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    });
+
+    render(<Heatmap />);
+
+    await waitFor(() => {
+      expect(screen.getByRole('grid')).toBeInTheDocument();
+    });
+
+    // Find the cell with 55 events
+    const cells = screen.getAllByRole('gridcell');
+    const cellWith55Events = cells.find((cell) =>
+      cell.getAttribute('aria-label')?.includes('55 events')
+    );
+
+    expect(cellWith55Events).toBeInTheDocument();
+
+    // Should have the bright green color (#5dad6f) for 51+ events
+    expect(cellWith55Events).toHaveStyle({ backgroundColor: '#5dad6f' });
+  });
+});
+```
+
+Key pattern testing patterns (Phase 6):
+1. **Empty state verification**: Check text and grid absence
+2. **Legend rendering**: Verify color scale legend appears
+3. **Color computation**: Verify backgroundColor styles match counts
+4. **Multiple event creation**: Generate test data programmatically
+
+## Mocking Strategy (Phase 6 Update)
 
 ### TypeScript/Client - MSW Mocks
 
@@ -523,9 +1023,9 @@ const queryHandler = http.get('*/functions/v1/query', ({ request }) => {
 export const queryHandlers = [queryHandler] as const;
 ```
 
-### Zustand Store Mocking
+### Zustand Store Mocking (Phase 6)
 
-Store is mocked by resetting state and injecting test data:
+Mock store state by resetting and injecting test data:
 
 ```typescript
 beforeEach(() => {
@@ -550,6 +1050,39 @@ beforeEach(() => {
 });
 ```
 
+### Vitest Mock Functions (Phase 6)
+
+Use `vi.fn()` to track mock behavior:
+
+```typescript
+// Track fetch calls
+let fetchCalls: number[] = [];
+
+beforeEach(() => {
+  fetchCalls = [];
+
+  const mockFetch = vi.fn().mockImplementation((days: 7 | 30) => {
+    fetchCalls.push(days);
+    useEventStore.setState({
+      historicDataStatus: 'success',
+      historicDataFetchedAt: Date.now(),
+    });
+    return Promise.resolve();
+  });
+  useEventStore.setState({ fetchHistoricData: mockFetch });
+});
+
+// In test
+fireEvent.click(screen.getByRole('button', { name: '30 Days' }));
+expect(fetchCalls).toContain(30);
+```
+
+Key mocking patterns (Phase 6):
+1. **vi.fn()**: Create traceable mock functions
+2. **mockImplementation**: Control mock behavior per test
+3. **Track calls**: Use arrays to count invocations
+4. **State injection**: Pre-populate store with test data
+
 ### Mock Locations
 
 | Mock Type | Location | Usage |
@@ -557,26 +1090,28 @@ beforeEach(() => {
 | HTTP handlers | `client/src/mocks/handlers.ts` | MSW handlers for endpoints |
 | Mock data factories | `client/src/mocks/data.ts` | Generate test data |
 | Server setup | `client/src/mocks/server.ts` | MSW server configuration |
-| Store reset | `__tests__/setup.ts` (if added) | Reset store before tests |
+| Store reset | Test files inline | Reset store before tests |
 | Fixtures | Test files inline | Small, test-specific data |
 
-## Coverage Requirements (Phase 5 Update)
+## Coverage Requirements (Phase 6 Update)
 
 ### Targets
 
 | Metric | Target | Status |
 |--------|--------|--------|
-| Line coverage | 80% | Phase 5: Growing with client tests |
-| Branch coverage | 75% | Phase 5: New hook logic branches |
-| Function coverage | 80% | Phase 5: useHistoricData, store actions |
+| Line coverage | 80% | Phase 6: Heatmap tests expand coverage |
+| Branch coverage | 75% | Phase 6: New conditional logic |
+| Function coverage | 80% | Phase 6: Helper functions, sub-components |
 
-### New Coverage Areas (Phase 5)
+### New Coverage Areas (Phase 6)
 
-- `useHistoricData`: Stale threshold detection, auto-fetch logic
-- `useEventStore`: Historic data fetch, error handling
-- MSW handlers: Token validation, query parameter validation
-- Mock data factories: Data generation for various scenarios
-- Store selectors: Event filtering, session selection
+- `Heatmap`: All code paths (persistence checks, data merging, loading/error states)
+- `persistence.ts`: isPersistenceEnabled, getPersistenceStatus functions
+- Data merging logic: Current hour, past hours, edge cases
+- Loading/error states: Timeout logic, error recovery, retry handling
+- View toggling: 7-day vs 30-day view switching
+- Cell interactions: Hover, click, keyboard navigation
+- Accessibility: ARIA labels, keyboard support, semantic structure
 
 ### Excluded Files
 
@@ -587,21 +1122,36 @@ Files excluded from coverage:
 - `main.tsx` - App entry point
 - `mocks/` - Test infrastructure (generate during tests)
 
-## Test Categories (Phase 5 Update)
+## Test Categories (Phase 6 Update)
 
-### Client Unit Tests (New for Phase 5)
+### Client Component Tests (New for Phase 6)
+
+| Test | Purpose | Framework | Status |
+|------|---------|-----------|--------|
+| `Heatmap.test.tsx` | 36 tests for heatmap component | @testing-library/react + vitest | Phase 6 |
+| Persistence check (2 tests) | Feature gate verification | Direct rendering | Phase 6 |
+| Data merging (3 tests) | Historic + real-time merge logic | Grid cell verification | Phase 6 |
+| Loading state (3 tests) | Loading indicator and timeout | Fake timers | Phase 6 |
+| Error state (4 tests) | Error handling and recovery | Retry button interaction | Phase 6 |
+| View toggle (5 tests) | 7-day/30-day switching | Button state and grid size | Phase 6 |
+| Cell interaction (7 tests) | Hover, click, keyboard | Tooltip, callback, navigation | Phase 6 |
+| Empty state (2 tests) | No events state | Text and grid checks | Phase 6 |
+| Accessibility (4 tests) | ARIA labels, keyboard, roles | Semantic structure | Phase 6 |
+| Color scale (2 tests) | Legend and color computation | Style verification | Phase 6 |
+
+### Client Unit Tests (Phase 5+)
 
 | Test | Purpose | Framework | Status |
 |------|---------|-----------|--------|
 | `events.test.ts` | Event type structure | Vitest | Phase 5 |
 | `formatting.test.ts` | Utility functions | Vitest | Phase 5 |
 
-### Client Component Tests (New for Phase 5)
+### Client Integration Tests (Phase 5+)
 
 | Test | Purpose | Framework | Status |
 |------|---------|-----------|--------|
 | `App.test.tsx` | Token handling, filter state | @testing-library/react | Phase 5 |
-| Hook tests (future) | useHistoricData, useEventStore | renderHook, MSW | Future |
+| `useHistoricData.test.tsx` (future) | Hook with MSW | renderHook + MSW | Future |
 
 ### Persistence Tests (Phase 4)
 
@@ -611,32 +1161,15 @@ Files excluded from coverage:
 | `test_multiple_oversized_events_all_skipped` | Batch cleanup | wiremock | Phase 4 |
 | `test_normal_events_flush_successfully` | Happy path | wiremock | Phase 4 |
 | `test_server_error_still_fails_flush` | 5xx handling | wiremock | Phase 4 |
-| `test_batch_size_limit` | MAX_BATCH_SIZE | unit | Phase 4 |
-| `test_buffer_overflow_evicts_oldest` | FIFO eviction | unit | Phase 4 |
-| `test_retry_policy_exponential_backoff` | Backoff math | unit | Phase 4 |
-| `test_jitter_within_bounds` | Jitter validation | unit | Phase 4 |
-
-### Smoke Tests (Critical Path - Phase 5 Update)
-
-Tests that must pass before any deploy:
-
-| Test | Purpose | Location |
-|------|---------|----------|
-| Config tests | Configuration loading | `server/src/config.rs`, `monitor/src/config.rs` |
-| Error tests | Error type safety | `server/src/error.rs` |
-| Privacy tests | Constitution I compliance | `monitor/src/privacy.rs` + `privacy_test.rs` |
-| Crypto tests | Ed25519 operations | `monitor/src/crypto.rs` |
-| Sender tests | Event buffering | `monitor/src/sender.rs` + `sender_recovery_test.rs` |
-| **Event type tests** | **Event structure validation** | **`client/src/__tests__/events.test.ts`** |
-| **App token tests** | **Token persistence and UI** | **`client/src/__tests__/App.test.tsx`** |
 
 ## CI Integration
 
-### Test Pipeline (Phase 5 Update)
+### Test Pipeline (Phase 6 Update)
 
 ```yaml
 # Client tests
 - Unit tests: npm test (vitest)
+- Component tests: npm test (heatmap.test.tsx)
 - Coverage: vitest --coverage
 
 # Server/Monitor tests
@@ -649,16 +1182,16 @@ Tests that must pass before any deploy:
 
 | Check | Blocking | Phase |
 |-------|----------|-------|
-| Client unit tests pass | Yes | Phase 5 |
-| Client component tests pass | Yes | Phase 5 |
+| Client unit tests pass | Yes | Phase 5+ |
+| Heatmap component tests pass | Yes | Phase 6 |
 | Server unit tests pass | Yes | Phase 2 |
 | Integration tests pass | Yes | Phase 4 |
 | Coverage threshold met | Yes | Phase 4+ |
-| MSW handlers verified | Yes | Phase 5 |
+| MSW handlers verified | Yes | Phase 5+ |
 
 ## Test Setup & Utilities
 
-### Vitest Configuration (Phase 5)
+### Vitest Configuration (Phase 6)
 
 ```typescript
 // vite.config.ts
@@ -676,7 +1209,7 @@ export default defineConfig({
 });
 ```
 
-Tests can specify environment inline:
+Tests can specify environment inline (Phase 6):
 
 ```typescript
 /**
@@ -685,25 +1218,62 @@ Tests can specify environment inline:
 import { render } from '@testing-library/react';
 ```
 
-### Test Imports (Phase 5)
+### Test File Structure (Phase 6)
 
-Standard test file structure:
+Standard test file structure for component tests:
 
 ```typescript
 /**
  * Tests for [component/hook/function].
  *
+ * [Description of what is tested]
+ *
  * @vitest-environment happy-dom
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import '@testing-library/jest-dom/vitest';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { server } from '../mocks/server';
-import { useEventStore } from '../hooks/useEventStore';
+// Setup: save original values
+const originalValue = import.meta.env.VITE_VALUE;
+
+// Helper functions
+function resetState(): void {
+  useEventStore.setState({ /* clean state */ });
+}
+
+function createMockData(): TestData {
+  return { /* test data */ };
+}
+
+// Global setup
+beforeEach(() => {
+  vi.clearAllMocks();
+  resetState();
+});
+
+afterEach(() => {
+  import.meta.env.VITE_VALUE = originalValue;
+  resetState();
+  vi.useRealTimers();
+});
+
+// Tests organized by feature
+describe('Component - Feature', () => {
+  it('should do X when Y', () => {
+    // Arrange
+    // Act
+    // Assert
+  });
+});
 ```
 
 ---
 
-*This document describes HOW to test for Phase 5 (Historic data UI). Update when testing strategy changes.*
+*This document describes HOW to test for Phase 6 (Heatmap component testing). Update when testing strategy changes.*

@@ -29,6 +29,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **Async Channel-Based Batching** | **NEW Phase 4**: Persistence uses mpsc channels for decoupled event batching in background tasks |
 | **Stale-While-Revalidate Caching** | **NEW Phase 5**: Client caches historic data with 5-minute staleness window, refetches in background |
 | **SWR Hook Pattern** | **NEW Phase 5**: `useHistoricData` hook provides stale-while-revalidate data fetching with Bearer token auth |
+| **Feature Detection Pattern** | **NEW Phase 6**: Client detects persistence capability via environment variables, conditionally renders components |
 
 ## Core Components
 
@@ -83,6 +84,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Deduplication logic: real-time event counts for current hour override historic aggregates for that hour
   - **NEW Phase 5**: Stale-while-revalidate caching of historic data with 5-minute staleness window
   - **NEW Phase 5**: `useHistoricData` hook for reactive data fetching with Bearer token authentication
+  - **NEW Phase 6**: Persistence feature detection via `isPersistenceEnabled()` utility, conditional component rendering
 - **Dependencies**:
   - Depends on **Server** (via WebSocket connection to `/ws` for real-time)
   - Optionally depends on **Supabase** (via HTTP GET to query edge function for historic data)
@@ -164,6 +166,24 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches with st
 14. `useHistoricData` hook returns updated result object with data, status, error, fetchedAt, refetch
 15. Heatmap component re-renders with merged real-time + historic data
 16. Manual refetch available via `refetch()` function (bypasses staleness check)
+
+### Heatmap Data Merging (NEW Phase 6)
+
+**Feature Detection → Data Merging → Visualization:**
+1. Component mounts and calls `isPersistenceEnabled()` from `utils/persistence.ts`
+2. If persistence disabled (VITE_SUPABASE_URL empty or undefined):
+   - Heatmap component returns null (completely hidden)
+   - No hooks called, no network requests
+3. If persistence enabled:
+   - Fetch real-time events via `useEventStore()` selector (already in Zustand)
+   - Fetch historic data via `useHistoricData(viewDays)` hook
+   - Compute real-time event counts by hour bucket using local timezone
+   - Merge historic aggregates (UTC-based) with real-time counts (local timezone):
+     - For current hour: use fresh real-time event counts
+     - For past hours: use historic aggregate counts
+     - UTC date/hour converted to local bucket key for consistent merging
+   - Merge function deduplicates by preferring real-time data for current hour
+   - Generate heatmap cells with merged data, group by day, render grid
 
 ### Detailed Request/Response Cycle
 
@@ -253,6 +273,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches with st
 - `EventStream` component renders with virtualized scrolling (real-time events)
 - `SessionOverview` shows active sessions with metadata
 - `Heatmap` displays activity over time bins (real-time + historic aggregates, with deduplication for current hour)
+- **NEW Phase 6**: Heatmap only renders if persistence is enabled via `isPersistenceEnabled()` check
 - `ConnectionStatus` shows server connectivity
 - **NEW Phase 5**: Historic data loading state shown with 'loading' or error messages
 
@@ -298,6 +319,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches with st
 | **NEW Phase 5**: `UseHistoricDataResult` | Hook result for historic data | {data, status, error, fetchedAt, refetch} |
 | **NEW Phase 5**: `HistoricDataStatus` | Status of historic data fetch | 'idle' \| 'loading' \| 'error' \| 'success' |
 | **NEW Phase 5**: `HistoricDataSnapshot` | Store state subset for historic data | {data, status, fetchedAt, error} |
+| **NEW Phase 6**: `PersistenceStatus` | Persistence configuration status | {enabled, hasUrl, hasToken, message} |
 
 ## Authentication & Authorization
 
@@ -396,6 +418,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches with st
 | **NEW Phase 4**: **Channel Backpressure** | mpsc channel capacity (MAX_BATCH_SIZE * 2) | PersistenceManager receives from channel with non-blocking try_send in main loop |
 | **NEW Phase 5**: **Historic Data Caching** | Stale-while-revalidate with 5-min threshold | `useHistoricData` hook and Zustand store |
 | **NEW Phase 5**: **Bearer Token Auth** | Authorization header validation in edge functions | `supabase/functions/query/index.ts` and `_shared/auth.ts` |
+| **NEW Phase 6**: **Feature Detection** | Environment variable checks (`VITE_SUPABASE_URL`) | `client/src/utils/persistence.ts` utilities |
 | **Edge Function Auth** | Ed25519 + bearer tokens | `supabase/functions/_shared/auth.ts` |
 
 ## Design Decisions
@@ -450,6 +473,15 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches with st
 - **Reusable**: Multiple components can use same hook without duplicating logic
 - **Testable**: Hook can be tested in isolation with mock Zustand state
 - **Memoized**: Refetch function is memoized to prevent unnecessary re-renders
+
+### Why Feature Detection Pattern (Phase 6)?
+
+- **Deployment flexibility**: Single binary/build can run with or without persistence enabled
+- **Clean separation**: Heatmap component has zero dependencies on persistence if not configured
+- **Graceful degradation**: App continues working if Supabase is not available
+- **Environment-driven**: Configuration determines behavior (environment variables)
+- **Testability**: Easy to test both enabled and disabled code paths
+- **Security**: No dangling references to unconfigured services
 
 ### Why Edge Functions for Database Access?
 

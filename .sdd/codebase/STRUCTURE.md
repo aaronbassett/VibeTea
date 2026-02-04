@@ -65,11 +65,14 @@ VibeTea/
 │   │   ├── types/
 │   │   │   └── events.ts             # TypeScript event interfaces
 │   │   ├── utils/
-│   │   │   └── formatting.ts         # Timestamp, event type formatting
+│   │   │   ├── formatting.ts         # Timestamp, event type formatting
+│   │   │   └── persistence.ts        # NEW Phase 6: Feature detection utilities (isPersistenceEnabled, getSupabaseUrl, etc.)
 │   │   ├── __tests__/
 │   │   │   ├── App.test.tsx          # Integration tests
 │   │   │   ├── events.test.ts        # Event parsing/filtering tests
 │   │   │   ├── formatting.test.ts    # Formatting utility tests
+│   │   │   ├── components/           # NEW Phase 6: Component-specific tests
+│   │   │   │   └── Heatmap.test.tsx  # Heatmap component tests (persistence detection, data merging, loading states)
 │   │   │   └── hooks/                # NEW Phase 5: Hook-specific tests
 │   │   │       └── useHistoricData.test.tsx  # useHistoricData SWR behavior tests
 │   │   └── index.css
@@ -164,7 +167,9 @@ VibeTea/
 | `mocks/index.ts` | **NEW Phase 5**: Re-exports for easy importing | All mocks |
 | `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session`, `HourlyAggregate` |
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
+| `utils/persistence.ts` | **NEW Phase 6**: Feature detection utilities | `isPersistenceEnabled()`, `getSupabaseUrl()`, `isAuthTokenConfigured()`, `getPersistenceStatus()` |
 | `__tests__/` | Vitest unit + integration tests | — |
+| `__tests__/components/Heatmap.test.tsx` | **NEW Phase 6**: Heatmap component tests | Test suites for persistence detection, data merging, loading states |
 | `__tests__/hooks/useHistoricData.test.tsx` | **NEW Phase 5**: Tests for stale-while-revalidate behavior | Test suites for staleness, caching, refetch |
 
 ### `supabase/migrations/` - Database Schema
@@ -212,6 +217,20 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 ```
+
+### `client/src/__tests__/components/` - Component Testing (NEW Phase 6)
+
+| File | Purpose | Test Coverage |
+|------|---------|----------------|
+| `Heatmap.test.tsx` | Tests for `Heatmap` component | Persistence detection, data merging, loading states, error handling, view toggles, cell interactions, empty states |
+
+**Test categories:**
+- **Persistence Detection**: Component returns null when disabled, renders when enabled
+- **Data Merging**: Real-time counts override historic aggregates for current hour
+- **Loading States**: Loading indicator during fetch, error messages with retry
+- **View Toggles**: Switch between 7-day and 30-day views
+- **Cell Interactions**: Hover tooltips, click filtering, keyboard navigation
+- **Empty States**: Show when no events available
 
 ### `client/src/__tests__/hooks/` - Hook Testing (NEW Phase 5)
 
@@ -297,6 +316,7 @@ React SPA with these responsibilities:
 5. **Filter** by session/time range
 6. **Persist** authentication token
 7. **NEW Phase 5**: **Cache** historic data with stale-while-revalidate pattern
+8. **NEW Phase 6**: **Detect** persistence capability and conditionally render components
 
 No back-end dependencies (except server WebSocket and optional Supabase).
 
@@ -313,7 +333,7 @@ client/src/App.tsx (root)
 │   ├── ConnectionStatus.tsx (status badge)
 │   ├── EventStream.tsx (virtualized list)
 │   ├── SessionOverview.tsx (table)
-│   └── Heatmap.tsx (visualization with historic data)
+│   └── Heatmap.tsx (visualization with historic data, Phase 6 feature detection)
 ├── mocks/                         # NEW Phase 5
 │   ├── index.ts
 │   ├── server.ts
@@ -323,10 +343,14 @@ client/src/App.tsx (root)
 │   ├── App.test.tsx
 │   ├── events.test.ts
 │   ├── formatting.test.ts
+│   ├── components/                # NEW Phase 6
+│   │   └── Heatmap.test.tsx
 │   └── hooks/                     # NEW Phase 5
 │       └── useHistoricData.test.tsx
 ├── types/events.ts (TypeScript interfaces)
-└── utils/formatting.ts
+└── utils/
+    ├── formatting.ts
+    └── persistence.ts (NEW Phase 6)
 ```
 
 ### Supabase Module
@@ -373,8 +397,10 @@ supabase/
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
 | **NEW Phase 5**: **New hook test** | `client/src/__tests__/hooks/{hookName}.test.tsx` | `client/src/__tests__/hooks/useFilters.test.tsx` |
+| **NEW Phase 6**: **New component test** | `client/src/__tests__/components/{ComponentName}.test.tsx` | `client/src/__tests__/components/EventDetail.test.tsx` |
 | **NEW Phase 5**: **New MSW handler** | `client/src/mocks/handlers.ts` (add to queryHandlers array) | Handler for new edge function endpoint |
 | **NEW Phase 5**: **New mock data factory** | `client/src/mocks/data.ts` (new export function) | `createSessionData()`, `generateEventHistory()` |
+| **NEW Phase 6**: **New persistence utility** | `client/src/utils/persistence.ts` (add function) | `hasSupabaseToken()` |
 | **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
 | **Tests** | Colocate with source: `file.rs` → `file_test.rs` (Rust), `file.ts` → `__tests__/file.test.ts` (TS) | — |
@@ -414,23 +440,28 @@ use vibetea_server::types::Event;
 import { useWebSocket } from './hooks/useWebSocket';
 import { useEventStore } from './hooks/useEventStore';
 import { useHistoricData } from './hooks/useHistoricData';
+import { isPersistenceEnabled } from './utils/persistence';
 import type { VibeteaEvent, HourlyAggregate } from './types/events';
 
 // In client/src/components/Heatmap.tsx
 import { useEventStore } from '../hooks/useEventStore';
 import { useHistoricData } from '../hooks/useHistoricData';
+import { isPersistenceEnabled } from '../utils/persistence';
 import type { Session, HourlyAggregate } from '../types/events';
 
 // NEW Phase 5: In tests
 import { server } from '../mocks/server';
 import { createHourlyAggregate } from '../mocks/data';
+
+// NEW Phase 6: Persistence utilities
+import { isPersistenceEnabled, getSupabaseUrl, getPersistenceStatus } from '../utils/persistence';
 ```
 
 **Conventions**:
 - Components: PascalCase (e.g., `EventStream.tsx`)
 - Hooks: camelCase starting with `use` (e.g., `useWebSocket.ts`, `useHistoricData.ts`)
 - Mocks: camelCase (e.g., `handlers.ts`, `data.ts`)
-- Utils: camelCase (e.g., `formatting.ts`)
+- Utils: camelCase (e.g., `formatting.ts`, `persistence.ts`)
 - Types: camelCase (e.g., `events.ts`)
 
 ### Supabase Edge Functions (TypeScript)
@@ -497,10 +528,10 @@ Files that are auto-generated or should not be manually edited:
 | Component files | `PascalCase.tsx` | `EventStream.tsx`, `TokenForm.tsx` |
 | Hook files | `camelCase.ts` | `useWebSocket.ts`, `useEventStore.ts`, `useHistoricData.ts` |
 | Mock files | `camelCase.ts` | `handlers.ts`, `data.ts`, `server.ts` |
-| Utility files | `camelCase.ts` | `formatting.ts` |
+| Utility files | `camelCase.ts` | `formatting.ts`, `persistence.ts` |
 | Type files | `camelCase.ts` | `events.ts` |
 | Constants | `UPPER_SNAKE_CASE` | `TOKEN_STORAGE_KEY`, `MAX_BACKOFF_MS`, `STALE_THRESHOLD_MS` |
-| Test files | `__tests__/{name}.test.ts` or `__tests__/{type}/{name}.test.tsx` | `__tests__/formatting.test.ts`, `__tests__/hooks/useHistoricData.test.tsx` |
+| Test files | `__tests__/{name}.test.ts` or `__tests__/{type}/{name}.test.tsx` | `__tests__/formatting.test.ts`, `__tests__/components/Heatmap.test.tsx` |
 
 ### Supabase and Database
 
@@ -593,12 +624,13 @@ Files that are auto-generated or should not be manually edited:
 
 ## Testing
 
-### Client Testing Strategy (NEW Phase 5)
+### Client Testing Strategy (NEW Phase 5+)
 
 **Framework**: Vitest with `@testing-library/react` and `happy-dom` environment
 
 **Layers**:
 - **Unit tests**: Individual utilities, pure functions → `__tests__/{name}.test.ts`
+- **Component tests**: React components with state → `__tests__/components/{name}.test.tsx`
 - **Hook tests**: React hooks with state management → `__tests__/hooks/{name}.test.tsx`
 - **Integration tests**: Component + hook interactions → `__tests__/{name}.test.tsx`
 
@@ -608,7 +640,15 @@ Files that are auto-generated or should not be manually edited:
 - Data factories in `mocks/data.ts` generate realistic test data
 - Use `beforeAll`, `afterEach`, `afterAll` hooks to manage server lifecycle
 
-**useHistoricData Hook Testing**:
+**Heatmap Component Testing (NEW Phase 6)**:
+- Test persistence detection with `isPersistenceEnabled()` utility
+- Test component returns null when persistence disabled
+- Test data merging with real-time and historic aggregates
+- Test loading states and error handling
+- Test view toggles and cell interactions
+- Test timezone handling for UTC-to-local bucket key conversion
+
+**useHistoricData Hook Testing (Phase 5)**:
 - Test stale-while-revalidate caching (5-min staleness window)
 - Test automatic refetch when stale
 - Test manual refetch via returned function

@@ -58,6 +58,15 @@
 | Transmission | HTTP Authorization header (HTTPS/TLS required in production) | Network layer security |
 | Token UI Management | Password-type input field with save/clear actions | `client/src/components/TokenForm.tsx` |
 
+### Feature Detection for Persistence (Phase 6)
+
+| Setting | Purpose | Detection Method | Location |
+|---------|---------|-----------------|----------|
+| Persistence enabled flag | Conditional rendering of historic data components | Checks `VITE_SUPABASE_URL` env var is non-empty | `client/src/utils/persistence.ts` (line 31) |
+| Auth token configured | Validates query endpoint is accessible | Checks `VITE_SUPABASE_TOKEN` env var is non-empty | `client/src/utils/persistence.ts` (line 56) |
+| Configuration status | Provides detailed status object for debugging | Combined check of both env vars with human-readable messages | `client/src/utils/persistence.ts` (lines 79-96) |
+| Heatmap component visibility | Hides heatmap entirely when persistence disabled | Checks `isPersistenceEnabled()` result | `client/src/components/Heatmap.tsx` (lines 547, 680-682) |
+
 ## Authorization
 
 ### Authorization Model
@@ -98,6 +107,7 @@
 | JSON schema validation | Manual field validation | Built-in | `supabase/functions/ingest/index.ts` (lines 115-209) |
 | Source matching | Authenticated source vs. event source comparison | Built-in | `supabase/functions/ingest/index.ts` (lines 214-225) |
 | Base64 decoding | Try-catch with error handling | Built-in | `supabase/functions/ingest/index.ts` (lines 204-206, 218-220) |
+| Persistence feature detection | Environment variable existence and non-empty string check | Built-in | `client/src/utils/persistence.ts` (lines 31, 56) |
 
 ### Client-Side Validation
 
@@ -107,6 +117,7 @@
 | Token format | Non-empty string requirement | `client/src/components/TokenForm.tsx` (line 101) |
 | Supabase configuration | Required env vars validation with error messages | `client/src/hooks/useEventStore.ts` (lines 289-305) |
 | Error response parsing | JSON parsing with fallback to status text | `client/src/hooks/useEventStore.ts` (lines 325-337) |
+| Persistence configuration | Both URL and token required and non-empty strings | `client/src/utils/persistence.ts` (lines 30-58, 79-96) |
 
 ### Sanitization
 
@@ -137,6 +148,7 @@
 | In-memory caching | Stale-while-revalidate pattern with 5-minute stale threshold | `client/src/hooks/useHistoricData.ts` (lines 44, 81) |
 | Network transmission | HTTPS/TLS required for production deployments | `client/src/hooks/useEventStore.ts` (line 311) |
 | Fetch error handling | User-visible error messages for auth failures | `client/src/hooks/useEventStore.ts` (lines 340-343) |
+| Persistence feature toggle | Component completely hidden when feature disabled via env vars | `client/src/components/Heatmap.tsx` (lines 545-682) |
 
 ### Secrets Management
 
@@ -146,8 +158,8 @@
 | Monitor Ed25519 public key | Local filesystem `~/.vibetea/key.pub`, registered with server | On key rotation | Server-side verification registration |
 | Server public keys | Environment variable `VIBETEA_PUBLIC_KEYS` (format: `source_id:base64_key,source_id2:base64_key2`) | Via deployment config update | Ed25519 verification |
 | Server subscriber token | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` | Via deployment config update | Bearer token validation |
-| Client Supabase URL | Environment variable `VITE_SUPABASE_URL` (built into client) | Via redeployment | Query endpoint access |
-| Client bearer token | Environment variable `VITE_SUPABASE_TOKEN` (built into client) | Via redeployment or localStorage update | Query endpoint authentication |
+| Client Supabase URL | Environment variable `VITE_SUPABASE_URL` (build-time, visible in client) | Via redeployment | Query endpoint access, feature detection |
+| Client bearer token | Environment variable `VITE_SUPABASE_TOKEN` (build-time, visible in client) | Via redeployment or localStorage update | Query endpoint authentication |
 | Supabase service role key | Environment variable `SUPABASE_SERVICE_ROLE_KEY` | Supabase managed rotation | Database/RPC access |
 | Supabase anon key | Environment variable `SUPABASE_ANON_KEY` (RLS enforced) | Supabase managed rotation | Client-side (unused for events table due to RLS) |
 
@@ -226,6 +238,7 @@
 | Bearer token validation failure | Error response returned | `supabase/functions/query/index.ts` (lines 186-195) |
 | RPC query errors | Database error details | `supabase/functions/query/index.ts` (line 153) |
 | Historic data fetch failure (client-side) | Error message displayed in UI | `client/src/hooks/useEventStore.ts` (lines 340-366) |
+| Persistence feature disabled | No logging (graceful degradation) | `client/src/utils/persistence.ts` (silent detection) |
 
 ## Unsafe Mode (Development Only)
 
@@ -279,6 +292,15 @@
 | Error handling | User-visible error messages for auth failures | `client/src/hooks/useEventStore.ts` (lines 322-343) |
 | Stale data handling | Automatic background refresh when data > 5 minutes old | `client/src/hooks/useHistoricData.ts` (lines 44, 77-82) |
 | UI Token Management | Password input with localStorage persistence | `client/src/components/TokenForm.tsx` (lines 97-124) |
+
+### Persistence Feature Detection (Phase 6)
+
+| Aspect | Implementation | Details |
+|--------|----------------|---------|
+| Configuration presence | Checks `VITE_SUPABASE_URL` and `VITE_SUPABASE_TOKEN` at module load time | `client/src/utils/persistence.ts` (lines 30-58) |
+| Component visibility | Heatmap returns `null` when persistence disabled | `client/src/components/Heatmap.tsx` (lines 680-682) |
+| Error messaging | Detailed status for debugging missing configuration | `client/src/utils/persistence.ts` (lines 79-96) |
+| Zero-impact on real-time | Feature toggle does not affect WebSocket or real-time events | Real-time functionality independent of persistence config |
 
 ---
 

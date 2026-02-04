@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 5 Implementation - Client Supabase Integration with MSW Testing
+**Status**: Phase 6 Implementation - Persistence Feature Detection & Historic Data Integration
 **Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
@@ -139,6 +139,7 @@
 | Event Persistence | Async batching with timer-based and capacity-based flushing (Phase 4) |
 | Local Supabase | Docker-based with PostgreSQL, PostgREST, Deno runtime, Auth (port 54321) |
 | Client Testing | MSW intercepts fetch/HTTP requests for isolated unit tests (Phase 5) |
+| Persistence Detection | Feature detection via environment variables (Phase 6) |
 
 ## Communication Protocols & Formats
 
@@ -183,7 +184,7 @@
   - `ConnectionStatus.tsx` - **Phase 7**: Visual WebSocket connection status indicator
   - `TokenForm.tsx` - **Phase 7**: Token management and persistence UI
   - `EventStream.tsx` - **Phase 8**: Virtual scrolling event stream with 1000+ event support
-  - `Heatmap.tsx` - **Phase 9**: Activity heatmap with CSS Grid, color scale, 7/30-day views, accessibility
+  - `Heatmap.tsx` - **Phase 9**: Activity heatmap with CSS Grid, color scale, 7/30-day views, accessibility, **Phase 6**: historic data integration with real-time merging
   - `SessionOverview.tsx` - **Phase 10**: Session cards with activity indicators and status badges
 - `hooks/useEventStore.ts` - Zustand store for WebSocket event state with session tracking, timeout management, and historic data caching
 - `hooks/useWebSocket.ts` - **Phase 7**: WebSocket connection management with auto-reconnect
@@ -192,6 +193,7 @@
 - `types/events.ts` - Event type definitions with discriminated union types, HourlyAggregate schema (Phase 5)
 - `utils/` - Utility functions
   - `formatting.ts` - **Phase 8**: Timestamp and duration formatting utilities (5 functions, 331 lines)
+  - `persistence.ts` - **Phase 6**: Feature detection for Supabase persistence (isPersistenceEnabled, getSupabaseUrl, getPersistenceStatus, PersistenceStatus interface)
 - `mocks/` - **Phase 5**: MSW mock handlers for testing
   - `handlers.ts` - Query endpoint mock handler with auth and parameter validation (111 lines)
   - `server.ts` - MSW server setup for Vitest integration (26 lines)
@@ -251,78 +253,71 @@
 | Supabase Functions | Supabase Hosted | Deno Container | Auto-deployed from `supabase/functions/` (Phase 3) |
 | Database | Supabase Hosted | PostgreSQL Container | Managed PostgreSQL 17 instance |
 
-## Phase 5 Additions (Client Supabase Integration with MSW Testing)
+## Phase 6 Additions (Persistence Feature Detection & Historic Data Integration)
 
-**Client Historic Data Fetching** (`client/src/hooks/useHistoricData.ts`):
-- **useHistoricData Hook**: Implements stale-while-revalidate caching pattern (141 lines)
-  - Fetches hourly event aggregates from Supabase query endpoint
-  - Stale threshold: 5 minutes (STALE_THRESHOLD_MS)
-  - Automatic background refetch when cached data is stale
-  - Returns immediately with cached data while revalidating
-  - Manual refetch capability for user-triggered refreshes
-  - Proper loading and error state handling
-  - Integrates with Zustand store state (historicData, historicDataStatus, historicDataFetchedAt, historicDataError)
+**Persistence Feature Detection** (`client/src/utils/persistence.ts`):
+- **isPersistenceEnabled()**: Checks if VITE_SUPABASE_URL environment variable is configured (non-empty string)
+  - Returns `true` when persistence is fully enabled
+  - Used by Heatmap component to conditionally render historic data view
+  - Controls visibility of entire heatmap component when disabled
 
-**Zustand Store Extensions** (`client/src/hooks/useEventStore.ts`):
-- New state properties for historic data management:
-  - `historicData`: Cached HourlyAggregate array
-  - `historicDataStatus`: 'idle' | 'loading' | 'error' | 'success'
-  - `historicDataFetchedAt`: Timestamp when last successfully fetched (null if never)
-  - `historicDataError`: Error message string (null if no error)
-- New actions:
-  - `fetchHistoricData(days)`: Async fetch from Supabase query endpoint with bearer token auth
-  - `clearHistoricData()`: Reset historic data to initial state
+- **getSupabaseUrl()**: Retrieves configured Supabase URL or null
+  - Safely accesses `import.meta.env.VITE_SUPABASE_URL`
+  - Returns `null` if environment variable is empty or undefined
 
-**MSW Testing Infrastructure** (`client/src/mocks/`):
-- **handlers.ts** (111 lines): Query endpoint mock handlers
-  - GET `/functions/v1/query` handler with:
-    - Bearer token validation (Authorization header)
-    - Days parameter validation (7 or 30, defaults to 7)
-    - Mock HourlyAggregate response data
-    - Error handling: 401 for missing/invalid auth, 400 for invalid parameters
-  - Helper functions: `extractBearerToken()`, `parseDaysParam()`
+- **isAuthTokenConfigured()**: Checks if VITE_SUPABASE_TOKEN is set
+  - Validates that bearer token environment variable is non-empty
 
-- **server.ts** (26 lines): MSW server setup for Vitest
-  - Pre-configured setupServer instance
-  - Ready for beforeAll/afterEach/afterAll hooks
+- **getPersistenceStatus()**: Returns detailed status object
+  - Interface: `PersistenceStatus` with `enabled`, `hasUrl`, `hasToken`, `message` properties
+  - Provides human-readable status messages for debugging and UI display
+  - Identifies what configuration is missing when persistence not fully enabled
 
-- **data.ts**: Mock data generation
-  - `MOCK_BEARER_TOKEN`: Test token constant
-  - `createQueryResponse()`: Generates mock aggregates
-  - `errorResponses`: Error response objects
+**Heatmap Historic Data Integration** (`client/src/components/Heatmap.tsx`):
+- **Conditional Rendering**: Component returns `null` when `isPersistenceEnabled()` is `false`
+  - Feature-gated behind environment configuration
+  - Zero overhead when persistence disabled
 
-**Type Definitions** (`client/src/types/events.ts`):
-- **HourlyAggregate Interface**: Phase 5 addition
+- **Data Merging** (`mergeEventCounts()` function):
+  - Combines historic data from Supabase with real-time event counts
+  - Current hour: Uses fresh real-time counts (more recent)
+  - Past hours: Uses historic aggregate counts from database
+  - Fallback: Uses real-time events if no historic data yet
+  - Timezone-aware: Converts UTC historic data to local time buckets
+
+- **Time Bucket Conversion**:
+  - `getBucketKeyFromUtc()`: Converts UTC date/hour to local timezone bucket keys
+  - Handles timezone offsets for accurate cell coloring
+  - Ensures visual alignment with user's local time perception
+
+- **Loading States**:
+  - Shows spinner during initial fetch (up to 5 seconds)
+  - Shows error message with retry button if fetch fails
+  - Gracefully falls back to real-time data only on timeout
+
+- **View Selection**: Supports 7-day and 30-day historic lookback periods
+  - Dynamic refetch when view is changed
+  - Integrates with useHistoricData hook for SWR caching
+
+**Environment Variables** (Phase 6):
+- `VITE_SUPABASE_URL` - Optional: Edge function base URL (e.g., `http://127.0.0.1:54321/functions/v1`)
+  - When set: Enables persistence features (heatmap historic data)
+  - When empty/unset: Disables heatmap component entirely
+  - Example: `VITE_SUPABASE_URL=http://127.0.0.1:54321/functions/v1`
+
+- `VITE_SUPABASE_TOKEN` - Optional: Bearer token for query endpoint
+  - Required when VITE_SUPABASE_URL is set
+  - Sent in Authorization header to query endpoint
+  - Example: `VITE_SUPABASE_TOKEN=dev-token-for-testing`
+
+**Data Types** (Phase 6 usage):
+- **HourlyAggregate**: Historic event counts grouped by hour
   - `source`: Monitor identifier
-  - `date`: ISO date string
+  - `date`: ISO date string (UTC, e.g., "2026-02-03")
   - `hour`: UTC hour (0-23)
   - `eventCount`: Number of events in that hour
-
-**Zustand Store Historic Data Actions**:
-- `fetchHistoricData(days)` implementation:
-  - Sets status to 'loading'
-  - Constructs query URL with Authorization header
-  - Fetches from Supabase query endpoint with bearer token
-  - Updates historicData, historicDataFetchedAt on success
-  - Sets historicDataError on failure, status to 'error'
-  - Supports 7 or 30 day lookback periods
-
-**Testing Patterns** (Phase 5):
-- MSW intercepts fetch calls in tests
-- No real HTTP requests during unit tests
-- Query endpoint behavior validated: auth, parameters, response format
-- useHistoricData hook can be tested in isolation with mocked data
-- Supports integration with heatmap visualization component
-
-**Dependencies** (Phase 5 additions):
-- `msw` ^2.12.8 - Mock Service Worker for API mocking
-- Uses existing `zustand` for state management
-- Uses existing TypeScript and testing libraries
-
-**Environment Variables** (Client - Phase 5):
-- No new environment variables required for client
-- Bearer token stored in TokenForm component or Zustand store
-- Supabase URL derived from deployment or configuration
+  - Returned by Supabase query endpoint
+  - Merged with real-time counts in Heatmap
 
 ## Not Yet Integrated
 
@@ -330,5 +325,4 @@
 - Background job scheduling for data aggregation
 - Event archival/retention policies
 - Database backup and disaster recovery
-- Heatmap component UI using HourlyAggregate data (Phase 9)
 
