@@ -1,7 +1,7 @@
 # Technology Stack
 
-**Status**: Phase 4 Implementation - Event Batching with Async Persistence Manager
-**Last Updated**: 2026-02-03
+**Status**: Phase 5 Implementation - Client Supabase Integration with MSW Testing
+**Last Updated**: 2026-02-04
 
 ## Languages & Runtimes
 
@@ -9,7 +9,7 @@
 |-----------|-----------|---------|---------|
 | Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, HTTP transmission, event batching |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution |
-| Client    | TypeScript | 5.x     | Type-safe React UI for session visualization |
+| Client    | TypeScript | 5.x     | Type-safe React UI for session visualization with historic data queries |
 | Supabase Functions | TypeScript | (Deno 2) | Edge Functions for event ingestion and querying |
 | Supabase Database | PostgreSQL | 17 | Relational database for event persistence |
 
@@ -98,6 +98,7 @@
 | @testing-library/react | ^16.3.2  | React testing utilities |
 | @testing-library/jest-dom | ^6.9.1 | DOM matchers for testing |
 | jsdom                  | ^28.0.0  | DOM implementation for Node.js |
+| msw                    | ^2.12.8  | **Phase 5**: Mock Service Worker for API mocking in tests |
 
 ### Deno Testing (Phase 3)
 | Module | Version | Purpose |
@@ -114,6 +115,7 @@
 | `client/vite.config.ts` | Vite | Build configuration, WebSocket proxy to server on port 8080 |
 | `client/tsconfig.json` | TypeScript | Strict mode, ES2020 target |
 | `client/eslint.config.js` | ESLint | Flat config format with TypeScript support |
+| `client/package.json` | npm/pnpm | Client dependencies including MSW for test mocking |
 | `Cargo.toml` (workspace) | Cargo | Rust workspace configuration and shared dependencies |
 | `server/Cargo.toml` | Cargo | Server package configuration |
 | `monitor/Cargo.toml` | Cargo | Monitor package configuration |
@@ -136,6 +138,7 @@
 | CLI Support | Manual command parsing in monitor main.rs (init, run, help, version) |
 | Event Persistence | Async batching with timer-based and capacity-based flushing (Phase 4) |
 | Local Supabase | Docker-based with PostgreSQL, PostgREST, Deno runtime, Auth (port 54321) |
+| Client Testing | MSW intercepts fetch/HTTP requests for isolated unit tests (Phase 5) |
 
 ## Communication Protocols & Formats
 
@@ -145,7 +148,7 @@
 | Server → Client | WebSocket | JSON | Bearer token |
 | Client → Server | WebSocket | JSON | Bearer token |
 | Monitor → File System | Native | JSONL | N/A (local file access) |
-| Client → Supabase Functions | HTTPS POST/GET | JSON | Bearer token (query endpoint) |
+| Client → Supabase Functions | HTTPS POST/GET | JSON | Bearer token (query endpoint, Phase 5) |
 | Monitor → Supabase Functions | HTTPS POST | JSON | Ed25519 signature (ingest endpoint, Phase 3) |
 | Monitor Persistence → Supabase | HTTPS POST | JSON | Ed25519 signature (Phase 4) |
 | Supabase Functions → PostgreSQL | SQL | JSON | Service role key |
@@ -162,6 +165,7 @@
 | Database Events | JSONB (PostgreSQL) | Full event payload stored as JSON in `events.payload` column |
 | Edge Function Auth | Base64 + Base64 | Ed25519 signatures and public keys encoded base64 |
 | Event Persistence | serde_json + Vec | Batched events serialized to JSON for Supabase ingest |
+| Historic Data | JSON Array | HourlyAggregate objects returned by query endpoint (Phase 5) |
 
 ## Build Output
 
@@ -181,14 +185,21 @@
   - `EventStream.tsx` - **Phase 8**: Virtual scrolling event stream with 1000+ event support
   - `Heatmap.tsx` - **Phase 9**: Activity heatmap with CSS Grid, color scale, 7/30-day views, accessibility
   - `SessionOverview.tsx` - **Phase 10**: Session cards with activity indicators and status badges
-- `hooks/useEventStore.ts` - Zustand store for WebSocket event state with session tracking and timeout management
+- `hooks/useEventStore.ts` - Zustand store for WebSocket event state with session tracking, timeout management, and historic data caching
 - `hooks/useWebSocket.ts` - **Phase 7**: WebSocket connection management with auto-reconnect
 - `hooks/useSessionTimeouts.ts` - **Phase 10**: Session timeout checking (5min active→inactive, 30min removal)
-- `types/events.ts` - Event type definitions with discriminated union types matching Rust schema
+- `hooks/useHistoricData.ts` - **Phase 5**: Stale-while-revalidate caching for historic event aggregates from Supabase
+- `types/events.ts` - Event type definitions with discriminated union types, HourlyAggregate schema (Phase 5)
 - `utils/` - Utility functions
   - `formatting.ts` - **Phase 8**: Timestamp and duration formatting utilities (5 functions, 331 lines)
+- `mocks/` - **Phase 5**: MSW mock handlers for testing
+  - `handlers.ts` - Query endpoint mock handler with auth and parameter validation (111 lines)
+  - `server.ts` - MSW server setup for Vitest integration (26 lines)
+  - `data.ts` - Mock data and response builders for query endpoint testing
+  - `index.ts` - MSW exports barrel file
 - `__tests__/` - Test files
   - `formatting.test.ts` - **Phase 8**: Comprehensive formatting utility tests (33 test cases)
+  - `events.test.ts` - **Phase 5**: Event type and schema validation tests
 - `App.tsx` - Root component
 - `main.tsx` - Entry point
 - `index.css` - Global styles
@@ -240,81 +251,84 @@
 | Supabase Functions | Supabase Hosted | Deno Container | Auto-deployed from `supabase/functions/` (Phase 3) |
 | Database | Supabase Hosted | PostgreSQL Container | Managed PostgreSQL 17 instance |
 
-## Phase 4 Additions (Event Batching with Async Persistence Manager)
+## Phase 5 Additions (Client Supabase Integration with MSW Testing)
 
-**Phase 4 Persistence Infrastructure** (`monitor/src/persistence.rs`):
-- **EventBatcher**: Collects events into a buffer and sends them to Supabase ingest endpoint
-  - Capacity: 1000 events max per batch (MAX_BATCH_SIZE constant)
-  - HTTP client with connection pooling (5 max idle per host)
-  - Request timeout: 30 seconds
-  - Event buffer with FIFO eviction when full
-  - Consecutive failure tracking for retry logic
-  - Batch size and fullness status queries
+**Client Historic Data Fetching** (`client/src/hooks/useHistoricData.ts`):
+- **useHistoricData Hook**: Implements stale-while-revalidate caching pattern (141 lines)
+  - Fetches hourly event aggregates from Supabase query endpoint
+  - Stale threshold: 5 minutes (STALE_THRESHOLD_MS)
+  - Automatic background refetch when cached data is stale
+  - Returns immediately with cached data while revalidating
+  - Manual refetch capability for user-triggered refreshes
+  - Proper loading and error state handling
+  - Integrates with Zustand store state (historicData, historicDataStatus, historicDataFetchedAt, historicDataError)
 
-- **PersistenceManager**: Wraps EventBatcher with async timer-based and capacity-based flushing
-  - Created via `PersistenceManager::new(config, crypto)` returning (manager, mpsc sender)
-  - Runs in background via `manager.run()` (async function)
-  - Configurable batch interval (default 60 seconds)
-  - Automatic flush triggers on:
-    - Interval timer tick (if buffer not empty)
-    - Buffer reaches MAX_BATCH_SIZE events (immediate flush)
-    - Sender channel closed (final shutdown flush)
-  - Channel-based event queue with backpressure (capacity: MAX_BATCH_SIZE * 2)
-  - Graceful shutdown: flushes remaining events before exiting
-  - Flush error handling: logs warnings but continues running
-  - Skips missed ticks to prevent burst flushes
+**Zustand Store Extensions** (`client/src/hooks/useEventStore.ts`):
+- New state properties for historic data management:
+  - `historicData`: Cached HourlyAggregate array
+  - `historicDataStatus`: 'idle' | 'loading' | 'error' | 'success'
+  - `historicDataFetchedAt`: Timestamp when last successfully fetched (null if never)
+  - `historicDataError`: Error message string (null if no error)
+- New actions:
+  - `fetchHistoricData(days)`: Async fetch from Supabase query endpoint with bearer token auth
+  - `clearHistoricData()`: Reset historic data to initial state
 
-**PersistenceConfig** (in `monitor/src/config.rs`):
-- `supabase_url`: Supabase edge function base URL
-- `batch_interval_secs`: Seconds between batch submissions (min 1, max 3600)
-- `retry_limit`: Max retry attempts on failure (1-10 range)
+**MSW Testing Infrastructure** (`client/src/mocks/`):
+- **handlers.ts** (111 lines): Query endpoint mock handlers
+  - GET `/functions/v1/query` handler with:
+    - Bearer token validation (Authorization header)
+    - Days parameter validation (7 or 30, defaults to 7)
+    - Mock HourlyAggregate response data
+    - Error handling: 401 for missing/invalid auth, 400 for invalid parameters
+  - Helper functions: `extractBearerToken()`, `parseDaysParam()`
 
-**Authentication & Signing**:
-- Uses Ed25519 signing via Crypto module
-- Signature in X-Signature header (base64-encoded)
-- Source ID in X-Source-ID header
-- Batch is array of events sent as JSON body
+- **server.ts** (26 lines): MSW server setup for Vitest
+  - Pre-configured setupServer instance
+  - Ready for beforeAll/afterEach/afterAll hooks
 
-**Retry Behavior** (FR-015):
-- Initial delay: 1000ms (INITIAL_RETRY_DELAY_MS)
-- Backoff multiplier: 2x (RETRY_BACKOFF_MULTIPLIER)
-- Exponential backoff sequence: 1s, 2s, 4s, 8s...
-- Auth errors (401): Not retried, fail immediately
-- Server errors (5xx): Retried until retry_limit exceeded
-- Max retries exceeded: Batch dropped, failure counter reset
-- Consecutive failure counter tracks failed flush attempts
+- **data.ts**: Mock data generation
+  - `MOCK_BEARER_TOKEN`: Test token constant
+  - `createQueryResponse()`: Generates mock aggregates
+  - `errorResponses`: Error response objects
 
-**HTTP Client Features**:
-- reqwest Client with connection pooling
-- Timeout: 30 seconds per request
-- Pool: 5 max idle connections per host
-- Supports 200, 201, 202 success status codes
-- Handles 401 (AuthFailed), 5xx (ServerError), other (ServerError)
+**Type Definitions** (`client/src/types/events.ts`):
+- **HourlyAggregate Interface**: Phase 5 addition
+  - `source`: Monitor identifier
+  - `date`: ISO date string
+  - `hour`: UTC hour (0-23)
+  - `eventCount`: Number of events in that hour
 
-**Dependencies** (Phase 4 additions):
-- Uses existing `reqwest` crate (already in workspace)
-- Uses existing `tokio` crate for async runtime and timers
-- Uses existing crypto module for Ed25519 signing
+**Zustand Store Historic Data Actions**:
+- `fetchHistoricData(days)` implementation:
+  - Sets status to 'loading'
+  - Constructs query URL with Authorization header
+  - Fetches from Supabase query endpoint with bearer token
+  - Updates historicData, historicDataFetchedAt on success
+  - Sets historicDataError on failure, status to 'error'
+  - Supports 7 or 30 day lookback periods
 
-**Environment Variables** (in `monitor/src/config.rs`):
-| Variable | Required | Default | Purpose |
-|----------|----------|---------|---------|
-| `VIBETEA_SUPABASE_URL` | No | - | Supabase edge function URL (enables persistence) |
-| `VIBETEA_SUPABASE_BATCH_INTERVAL_SECS` | No | 60 | Seconds between batch submissions |
-| `VIBETEA_SUPABASE_RETRY_LIMIT` | No | 3 | Max retry attempts (1-10) |
+**Testing Patterns** (Phase 5):
+- MSW intercepts fetch calls in tests
+- No real HTTP requests during unit tests
+- Query endpoint behavior validated: auth, parameters, response format
+- useHistoricData hook can be tested in isolation with mocked data
+- Supports integration with heatmap visualization component
 
-**Test Coverage** (Phase 4):
-- Unit tests for EventBatcher: buffer operations, flush behavior, retry logic, capacity management
-- Integration tests using wiremock: HTTP mocking for success/error scenarios
-- PersistenceManager tests: timer-based flushing, full buffer flushing, graceful shutdown
-- Retry behavior tests: exponential backoff timing, max retries, failure recovery
-- Error handling tests: auth failures, server errors, network timeouts
+**Dependencies** (Phase 5 additions):
+- `msw` ^2.12.8 - Mock Service Worker for API mocking
+- Uses existing `zustand` for state management
+- Uses existing TypeScript and testing libraries
+
+**Environment Variables** (Client - Phase 5):
+- No new environment variables required for client
+- Bearer token stored in TokenForm component or Zustand store
+- Supabase URL derived from deployment or configuration
 
 ## Not Yet Integrated
 
-- Client-side Supabase edge function integration (query endpoint consumption)
 - Database connection pooling from server/monitor
 - Background job scheduling for data aggregation
 - Event archival/retention policies
 - Database backup and disaster recovery
+- Heatmap component UI using HourlyAggregate data (Phase 9)
 

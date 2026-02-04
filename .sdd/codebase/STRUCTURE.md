@@ -2,7 +2,7 @@
 
 > **Purpose**: Document directory layout, module boundaries, and where to add new code.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Directory Layout
 
@@ -55,7 +55,13 @@ VibeTea/
 │   │   │   ├── useWebSocket.ts       # WebSocket connection management
 │   │   │   ├── useEventStore.ts      # Zustand store (state + selectors)
 │   │   │   ├── useSessionTimeouts.ts # Session state machine (Active → Inactive → Ended)
-│   │   │   └── useSupabaseHistory.ts # Historic data fetching from Supabase edge function
+│   │   │   ├── useSupabaseHistory.ts # Historic data fetching from Supabase edge function (Phase 4)
+│   │   │   └── useHistoricData.ts    # NEW Phase 5: SWR hook for historic data fetching with staleness checks
+│   │   ├── mocks/             # NEW Phase 5: MSW handlers for testing
+│   │   │   ├── index.ts       # Mock exports
+│   │   │   ├── server.ts      # MSW server setup for Vitest
+│   │   │   ├── handlers.ts    # Query endpoint handler (validates token, returns aggregates)
+│   │   │   └── data.ts        # Mock data factories (createHourlyAggregate, generateMockAggregates)
 │   │   ├── types/
 │   │   │   └── events.ts             # TypeScript event interfaces
 │   │   ├── utils/
@@ -63,12 +69,15 @@ VibeTea/
 │   │   ├── __tests__/
 │   │   │   ├── App.test.tsx          # Integration tests
 │   │   │   ├── events.test.ts        # Event parsing/filtering tests
-│   │   │   └── formatting.test.ts    # Formatting utility tests
+│   │   │   ├── formatting.test.ts    # Formatting utility tests
+│   │   │   └── hooks/                # NEW Phase 5: Hook-specific tests
+│   │   │       └── useHistoricData.test.tsx  # useHistoricData SWR behavior tests
 │   │   └── index.css
 │   ├── public/
 │   ├── vite.config.ts
 │   ├── package.json
-│   └── tsconfig.json
+│   ├── tsconfig.json
+│   └── vitest.config.ts       # NEW Phase 5: Vitest configuration with MSW setup
 │
 ├── supabase/                   # Supabase configuration and migrations
 │   ├── migrations/             # Database migration scripts
@@ -145,12 +154,18 @@ VibeTea/
 | `components/SessionOverview.tsx` | Table of active sessions with stats | `SessionOverview` component |
 | `components/Heatmap.tsx` | Activity heatmap binned by time (real-time + historic) | `Heatmap` component |
 | `hooks/useWebSocket.ts` | WebSocket lifecycle, reconnection with backoff | `useWebSocket()` hook |
-| `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters | `useEventStore()` hook |
+| `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters, historic data | `useEventStore()` hook |
 | `hooks/useSessionTimeouts.ts` | Session state machine (Active → Inactive → Ended) | `useSessionTimeouts()` hook |
-| `hooks/useSupabaseHistory.ts` | Fetch historic data from edge function | `useSupabaseHistory()` hook |
+| `hooks/useSupabaseHistory.ts` | Fetch historic data from edge function (Phase 4) | `useSupabaseHistory()` hook |
+| `hooks/useHistoricData.ts` | **NEW Phase 5**: SWR hook for historic data with stale checks | `useHistoricData()` hook |
+| `mocks/server.ts` | **NEW Phase 5**: MSW server instance for tests | `server` export |
+| `mocks/handlers.ts` | **NEW Phase 5**: MSW handlers for `/functions/v1/query` | `queryHandlers` array |
+| `mocks/data.ts` | **NEW Phase 5**: Mock data factories | `createHourlyAggregate()`, `generateMockAggregates()` |
+| `mocks/index.ts` | **NEW Phase 5**: Re-exports for easy importing | All mocks |
 | `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session`, `HourlyAggregate` |
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
+| `__tests__/hooks/useHistoricData.test.tsx` | **NEW Phase 5**: Tests for stale-while-revalidate behavior | Test suites for staleness, caching, refetch |
 
 ### `supabase/migrations/` - Database Schema
 
@@ -178,6 +193,39 @@ VibeTea/
 |------|---------|----------|
 | `index.ts` | Return hourly aggregates to Client | **Request**: GET with `Authorization: Bearer token` header, optional query params `days` (7\|30) and `source`; **Response**: `{aggregates: HourlyAggregate[], meta: QueryMeta}` or error response |
 | `index.test.ts` | Test query edge function | Tests bearer token validation, parameter parsing, RPC calls |
+
+### `client/src/mocks/` - MSW Testing Setup (NEW Phase 5)
+
+| File | Purpose | Responsibility |
+|------|---------|-----------------|
+| `index.ts` | Main export file | Re-exports `server`, `queryHandlers`, data factories for easy test imports |
+| `server.ts` | MSW server instance | Pre-configured `setupServer()` with all VibeTea handlers; used in Vitest setup |
+| `handlers.ts` | MSW request handlers | `queryHandler` for GET `/functions/v1/query`; validates Authorization header and days parameter |
+| `data.ts` | Test data generators | `createHourlyAggregate()` for single aggregates; `generateMockAggregates(days)` for realistic mock data with work-hour variance |
+
+**Usage in tests:**
+```typescript
+import { server } from '../mocks/server';
+import { createHourlyAggregate } from '../mocks/data';
+
+beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+### `client/src/__tests__/hooks/` - Hook Testing (NEW Phase 5)
+
+| File | Purpose | Test Coverage |
+|------|---------|----------------|
+| `useHistoricData.test.tsx` | Tests for `useHistoricData` hook | Initial fetch behavior, stale-while-revalidate caching, error handling, manual refetch, days parameter validation, edge cases |
+
+**Test categories:**
+- **Initial Fetch**: Auto-fetch on mount when no cache
+- **Stale-While-Revalidate**: Return cached data immediately, refetch in background when stale (>5 min)
+- **Error Handling**: Preserve data on error, set error messages
+- **Manual Refetch**: `refetch()` bypasses staleness checks
+- **Days Parameter**: Correct 7/30 day requests
+- **Edge Cases**: Empty responses, invalid tokens, readonly arrays
 
 ## Module Boundaries
 
@@ -248,6 +296,7 @@ React SPA with these responsibilities:
 4. **Display** events, sessions, heatmap (merged real-time + historic)
 5. **Filter** by session/time range
 6. **Persist** authentication token
+7. **NEW Phase 5**: **Cache** historic data with stale-while-revalidate pattern
 
 No back-end dependencies (except server WebSocket and optional Supabase).
 
@@ -255,16 +304,29 @@ No back-end dependencies (except server WebSocket and optional Supabase).
 client/src/App.tsx (root)
 ├── hooks/
 │   ├── useWebSocket.ts (WebSocket, reconnect)
-│   ├── useEventStore.ts (Zustand state)
+│   ├── useEventStore.ts (Zustand state + historic data)
 │   ├── useSessionTimeouts.ts (session state machine)
-│   └── useSupabaseHistory.ts (historic data fetching)
+│   ├── useSupabaseHistory.ts (historic data fetching, Phase 4)
+│   └── useHistoricData.ts (SWR caching, staleness checks, Phase 5)
 ├── components/
 │   ├── TokenForm.tsx (auth)
 │   ├── ConnectionStatus.tsx (status badge)
 │   ├── EventStream.tsx (virtualized list)
 │   ├── SessionOverview.tsx (table)
 │   └── Heatmap.tsx (visualization with historic data)
-└── types/events.ts (TypeScript interfaces)
+├── mocks/                         # NEW Phase 5
+│   ├── index.ts
+│   ├── server.ts
+│   ├── handlers.ts
+│   └── data.ts
+├── __tests__/
+│   ├── App.test.tsx
+│   ├── events.test.ts
+│   ├── formatting.test.ts
+│   └── hooks/                     # NEW Phase 5
+│       └── useHistoricData.test.tsx
+├── types/events.ts (TypeScript interfaces)
+└── utils/formatting.ts
 ```
 
 ### Supabase Module
@@ -310,6 +372,9 @@ supabase/
 | **New edge function test** | `supabase/functions/{name}/index.test.ts` | `supabase/functions/export/index.test.ts` |
 | **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
 | **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
+| **NEW Phase 5**: **New hook test** | `client/src/__tests__/hooks/{hookName}.test.tsx` | `client/src/__tests__/hooks/useFilters.test.tsx` |
+| **NEW Phase 5**: **New MSW handler** | `client/src/mocks/handlers.ts` (add to queryHandlers array) | Handler for new edge function endpoint |
+| **NEW Phase 5**: **New mock data factory** | `client/src/mocks/data.ts` (new export function) | `createSessionData()`, `generateEventHistory()` |
 | **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
 | **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
 | **Tests** | Colocate with source: `file.rs` → `file_test.rs` (Rust), `file.ts` → `__tests__/file.test.ts` (TS) | — |
@@ -348,18 +413,23 @@ use vibetea_server::types::Event;
 // In client/src/App.tsx
 import { useWebSocket } from './hooks/useWebSocket';
 import { useEventStore } from './hooks/useEventStore';
-import { useSupabaseHistory } from './hooks/useSupabaseHistory';
+import { useHistoricData } from './hooks/useHistoricData';
 import type { VibeteaEvent, HourlyAggregate } from './types/events';
 
 // In client/src/components/Heatmap.tsx
 import { useEventStore } from '../hooks/useEventStore';
-import { useSupabaseHistory } from '../hooks/useSupabaseHistory';
+import { useHistoricData } from '../hooks/useHistoricData';
 import type { Session, HourlyAggregate } from '../types/events';
+
+// NEW Phase 5: In tests
+import { server } from '../mocks/server';
+import { createHourlyAggregate } from '../mocks/data';
 ```
 
 **Conventions**:
 - Components: PascalCase (e.g., `EventStream.tsx`)
-- Hooks: camelCase starting with `use` (e.g., `useWebSocket.ts`)
+- Hooks: camelCase starting with `use` (e.g., `useWebSocket.ts`, `useHistoricData.ts`)
+- Mocks: camelCase (e.g., `handlers.ts`, `data.ts`)
 - Utils: camelCase (e.g., `formatting.ts`)
 - Types: camelCase (e.g., `events.ts`)
 
@@ -394,6 +464,7 @@ import * as ed from "https://esm.sh/@noble/ed25519@2.0.0";
 | **Server** | `server/src/main.rs` | `cargo run -p vibetea-server` |
 | **Client** | `client/src/main.tsx` | `npm run dev` (from `client/`) |
 | **Supabase** | `supabase/config.toml` | `supabase start` |
+| **Tests** | `client/vitest.config.ts` | `npm run test` (from `client/`) |
 
 ## Generated/Auto-Configured Files
 
@@ -424,11 +495,12 @@ Files that are auto-generated or should not be manually edited:
 | Category | Pattern | Example |
 |----------|---------|---------|
 | Component files | `PascalCase.tsx` | `EventStream.tsx`, `TokenForm.tsx` |
-| Hook files | `camelCase.ts` | `useWebSocket.ts`, `useEventStore.ts` |
+| Hook files | `camelCase.ts` | `useWebSocket.ts`, `useEventStore.ts`, `useHistoricData.ts` |
+| Mock files | `camelCase.ts` | `handlers.ts`, `data.ts`, `server.ts` |
 | Utility files | `camelCase.ts` | `formatting.ts` |
 | Type files | `camelCase.ts` | `events.ts` |
-| Constants | `UPPER_SNAKE_CASE` | `TOKEN_STORAGE_KEY`, `MAX_BACKOFF_MS` |
-| Test files | `__tests__/{name}.test.ts` | `__tests__/formatting.test.ts` |
+| Constants | `UPPER_SNAKE_CASE` | `TOKEN_STORAGE_KEY`, `MAX_BACKOFF_MS`, `STALE_THRESHOLD_MS` |
+| Test files | `__tests__/{name}.test.ts` or `__tests__/{type}/{name}.test.tsx` | `__tests__/formatting.test.ts`, `__tests__/hooks/useHistoricData.test.tsx` |
 
 ### Supabase and Database
 
@@ -463,7 +535,8 @@ Files that are auto-generated or should not be manually edited:
 ### Client
 
 ```
-✓ CAN import:     components, hooks, types, utils, React, Zustand, third-party UI libs
+✓ CAN import:     components, hooks, mocks, types, utils, React, Zustand, Vitest, RTL, MSW, third-party UI libs
+✓ CAN import:     @testing-library/react, vitest, msw (for tests)
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket), supabase SDK (only HTTP to edge functions)
 ```
 
@@ -517,6 +590,44 @@ Files that are auto-generated or should not be manually edited:
 |----------|---------|---------|----------|
 | `VIBETEA_PUBLIC_KEYS` | Monitor public keys (same as Server) | `monitor1:base64key1` | Yes |
 | `VIBETEA_SUBSCRIBER_TOKEN` | WebSocket auth token (same as Server, used for query endpoint) | `secret-token` | Yes |
+
+## Testing
+
+### Client Testing Strategy (NEW Phase 5)
+
+**Framework**: Vitest with `@testing-library/react` and `happy-dom` environment
+
+**Layers**:
+- **Unit tests**: Individual utilities, pure functions → `__tests__/{name}.test.ts`
+- **Hook tests**: React hooks with state management → `__tests__/hooks/{name}.test.tsx`
+- **Integration tests**: Component + hook interactions → `__tests__/{name}.test.tsx`
+
+**Mock Service Worker (MSW) Setup**:
+- Server instance in `mocks/server.ts` listens on all requests
+- Handlers in `mocks/handlers.ts` intercept and respond to edge function calls
+- Data factories in `mocks/data.ts` generate realistic test data
+- Use `beforeAll`, `afterEach`, `afterAll` hooks to manage server lifecycle
+
+**useHistoricData Hook Testing**:
+- Test stale-while-revalidate caching (5-min staleness window)
+- Test automatic refetch when stale
+- Test manual refetch via returned function
+- Test error handling and state preservation
+- Test days parameter (7 vs 30) handling
+- Test readonly array return type
+
+### Rust Testing (Phase 4+)
+
+**Monitor Tests**:
+- `monitor/src/persistence.rs`: EventBatcher unit tests (queue, flush, retry)
+- `monitor/tests/`: Integration tests for end-to-end flows
+- Run with `--test-threads=1` for env var isolation (see CLAUDE.md)
+
+**Server Tests**:
+- `server/tests/unsafe_mode_test.rs`: Auth bypass mode tests
+- Signature verification tests (timing-safe comparison)
+- Rate limiting tests
+- WebSocket broadcast tests
 
 ---
 

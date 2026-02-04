@@ -1,14 +1,14 @@
 # External Integrations
 
-**Status**: Phase 4 Implementation - Event Batching with Async Persistence Manager
-**Last Updated**: 2026-02-03
+**Status**: Phase 5 Implementation - Client Supabase Integration with MSW Testing
+**Last Updated**: 2026-02-04
 
 ## Summary
 
 VibeTea is designed as a distributed event system with four main components:
 - **Monitor**: Captures Claude Code session events from local JSONL files, applies privacy sanitization, signs with Ed25519, and transmits to server or Supabase (with optional async event batching)
 - **Server**: Receives, validates, verifies Ed25519 signatures, and broadcasts events via WebSocket
-- **Client**: Subscribes to server events via WebSocket and optionally queries historical data from Supabase
+- **Client**: Subscribes to server events via WebSocket and queries historical data from Supabase (Phase 5)
 - **Supabase**: Managed backend with PostgreSQL database for persistence, Edge Functions for authentication and data aggregation (Phase 3), and ingest endpoint for event persistence (Phase 4)
 
 All integrations use standard protocols (HTTPS, WebSocket) with cryptographic message authentication and privacy-by-design data handling.
@@ -324,19 +324,19 @@ Functions exported:
 - `query/index.test.ts`: Tests bearer token validation with EnvGuard environment isolation
 - `_tests/rls.test.ts`: Tests Row Level Security enforcement
 
-**Client Authentication (Server → Client)**
+### Client Authentication (Server → Client & Client → Supabase)
 
 | Aspect | Details | Configuration |
 |--------|---------|---------------|
-| **Method** | Bearer token in WebSocket headers | Static token per deployment |
-| **Protocol** | WebSocket upgrade with `Authorization: Bearer <token>` | Client sends on connect |
-| **Token Type** | Opaque string (no expiration in Phase 4) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
+| **Method** | Bearer token in WebSocket headers (server) and HTTP Authorization header (Supabase) | Static token per deployment |
+| **Protocol** | WebSocket upgrade with `Authorization: Bearer <token>` (server) and HTTPS GET with Authorization header (Supabase) | Client sends on connect and query |
+| **Token Type** | Opaque string (no expiration in Phase 5) | `VIBETEA_SUBSCRIBER_TOKEN` env var |
 | **Scope** | All clients use the same token | No per-user differentiation |
-| **Validation** | Server-side validation only | In-memory, no persistence |
+| **Validation** | Server-side validation only (server and edge functions) | In-memory, no persistence |
 
-**Configuration Location**: `server/src/config.rs`
-- Parses `VIBETEA_SUBSCRIBER_TOKEN` (required unless unsafe mode enabled)
-- Token required for all WebSocket connections
+**Configuration Location**: `server/src/config.rs` and `supabase/.env.local`
+- Server parses `VIBETEA_SUBSCRIBER_TOKEN` (required unless unsafe mode enabled)
+- Token required for all WebSocket connections and Supabase queries
 - No token refresh mechanism in Phase 5
 - Stored as `Option<String>` in Config struct
 
@@ -605,7 +605,7 @@ pub persistence: Option<PersistenceConfig>
 - Both can be active simultaneously
 - Monitor sends to server for real-time + persistence buffer for Supabase
 
-### Client → Supabase Query (Phase 3)
+### Client → Supabase Query (Phase 5)
 
 **Endpoint**: `https://<supabase-url>/functions/v1/query`
 **Method**: GET
@@ -665,6 +665,28 @@ pub persistence: Option<PersistenceConfig>
 3. Edge function validates token using `verifyQueryAuth()`
 4. Edge function calls `get_hourly_aggregates()` PostgreSQL function
 5. Results returned to client for heatmap visualization
+
+**Client Implementation** (Phase 5):
+- `useHistoricData()` hook in `client/src/hooks/useHistoricData.ts`
+- Implements stale-while-revalidate caching pattern
+- Fetches from Supabase with bearer token from Zustand store
+- Automatic background refetch when cached data is >5 minutes old
+- Manual refetch capability for user-triggered refreshes
+- Proper loading and error state handling
+
+**Zustand Store Integration**:
+- `historicData`: Cached HourlyAggregate array
+- `historicDataStatus`: 'idle' | 'loading' | 'error' | 'success'
+- `historicDataFetchedAt`: Timestamp when last successfully fetched
+- `historicDataError`: Error message string if fetch failed
+- `fetchHistoricData(days)`: Async action to query Supabase
+
+**MSW Testing** (Phase 5):
+- `client/src/mocks/handlers.ts` - Mock GET /functions/v1/query
+- Bearer token validation in tests
+- Days parameter validation
+- Mock HourlyAggregate response data
+- Error response mocking (401, 400)
 
 ### Monitor → Server (Event Publishing)
 
@@ -1042,7 +1064,6 @@ deno test --allow-env --allow-net supabase/functions/_tests/rls.test.ts
 
 ### Planned (Not Yet Integrated)
 
-- **Client Supabase Integration**: Query historical event aggregates via `get_hourly_aggregates()` function
 - **Database Retention Policies**: Automated event archival and purging
 - **Backup & Disaster Recovery**: Automated backups and point-in-time recovery
 - **Background Job Scheduling**: Data aggregation jobs
@@ -1052,6 +1073,13 @@ deno test --allow-env --allow-net supabase/functions/_tests/rls.test.ts
 - **Token Management**: Rotation, expiration, refresh mechanisms
 
 ## Configuration Quick Reference
+
+### Client Environment (Phase 5)
+
+| Variable | Type | Required | Purpose |
+|----------|------|----------|---------|
+| SUPABASE_URL | string | Yes (if using real Supabase) | Supabase project URL for edge function calls |
+| VIBETEA_SUBSCRIBER_TOKEN | string | Yes | Bearer token for query endpoint authentication |
 
 ### Supabase Environment Variables (Phase 3+)
 

@@ -2,7 +2,7 @@
 
 > **Purpose**: Document authentication, authorization, security controls, and vulnerability status.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Authentication
 
@@ -11,7 +11,8 @@
 | Method | Implementation | Configuration | Scope |
 |--------|----------------|---------------|-------|
 | Ed25519 Signatures (Batch) | `ed25519_dalek` crate with RFC 8032 strict verification | `server/src/auth.rs` | Monitor → Server API (batch events) |
-| Bearer Tokens (Simple) | Constant-time comparison (`subtle::ConstantTimeEq`) | `server/src/auth.rs` | WebSocket clients |
+| Bearer Tokens (Server WebSocket) | Constant-time comparison (`subtle::ConstantTimeEq`) | `server/src/auth.rs` | WebSocket clients → Server |
+| Bearer Tokens (Query Endpoint) | Simple string comparison with timeout validation | `supabase/functions/_shared/auth.ts` | Browser client → Supabase Edge Function |
 | Edge Function Signatures | `@noble/ed25519` (RFC 8032 compliant) | `supabase/functions/_shared/auth.ts` | Monitor → Ingest function (batch events) |
 | Service Role Access | Supabase service role key | `SUPABASE_SERVICE_ROLE_KEY` | RPC functions, database access |
 
@@ -35,15 +36,27 @@
 | `X-Source-ID` | Monitor identifier for signature verification | String, alphanumeric | Yes (unless unsafe mode) |
 | `X-Signature` | Base64-encoded Ed25519 signature of request body | Base64 (64 bytes decoded) | Yes (unless unsafe mode) |
 
-### Bearer Token Configuration
+### Bearer Token Configuration (Server WebSocket)
 
 | Setting | Value | Location |
 |---------|-------|----------|
 | Token Type | Simple bearer token (no JWT) | `server/src/auth.rs` (lines 269-295) |
 | Comparison Method | Constant-time (`ct_eq`) to prevent timing attacks | `server/src/auth.rs` (line 290) |
 | Storage | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` | Server config |
-| Usage | WebSocket client authentication, edge function query endpoint | `supabase/functions/_shared/auth.ts` (lines 88-109) |
+| Usage | WebSocket client authentication via query string | `server/src/routes.rs` |
 | Timeout | No server-side timeout (stateless bearer token) | N/A |
+
+### Client-Side Bearer Token Authentication (Query Endpoint)
+
+| Setting | Value | Location |
+|---------|-------|----------|
+| Token Type | Long-lived static bearer token | Client environment variables |
+| Storage Location | Browser localStorage (`vibetea_token` key) | `client/src/hooks/useWebSocket.ts` (line 18) |
+| Configuration | Environment variables `VITE_SUPABASE_URL` and `VITE_SUPABASE_TOKEN` | `client/.env.example` |
+| Validation Method | Bearer header format: `Authorization: Bearer {token}` | `client/src/hooks/useEventStore.ts` (line 316) |
+| HTTP Method | GET requests to query endpoint | `supabase/functions/query/index.ts` |
+| Transmission | HTTP Authorization header (HTTPS/TLS required in production) | Network layer security |
+| Token UI Management | Password-type input field with save/clear actions | `client/src/components/TokenForm.tsx` |
 
 ## Authorization
 
@@ -52,7 +65,8 @@
 | Model | Implementation | Scope |
 |-------|----------------|-------|
 | Signature-Based | Only authenticated sources (via Ed25519 keys) can ingest batch events | Monitor API (`server/src/auth.rs`, `supabase/functions/ingest/index.ts`) |
-| Token-Based | Bearer token grants read access to query endpoint | Client API (`supabase/functions/query/index.ts`) |
+| Token-Based (Server) | Bearer token grants WebSocket subscription access | Server WebSocket (`server/src/routes.rs`) |
+| Token-Based (Client) | Bearer token grants read access to query endpoint for historic aggregates | Client API (`supabase/functions/query/index.ts`) |
 | RLS (Row Level Security) | No policies on events table = implicit deny-all (except service_role) | `supabase/migrations/20260203000000_create_events_table.sql` |
 | Service Role Only | RPC functions `bulk_insert_events` and `get_hourly_aggregates` executable by service_role only | `supabase/migrations/20260203000001_create_functions.sql` |
 
@@ -62,8 +76,8 @@
 |---|---|---|---|
 | Ingest batch events via POST /events (server) | Ed25519 signature verification | Authenticated monitors with registered public keys | `server/src/routes.rs` (lines 261-308), `server/src/auth.rs` |
 | Ingest batch events via edge function | Ed25519 signature verification | Authenticated monitors with registered public keys | `supabase/functions/ingest/index.ts` (lines 274-294) |
-| Query aggregates via edge function | Bearer token validation | Clients with valid `VIBETEA_SUBSCRIBER_TOKEN` | `supabase/functions/query/index.ts` (lines 186-195) |
-| WebSocket subscription (server) | Bearer token validation (via query string) | Clients with valid token | `server/src/routes.rs` |
+| Subscribe to WebSocket (server) | Bearer token validation via query string | Clients with valid `VIBETEA_SUBSCRIBER_TOKEN` | `server/src/routes.rs` |
+| Query historic aggregates via edge function | Bearer token validation in Authorization header | Clients with valid `VITE_SUPABASE_TOKEN` | `supabase/functions/query/index.ts` (lines 186-195), `client/src/hooks/useEventStore.ts` (line 316) |
 | Direct database access to events table | RLS policy enforcement | service_role key only (no policies for other roles) | `supabase/migrations/20260203000000_create_events_table.sql` (lines 39-42) |
 | Call `bulk_insert_events` RPC | Explicit GRANT EXECUTE | service_role only | `supabase/migrations/20260203000001_create_functions.sql` (line 34) |
 | Call `get_hourly_aggregates` RPC | Explicit GRANT EXECUTE | service_role only | `supabase/migrations/20260203000001_create_functions.sql` (line 71) |
@@ -74,14 +88,25 @@
 
 | Layer | Method | Library | Location |
 |-------|--------|---------|----------|
+| Client token validation | Environment variable existence check | Built-in | `client/src/hooks/useEventStore.ts` (lines 288-305) |
+| Bearer token format | Presence and non-empty validation | Built-in | `supabase/functions/_shared/auth.ts` (lines 88-109) |
+| Query parameter validation | Enum validation (days: 7 or 30 only) | Built-in | `supabase/functions/query/index.ts` (lines 99-122) |
 | Event ID format | Regex pattern matching | Built-in | `supabase/functions/ingest/index.ts` (line 49) |
 | Event type enumeration | Whitelist matching | Built-in | `supabase/functions/ingest/index.ts` (lines 23-30, 182) |
 | Timestamp format | RFC 3339 regex validation | Built-in | `supabase/functions/ingest/index.ts` (lines 55-56, 166) |
 | Batch size limits | Runtime length check (max 1000 events) | Built-in | `supabase/functions/ingest/index.ts` (lines 297-307) |
 | JSON schema validation | Manual field validation | Built-in | `supabase/functions/ingest/index.ts` (lines 115-209) |
 | Source matching | Authenticated source vs. event source comparison | Built-in | `supabase/functions/ingest/index.ts` (lines 214-225) |
-| Query parameters (days) | Enum validation (7 or 30 only) | Built-in | `supabase/functions/query/index.ts` (lines 99-122) |
 | Base64 decoding | Try-catch with error handling | Built-in | `supabase/functions/ingest/index.ts` (lines 204-206, 218-220) |
+
+### Client-Side Validation
+
+| Validation | Method | Location |
+|-----------|--------|----------|
+| Token presence | Check localStorage key exists before connecting | `client/src/hooks/useWebSocket.ts` (lines 218-226) |
+| Token format | Non-empty string requirement | `client/src/components/TokenForm.tsx` (line 101) |
+| Supabase configuration | Required env vars validation with error messages | `client/src/hooks/useEventStore.ts` (lines 289-305) |
+| Error response parsing | JSON parsing with fallback to status text | `client/src/hooks/useEventStore.ts` (lines 325-337) |
 
 ### Sanitization
 
@@ -104,6 +129,15 @@
 | Encryption in transit | HTTPS/TLS (Supabase Edge Functions, browser WebSocket) | Standard web security |
 | Encryption at rest | Supabase managed (no explicit config needed) | Supabase security model |
 
+### Historic Data Handling (Client-Side)
+
+| Aspect | Protection | Details |
+|--------|-----------|---------|
+| Token storage | Browser localStorage (not secure for sensitive data) | `client/src/components/TokenForm.tsx` (line 106) |
+| In-memory caching | Stale-while-revalidate pattern with 5-minute stale threshold | `client/src/hooks/useHistoricData.ts` (lines 44, 81) |
+| Network transmission | HTTPS/TLS required for production deployments | `client/src/hooks/useEventStore.ts` (line 311) |
+| Fetch error handling | User-visible error messages for auth failures | `client/src/hooks/useEventStore.ts` (lines 340-343) |
+
 ### Secrets Management
 
 | Secret Type | Storage | Rotation | Usage |
@@ -111,7 +145,9 @@
 | Monitor Ed25519 private key | Local filesystem `~/.vibetea/key.priv` (0600) | Manual (regenerate key.priv) | Event signing |
 | Monitor Ed25519 public key | Local filesystem `~/.vibetea/key.pub`, registered with server | On key rotation | Server-side verification registration |
 | Server public keys | Environment variable `VIBETEA_PUBLIC_KEYS` (format: `source_id:base64_key,source_id2:base64_key2`) | Via deployment config update | Ed25519 verification |
-| Subscriber token | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` | Via deployment config update | Bearer token validation |
+| Server subscriber token | Environment variable `VIBETEA_SUBSCRIBER_TOKEN` | Via deployment config update | Bearer token validation |
+| Client Supabase URL | Environment variable `VITE_SUPABASE_URL` (built into client) | Via redeployment | Query endpoint access |
+| Client bearer token | Environment variable `VITE_SUPABASE_TOKEN` (built into client) | Via redeployment or localStorage update | Query endpoint authentication |
 | Supabase service role key | Environment variable `SUPABASE_SERVICE_ROLE_KEY` | Supabase managed rotation | Database/RPC access |
 | Supabase anon key | Environment variable `SUPABASE_ANON_KEY` (RLS enforced) | Supabase managed rotation | Client-side (unused for events table due to RLS) |
 
@@ -189,6 +225,7 @@
 |-------|-------------|----------|
 | Bearer token validation failure | Error response returned | `supabase/functions/query/index.ts` (lines 186-195) |
 | RPC query errors | Database error details | `supabase/functions/query/index.ts` (line 153) |
+| Historic data fetch failure (client-side) | Error message displayed in UI | `client/src/hooks/useEventStore.ts` (lines 340-366) |
 
 ## Unsafe Mode (Development Only)
 
@@ -217,8 +254,9 @@
 
 | Operation | Protection | Location |
 |-----------|-----------|----------|
-| Bearer token comparison | `subtle::ConstantTimeEq` (constant-time byte comparison) | `server/src/auth.rs` (line 290) |
+| Bearer token comparison (server) | `subtle::ConstantTimeEq` (constant-time byte comparison) | `server/src/auth.rs` (line 290) |
 | Signature verification | Built-in constant-time comparison in `ed25519_dalek::verify_strict()` | `server/src/auth.rs` (line 231) |
+| Bearer token comparison (edge function) | Simple `===` comparison (timing attack impractical due to network latency) | `supabase/functions/_shared/auth.ts` (line 105) |
 
 ## Client-Side Security
 
@@ -226,10 +264,21 @@
 
 | Aspect | Implementation | Details |
 |--------|----------------|---------|
-| Token transmission | Query parameter (`?token=xxx`) | `client/src/hooks/useWebSocket.ts` |
-| Connection retry | Exponential backoff (1s initial, 60s max) ± 25% jitter | `client/src/hooks/useWebSocket.ts` |
+| Token transmission | Query parameter (`?token=xxx`) | `client/src/hooks/useWebSocket.ts` (line 235) |
+| Connection retry | Exponential backoff (1s initial, 60s max) ± 25% jitter | `client/src/hooks/useWebSocket.ts` (lines 55-66) |
 | Reconnection limits | Implemented via backoff caps | Prevents resource exhaustion |
-| Error handling | Non-blocking; failures do not crash app | `client/src/hooks/useWebSocket.ts` |
+| Error handling | Non-blocking; failures do not crash app | `client/src/hooks/useWebSocket.ts` (lines 256-277) |
+| Token in URL | Sent as query parameter (low-security, intended for WebSocket only) | `client/src/hooks/useWebSocket.ts` (lines 75-78) |
+
+### Query Endpoint Authentication
+
+| Aspect | Implementation | Details |
+|--------|----------------|---------|
+| Token transmission | HTTP Authorization header with Bearer scheme | `client/src/hooks/useEventStore.ts` (line 316) |
+| Configuration validation | Environment variables checked at fetch time | `client/src/hooks/useEventStore.ts` (lines 289-305) |
+| Error handling | User-visible error messages for auth failures | `client/src/hooks/useEventStore.ts` (lines 322-343) |
+| Stale data handling | Automatic background refresh when data > 5 minutes old | `client/src/hooks/useHistoricData.ts` (lines 44, 77-82) |
+| UI Token Management | Password input with localStorage persistence | `client/src/components/TokenForm.tsx` (lines 97-124) |
 
 ---
 

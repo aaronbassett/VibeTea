@@ -2,7 +2,7 @@
 
 > **Purpose**: Document system design, patterns, component relationships, and data flow.
 > **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Last Updated**: 2026-02-04
 
 ## Architecture Overview
 
@@ -27,6 +27,8 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
 | **Serverless Processing** | Edge functions handle all Supabase database access via VibeTea authentication (not direct client access) |
 | **Event-Driven** | Deno edge functions respond to HTTP requests for ingestion and querying; RPC functions handle database operations |
 | **Async Channel-Based Batching** | **NEW Phase 4**: Persistence uses mpsc channels for decoupled event batching in background tasks |
+| **Stale-While-Revalidate Caching** | **NEW Phase 5**: Client caches historic data with 5-minute staleness window, refetches in background |
+| **SWR Hook Pattern** | **NEW Phase 5**: `useHistoricData` hook provides stale-while-revalidate data fetching with Bearer token auth |
 
 ## Core Components
 
@@ -79,6 +81,8 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Optional historic data fetching from Supabase query edge function (if `VITE_SUPABASE_URL` configured)
   - Heatmap visualization combining real-time event counts with historic hourly aggregates
   - Deduplication logic: real-time event counts for current hour override historic aggregates for that hour
+  - **NEW Phase 5**: Stale-while-revalidate caching of historic data with 5-minute staleness window
+  - **NEW Phase 5**: `useHistoricData` hook for reactive data fetching with Bearer token authentication
 - **Dependencies**:
   - Depends on **Server** (via WebSocket connection to `/ws` for real-time)
   - Optionally depends on **Supabase** (via HTTP GET to query edge function for historic data)
@@ -139,17 +143,27 @@ Monitor → Supabase ingest edge function → PostgreSQL (batched, asynchronous 
 
 ### Historic Data Flow (Supabase Edge Function to Client)
 
-Client → Supabase query edge function → PostgreSQL (periodic fetches):
-1. Client initializes with `VITE_SUPABASE_URL` configured
-2. On component mount or "refresh" click, fetches historic heatmap data
-3. GET `/functions/v1/query` with Authorization: Bearer token header
-4. Edge function (`supabase/functions/query/index.ts`) validates bearer token (constant-time comparison)
-5. Edge function parses query parameters: `days` (7 or 30, default 7), optional `source` filter
-6. Edge function calls `get_hourly_aggregates(days_back, source_filter)` RPC
-7. Function returns `{source, date, hour, event_count}` rows grouped by hour, ordered by date DESC, hour DESC
-8. Client receives hourly aggregates and stores in Zustand
-9. Heatmap renders: real-time counts for current hour override historic counts for that hour
-10. On fetch failure/timeout (5 seconds): shows "Unable to load historic data" with retry button
+Client → Supabase query edge function → PostgreSQL (periodic fetches with stale-while-revalidate caching):
+
+**NEW Phase 5 - Stale-While-Revalidate Flow:**
+1. Client calls `useHistoricData(days)` hook on component mount
+2. Hook checks Zustand store for cached data and staleness timestamp
+3. If cached data exists AND fresh (< 5 minutes old), immediately return cached data
+4. If no cache OR data is stale (> 5 minutes old), trigger `fetchHistoricData(days)` action
+5. While refetch is in-flight, return stale cached data for responsive UX (stale-while-revalidate)
+6. Store updates `historicDataStatus` to 'loading' during fetch
+7. GET `/functions/v1/query` with:
+   - Authorization: Bearer token header
+   - Query params: `days=7` or `days=30` (from hook parameter)
+8. Edge function (`supabase/functions/query/index.ts`) validates bearer token (constant-time comparison)
+9. Edge function parses and validates query parameters
+10. Edge function calls `get_hourly_aggregates(days_back, source_filter)` RPC
+11. Returns hourly event counts `{source, date, hour, event_count}` rows grouped by hour
+12. Client receives response, updates `historicData` in Zustand, sets `historicDataFetchedAt` timestamp
+13. Store updates `historicDataStatus` to 'success' or 'error'
+14. `useHistoricData` hook returns updated result object with data, status, error, fetchedAt, refetch
+15. Heatmap component re-renders with merged real-time + historic data
+16. Manual refetch available via `refetch()` function (bypasses staleness check)
 
 ### Detailed Request/Response Cycle
 
@@ -219,22 +233,28 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - Return inserted_count separately from duplicates skipped
 - Edge function returns success with counts or 400/401/422 error
 
-#### 10. Historic Data Fetch (Client via Edge Function):
-- On component mount (Heatmap) or manual refresh
+#### 10. Historic Data Fetch (Client via Edge Function - Phase 5):
+- Component mounts and calls `useHistoricData(7)` hook
+- Hook checks Zustand for cached data and `historicDataFetchedAt` timestamp
+- If fresh (< 5 min old), immediately return cached data without fetch
+- If stale or missing, dispatch `fetchHistoricData(days)` action
+- **Phase 5**: Set status to 'loading' and trigger background fetch
 - GET `/functions/v1/query` with:
-  - Authorization: Bearer token header
-  - Query params: `days=7` or `days=30` (optional), `source=...` (optional)
+  - Authorization: Bearer token header (from localStorage `vibetea_token`)
+  - Query params: `days=7` or `days=30`, optional `source=...`
 - Edge function (`supabase/functions/query/index.ts`) validates bearer token
 - Parses and validates query parameters
 - Call `get_hourly_aggregates(days_back, source_filter)` RPC
 - Returns hourly event counts `{source, date, hour, event_count}` with metadata (totalCount, daysRequested, fetchedAt)
-- Client merges with real-time data and renders heatmap
+- **Phase 5**: Client merges response with Zustand store, updates `historicData`, `historicDataFetchedAt`, status
+- Heatmap re-renders with merged real-time + historic data
 
 #### 11. Visualization (Client):
 - `EventStream` component renders with virtualized scrolling (real-time events)
 - `SessionOverview` shows active sessions with metadata
-- `Heatmap` displays activity over time bins (real-time + historic aggregates)
+- `Heatmap` displays activity over time bins (real-time + historic aggregates, with deduplication for current hour)
 - `ConnectionStatus` shows server connectivity
+- **NEW Phase 5**: Historic data loading state shown with 'loading' or error messages
 
 ## Layer Boundaries
 
@@ -242,7 +262,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 |-------|----------------|------------|---------------|
 | **Monitor** | Observe local activity, preserve privacy, authenticate, batch for persistence | FileSystem, HTTP client, Crypto | Server internals, other Monitors, Supabase direct (only via edge functions) |
 | **Server** | Route, authenticate, broadcast, rate limit (real-time only) | All Monitors' public keys, event config, rate limiter state, broadcast channel | File system, Supabase database, Client implementation, persistence state |
-| **Client** | Display, interact, filter, manage WebSocket, fetch historic data | Server WebSocket, Supabase edge functions, localStorage (token), Zustand state | Server internals, other Clients' state, file system, Supabase database direct |
+| **Client** | Display, interact, filter, manage WebSocket, fetch historic data with Bearer auth | Server WebSocket, Supabase edge functions, localStorage (token), Zustand state, React hooks | Server internals, other Clients' state, file system, Supabase database direct |
 | **Supabase Edge Functions** | Validate auth, transform request, call database RPCs | Environment secrets (VIBETEA_PUBLIC_KEYS, VIBETEA_SUBSCRIBER_TOKEN), Supabase client | Monitor/Client implementation, direct database access (via RPC only) |
 | **PostgreSQL** | Persist events, aggregate historic data, enforce RLS | RPC function calls from edge functions | Direct queries (RLS denies all) |
 
@@ -275,6 +295,9 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **NEW Phase 4**: `PersistenceManager` | Async background task for event batching | Wraps `EventBatcher`, runs `run()` async function |
 | **NEW Phase 4**: `EventBatcher` | Buffer and flush events with retry logic | `queue()`, `flush()`, `needs_flush()`, `is_empty()` |
 | **NEW Phase 4**: `PersistenceError` | Persistence-specific errors | Http, Serialization, AuthFailed, ServerError, MaxRetriesExceeded |
+| **NEW Phase 5**: `UseHistoricDataResult` | Hook result for historic data | {data, status, error, fetchedAt, refetch} |
+| **NEW Phase 5**: `HistoricDataStatus` | Status of historic data fetch | 'idle' \| 'loading' \| 'error' \| 'success' |
+| **NEW Phase 5**: `HistoricDataSnapshot` | Store state subset for historic data | {data, status, fetchedAt, error} |
 
 ## Authentication & Authorization
 
@@ -311,7 +334,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
   4. Invalid/missing tokens rejected with 401 Unauthorized
 - **Storage**: Client stores token in localStorage under `vibetea_token` key
 
-### Client Authentication (Consumer) - Persistence Path
+### Client Authentication (Consumer) - Persistence Path (NEW Phase 5)
 
 - **Mechanism**: Same bearer token as real-time, via HTTP Authorization header
 - **Flow**:
@@ -319,7 +342,8 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
   2. GET `/functions/v1/query` with `Authorization: Bearer <token>` header
   3. Edge function validates token using `validateBearerToken()` from `_shared/auth.ts`
   4. Invalid/missing tokens rejected with 401 Unauthorized
-- **Timing Attack Prevention**: Constant-time comparison in edge function using check for token equality before slicing
+- **Timing Attack Prevention**: Constant-time comparison in edge function using token equality check before slicing
+- **Status Codes**: 401 for invalid/missing auth, 400 for invalid parameters, 200 with data on success
 
 ## State Management
 
@@ -331,7 +355,7 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **Rate Limiter** | `RateLimiter` (Arc<Mutex<HashMap>>) | Per-source tracking with TTL-based cleanup |
 | **Uptime** | `Instant` in `AppState` | Initialized at startup for health checks |
 
-### Client State
+### Client State (NEW Phase 5 - Historic Data)
 | State Type | Location | Pattern |
 |------------|----------|---------|
 | **Connection Status** | Zustand store | Driven by WebSocket events (connecting, connected, disconnected, reconnecting) |
@@ -341,6 +365,10 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **Authentication Token** | localStorage | Persisted across page reloads |
 | **Historic Heatmap Data** | Zustand store (HourlyAggregate[]) | Fetched from Supabase edge function, merged with real-time counts |
 | **Heatmap Loading State** | Zustand store | Loading, loaded, error (non-blocking) |
+| **NEW Phase 5**: **Historic Data Cache** | Zustand store (readonly HourlyAggregate[]) | Cached with staleness timestamp, auto-refresh when > 5 min old |
+| **NEW Phase 5**: **Historic Data Status** | Zustand store | 'idle' \| 'loading' \| 'success' \| 'error' (independent of real-time) |
+| **NEW Phase 5**: **Historic Data Fetch Time** | Zustand store (timestamp) | Records when cache was last successfully fetched |
+| **NEW Phase 5**: **Historic Data Error** | Zustand store (error message) | Captures fetch failures for UI feedback |
 
 ### Monitor State
 | State Type | Location | Pattern |
@@ -366,6 +394,8 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 | **Persistence** | Optional, async to real-time | Monitor: PersistenceManager + EventBatcher (Phase 4), Client: independent query fetches |
 | **NEW Phase 4**: **Batch Retry** | Exponential backoff (1s, 2s, 4s), max configurable (1-10) | EventBatcher in `monitor/src/persistence.rs` |
 | **NEW Phase 4**: **Channel Backpressure** | mpsc channel capacity (MAX_BATCH_SIZE * 2) | PersistenceManager receives from channel with non-blocking try_send in main loop |
+| **NEW Phase 5**: **Historic Data Caching** | Stale-while-revalidate with 5-min threshold | `useHistoricData` hook and Zustand store |
+| **NEW Phase 5**: **Bearer Token Auth** | Authorization header validation in edge functions | `supabase/functions/query/index.ts` and `_shared/auth.ts` |
 | **Edge Function Auth** | Ed25519 + bearer tokens | `supabase/functions/_shared/auth.ts` |
 
 ## Design Decisions
@@ -404,6 +434,22 @@ Client → Supabase query edge function → PostgreSQL (periodic fetches):
 - **Reusable**: Can be used by multiple managers or in tests without tokio runtime
 - **Clear interface**: Public methods for queue, flush, status checks
 - **Flexible timing**: Timer and size-based triggers are independent
+
+### Why Stale-While-Revalidate Caching (Phase 5)?
+
+- **Responsive UX**: Immediate return of cached data without waiting for network
+- **Background refresh**: Automatic staleness checks prevent stale data display
+- **Graceful degradation**: If fetch fails, stale data still available
+- **Network efficiency**: Reduces unnecessary requests for recently-fetched data
+- **Standard pattern**: Well-understood caching strategy (used by HTTP and browsers)
+
+### Why useHistoricData Hook (Phase 5)?
+
+- **Composable**: Encapsulates fetching logic, state management, staleness checking
+- **Declarative**: Component declares data needs, hook manages lifecycle
+- **Reusable**: Multiple components can use same hook without duplicating logic
+- **Testable**: Hook can be tested in isolation with mock Zustand state
+- **Memoized**: Refetch function is memoized to prevent unnecessary re-renders
 
 ### Why Edge Functions for Database Access?
 

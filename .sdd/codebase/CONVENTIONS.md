@@ -1,8 +1,8 @@
 # Coding Conventions
 
 **Purpose**: Document code style, naming conventions, error handling, and common patterns.
-**Generated**: 2026-02-03
-**Last Updated**: 2026-02-03 (Phase 4: Supabase persistence)
+**Generated**: 2026-02-04
+**Last Updated**: 2026-02-04 (Phase 5: Historic data UI and testing)
 
 ## Code Style
 
@@ -18,6 +18,17 @@
 
 ### Style Rules
 
+#### TypeScript/Client (Phase 5 focus)
+
+| Rule | Convention | Example |
+|------|------------|---------|
+| Indentation | 2 spaces | Standard JS/TS |
+| Quotes | Single quotes | `'string'` |
+| Semicolons | Always | `const x = 1;` |
+| Line length | 100 chars (soft) | Prettier default |
+| Comments | JSDoc for exports | `/** Description */` |
+| Module docs | Every module/hook | Top-of-file comment block |
+
 #### Rust/Server/Monitor (Phase 4 focus)
 
 | Rule | Convention | Example |
@@ -30,7 +41,33 @@
 
 ## Naming Conventions
 
-### Rust/Server/Monitor (Phase 4 focus)
+### TypeScript/Client (Phase 5)
+
+#### Files & Directories
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Components | PascalCase | `EventStream.tsx`, `HeatmapView.tsx` |
+| Hooks | camelCase with `use` prefix | `useHistoricData.ts`, `useEventStore.ts` |
+| Utilities | camelCase | `formatDate.ts`, `parseEvent.ts` |
+| Types | PascalCase in `types/` | `types/events.ts` |
+| Mocks | In `mocks/` directory | `mocks/handlers.ts`, `mocks/data.ts` |
+| Tests | `__tests__/` directory + `.test.ts` suffix | `__tests__/events.test.ts` |
+
+#### Code Elements
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Variables | camelCase | `historicData`, `fetchStatus` |
+| Constants | SCREAMING_SNAKE_CASE | `MAX_EVENTS`, `STALE_THRESHOLD_MS` |
+| Functions | camelCase, verb prefix | `createHourlyAggregate()`, `parseEvents()` |
+| React components | PascalCase | `App`, `EventStream`, `SessionList` |
+| Store hooks | `useStoreName` | `useEventStore` |
+| Custom hooks | `use` + descriptor | `useHistoricData`, `useWebSocket` |
+| Types/Interfaces | PascalCase | `VibeteaEvent`, `Session`, `EventFilters` |
+| Event types | lowercase string literals | `'session'`, `'tool'`, `'summary'` |
+
+### Rust/Server/Monitor (Phase 4)
 
 #### Files & Directories
 
@@ -53,6 +90,63 @@
 
 ## Error Handling
 
+### TypeScript/Client - Fetch Errors (Phase 5)
+
+| Scenario | Pattern | Example Location |
+|----------|---------|------------------|
+| Network errors | Try/catch with typed response | `useEventStore.ts` line 310-367 |
+| API validation errors | Parse JSON error response | Error message extraction on line 324-338 |
+| Missing config | Early return with error state | Lines 289-305 |
+| Fallback messages | Use `statusText` if JSON fails | Line 337 |
+
+Example from `useEventStore.ts` - Historic data fetch:
+
+```typescript
+try {
+  const response = await fetch(`${supabaseUrl}/functions/v1/query?days=${days}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    // Parse error response to extract message
+    let errorMessage = `HTTP ${response.status}`;
+    try {
+      const errorBody = (await response.json()) as {
+        error?: string;
+        message?: string;
+      };
+      if (errorBody.message !== undefined) {
+        errorMessage = errorBody.message;
+      } else if (errorBody.error !== undefined) {
+        errorMessage = errorBody.error;
+      }
+    } catch {
+      // If JSON parsing fails, use status text
+      errorMessage = response.statusText || `HTTP ${response.status}`;
+    }
+
+    set({
+      historicDataStatus: 'error',
+      historicDataError: errorMessage,
+    });
+    return;
+  }
+
+  const data = (await response.json()) as QueryResponse;
+  // Success state update
+} catch (error) {
+  const errorMessage = error instanceof Error ? error.message : 'Failed to fetch historic data';
+  set({
+    historicDataStatus: 'error',
+    historicDataError: errorMessage,
+  });
+}
+```
+
 ### Rust/Monitor - Persistence Module (Phase 4)
 
 | Scenario | Pattern | Example Location |
@@ -64,48 +158,18 @@
 | HTTP errors | Automatic conversion | `#[from] reqwest::Error` |
 | JSON errors | Automatic conversion | `#[from] serde_json::Error` |
 
-Example from `monitor/src/persistence.rs`:
-
-```rust
-#[derive(Error, Debug)]
-pub enum PersistenceError {
-    /// HTTP request failed.
-    #[error("HTTP error: {0}")]
-    Http(#[from] reqwest::Error),
-
-    /// JSON serialization failed.
-    #[error("serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
-    /// Authentication failed (401 response).
-    #[error("authentication failed: invalid signature")]
-    AuthFailed,
-
-    /// Server returned an error status.
-    #[error("server error: {status} - {message}")]
-    ServerError {
-        /// HTTP status code.
-        status: u16,
-        /// Error message from server.
-        message: String,
-    },
-
-    /// Maximum retry attempts exceeded.
-    #[error("max retries exceeded after {attempts} attempts")]
-    MaxRetriesExceeded {
-        /// Number of attempts made.
-        attempts: u8,
-    },
-
-    /// Invalid header value.
-    #[error("invalid header value: {0}")]
-    InvalidHeader(#[from] reqwest::header::InvalidHeaderValue),
-}
-```
-
 ### Logging Conventions
 
-Structured logging using the `tracing` crate:
+#### TypeScript/Client - Use `console` for browser environment
+
+| Level | When to Use | Example |
+|-------|-------------|---------|
+| error | Unrecoverable failures, API errors | `console.error('Failed to fetch historic data', error)` |
+| warn | Config issues, edge cases | `console.warn('Persistence not configured')` |
+| info | Important state changes | `console.info('Historic data fetched successfully')` |
+| debug | Store updates, hook effects | `console.debug('Stale data detected, refetching')` |
+
+#### Rust/Monitor - Use `tracing` crate
 
 | Level | When to Use | Example |
 |-------|-------------|---------|
@@ -114,315 +178,415 @@ Structured logging using the `tracing` crate:
 | info | State changes and milestones | `info!("Batch of {count} events submitted successfully", count)` |
 | debug | Diagnostic information | `debug!("Retry policy configured: initial={ms}ms, max={max}ms", ms, max)` |
 
-## Common Patterns (Phase 4 Focus)
+## Common Patterns (Phase 5 Update)
 
-### Event Batching Pattern
+### MSW Handler Pattern (Phase 5 - New)
 
-Batch events efficiently for persistence:
+Mock Service Worker handlers for testing data fetching:
 
-```rust
-/// Buffers events in memory until batch interval or size limit.
-pub struct EventBatcher {
-    config: PersistenceConfig,
-    crypto: Crypto,
-    buffer: Vec<Event>,
-    client: Client,
-    consecutive_failures: u8,
+```typescript
+// mocks/handlers.ts
+import { http, HttpResponse } from 'msw';
+
+/**
+ * Handler for GET /functions/v1/query endpoint.
+ * Validates Authorization header and days query parameter.
+ */
+const queryHandler = http.get('*/functions/v1/query', ({ request }) => {
+  // Step 1: Extract and validate bearer token
+  const authHeader = request.headers.get('Authorization');
+  if (authHeader === null) {
+    return HttpResponse.json(errorResponses.missingAuth, { status: 401 });
+  }
+
+  const parts = authHeader.split(' ');
+  if (parts.length !== 2 || parts[0] !== 'Bearer') {
+    return HttpResponse.json(errorResponses.invalidToken, { status: 401 });
+  }
+
+  // Step 2: Validate days parameter
+  const url = new URL(request.url);
+  const daysParam = url.searchParams.get('days');
+  const days = daysParam === null ? 7 : parseInt(daysParam, 10);
+
+  if (days !== 7 && days !== 30) {
+    return HttpResponse.json(errorResponses.invalidDays, { status: 400 });
+  }
+
+  // Step 3: Return mock data
+  return HttpResponse.json(createQueryResponse(days), { status: 200 });
+});
+
+export const queryHandlers = [queryHandler] as const;
+```
+
+Key MSW patterns:
+1. **URL pattern matching**: `*/functions/v1/query` matches any Supabase URL
+2. **Request inspection**: Extract headers, query params from Request object
+3. **Response simulation**: Return `HttpResponse.json()` with status code
+4. **Handler arrays**: Export as readonly array for spread into server setup
+
+### Mock Data Factory Pattern (Phase 5 - New)
+
+Generate realistic test data:
+
+```typescript
+// mocks/data.ts
+export interface QueryResponse {
+  readonly aggregates: HourlyAggregate[];
+  readonly meta: {
+    readonly totalCount: number;
+    readonly daysRequested: 7 | 30;
+    readonly fetchedAt: string;
+  };
 }
 
-impl EventBatcher {
-    /// Adds an event to the buffer.
-    /// Returns true if buffer is at capacity and should be flushed.
-    pub fn queue(&mut self, event: Event) -> bool {
-        if self.buffer.len() >= MAX_BATCH_SIZE {
-            warn!("Persistence buffer overflow, dropping oldest event");
-            self.buffer.remove(0);
+export function createHourlyAggregate(
+  overrides: Partial<HourlyAggregate> = {}
+): HourlyAggregate {
+  const now = new Date();
+  const defaultDate = now.toISOString().split('T')[0] ?? '2026-02-04';
+
+  return {
+    source: MOCK_SOURCE,
+    date: defaultDate,
+    hour: now.getUTCHours(),
+    eventCount: Math.floor(Math.random() * 200) + 10,
+    ...overrides,
+  };
+}
+
+export function generateMockAggregates(
+  days: 7 | 30,
+  source: string = MOCK_SOURCE
+): HourlyAggregate[] {
+  const aggregates: HourlyAggregate[] = [];
+
+  for (let dayOffset = 0; dayOffset < days; dayOffset++) {
+    const date = new Date(now);
+    date.setUTCDate(date.getUTCDate() - dayOffset);
+    const dateStr = date.toISOString().split('T')[0];
+
+    // Higher event counts during work hours (9-17)
+    for (let hour = 0; hour < 24; hour++) {
+      if (Math.random() < 0.3) continue; // Skip some hours for realism
+
+      const isWorkHour = hour >= 9 && hour <= 17;
+      const baseCount = isWorkHour ? 80 : 20;
+      const variance = isWorkHour ? 120 : 30;
+      const eventCount = baseCount + Math.floor(Math.random() * variance);
+
+      aggregates.push({ source, date: dateStr, hour, eventCount });
+    }
+  }
+
+  return aggregates.sort((a, b) => {
+    const dateCompare = b.date.localeCompare(a.date);
+    return dateCompare !== 0 ? dateCompare : b.hour - a.hour;
+  });
+}
+```
+
+Key factory patterns:
+1. **Override pattern**: Accept partial object for customization
+2. **Realistic data**: Variable counts, simulated work hours, gaps
+3. **Deterministic defaults**: Use today's date but allow overrides
+4. **Type safety**: Return typed objects matching API responses
+
+### Zustand Store Pattern with Async Actions (Phase 5)
+
+State management with fetchHistoricData action:
+
+```typescript
+// hooks/useEventStore.ts
+export interface EventStore {
+  // State
+  readonly historicData: readonly HourlyAggregate[];
+  readonly historicDataStatus: HistoricDataStatus;
+  readonly historicDataFetchedAt: number | null;
+  readonly historicDataError: string | null;
+
+  // Actions
+  readonly fetchHistoricData: (days: 7 | 30) => Promise<void>;
+  readonly clearHistoricData: () => void;
+}
+
+export const useEventStore = create<EventStore>()((set) => ({
+  // Initial state
+  historicData: [],
+  historicDataStatus: 'idle',
+  historicDataFetchedAt: null,
+  historicDataError: null,
+
+  // Async action with status management
+  fetchHistoricData: async (days: 7 | 30): Promise<void> => {
+    // Validate environment configuration
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+    if (supabaseUrl === undefined || supabaseUrl === '') {
+      set({
+        historicDataStatus: 'error',
+        historicDataError: 'Persistence not configured',
+      });
+      return;
+    }
+
+    // Set loading state before fetch
+    set({ historicDataStatus: 'loading', historicDataError: null });
+
+    try {
+      const response = await fetch(
+        `${supabaseUrl}/functions/v1/query?days=${days}`,
+        {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+          },
         }
-        self.buffer.push(event);
-        self.buffer.len() >= MAX_BATCH_SIZE
-    }
+      );
 
-    /// Sends buffered events to the edge function.
-    /// Uses exponential backoff with jitter on failure.
-    pub async fn flush(&mut self) -> Result<usize, PersistenceError> {
-        // Implementation with retry logic
-    }
-}
-```
-
-### Retry Policy Pattern
-
-Configure exponential backoff with validation:
-
-```rust
-/// Retry configuration with exponential backoff.
-pub struct RetryPolicy {
-    pub initial_delay_ms: u64,      // 1000
-    pub max_delay_ms: u64,          // 60000
-    pub max_attempts: u32,          // Limit before giving up
-    pub jitter_factor: f64,         // ±25% variance
-}
-
-impl RetryPolicy {
-    /// Creates a retry policy optimized for fast tests.
-    pub fn fast_for_tests() -> Self {
-        Self {
-            initial_delay_ms: 1,
-            max_delay_ms: 5,
-            max_attempts: 3,
-            jitter_factor: 0.0,  // No jitter for deterministic tests
-        }
-    }
-
-    /// Validates and clamps values to acceptable ranges.
-    pub fn validated(mut self) -> Self {
-        // Clamp jitter factor to 0.0..=1.0
-        self.jitter_factor = if self.jitter_factor.is_finite() {
-            self.jitter_factor.clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-
-        // Ensure positive delays
-        self.initial_delay_ms = self.initial_delay_ms.max(1);
-        self.max_delay_ms = self.max_delay_ms.max(self.initial_delay_ms);
-
-        // Ensure at least one attempt
-        self.max_attempts = self.max_attempts.max(1);
-
-        self
-    }
-}
-```
-
-### Async Test Helpers Pattern
-
-Helper functions for test setup and teardown:
-
-```rust
-// sender_recovery_test.rs
-fn create_test_event() -> Event {
-    Event::new(
-        "test-monitor".to_string(),
-        EventType::Tool,
-        EventPayload::Tool {
-            session_id: Uuid::new_v4(),
-            tool: "Read".to_string(),
-            status: ToolStatus::Completed,
-            context: Some("small.rs".to_string()),
-            project: Some("test-project".to_string()),
-        },
-    )
-}
-
-fn create_oversized_event() -> Event {
-    // Create context larger than 900KB to trigger oversized handling
-    let oversized_context = "x".repeat(950_000);
-    Event::new(
-        "test-monitor".to_string(),
-        EventType::Tool,
-        EventPayload::Tool {
-            session_id: Uuid::new_v4(),
-            tool: "Read".to_string(),
-            status: ToolStatus::Completed,
-            context: Some(oversized_context),
-            project: Some("test-project".to_string()),
-        },
-    )
-}
-
-fn create_test_sender(server_url: &str) -> Sender {
-    let config = SenderConfig::new(server_url.to_string(), "test-monitor".to_string(), 100)
-        .with_retry_policy(RetryPolicy::fast_for_tests());
-    Sender::new(config, Crypto::generate())
-}
-
-// Integration test using wiremock
-#[tokio::test]
-async fn test_oversized_event_does_not_block_normal_events() {
-    let mock_server = MockServer::start().await;
-
-    // First request: oversized chunk -> 413
-    Mock::given(method("POST"))
-        .and(path("/events"))
-        .respond_with(ResponseTemplate::new(413).set_body_string("Payload too large"))
-        .up_to_n_times(1)
-        .mount(&mock_server)
-        .await;
-
-    // Second request: normal chunk -> 200
-    Mock::given(method("POST"))
-        .and(path("/events"))
-        .respond_with(ResponseTemplate::new(200))
-        .mount(&mock_server)
-        .await;
-
-    let mut sender = create_test_sender(&mock_server.uri());
-
-    // Queue events: [normal, oversized, normal]
-    sender.queue(create_small_event());
-    sender.queue(create_oversized_event());
-    sender.queue(create_small_event());
-
-    // Flush should succeed overall
-    let result = sender.flush().await;
-    assert!(result.is_ok(), "Flush should succeed: {:?}", result);
-    assert!(sender.is_empty(), "Buffer should be empty after flush");
-}
-```
-
-Key patterns for Phase 4:
-1. **Test helpers**: Extract common setup into reusable functions
-2. **Mock servers**: Use wiremock for HTTP testing without external dependencies
-3. **Error responses**: Test both success (200) and error (413, 500) cases
-4. **Buffer state**: Verify buffer is empty after flush
-5. **Event composition**: Use builder pattern for complex test data
-
-### Chunked Sending Pattern (Phase 4)
-
-Split large payloads into multiple requests:
-
-```rust
-const MAX_CHUNK_SIZE: usize = 900 * 1024;  // 900KB per request
-
-/// Splits events into chunks that fit within MAX_CHUNK_SIZE.
-fn chunk_events(events: Vec<Event>) -> Vec<Vec<Event>> {
-    let mut chunks = Vec::new();
-    let mut current_chunk = Vec::new();
-    let mut current_size = 0;
-
-    for event in events {
-        let event_size = serde_json::to_string(&event)
-            .map(|s| s.len())
-            .unwrap_or(1000);
-
-        if !current_chunk.is_empty() && current_size + event_size > MAX_CHUNK_SIZE {
-            chunks.push(current_chunk);
-            current_chunk = Vec::new();
-            current_size = 0;
+      if (!response.ok) {
+        // Extract error message from response
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const errorBody = (await response.json()) as {
+            error?: string;
+            message?: string;
+          };
+          if (errorBody.message !== undefined) {
+            errorMessage = errorBody.message;
+          }
+        } catch {
+          errorMessage = response.statusText || `HTTP ${response.status}`;
         }
 
-        current_chunk.push(event);
-        current_size += event_size;
-    }
+        set({
+          historicDataStatus: 'error',
+          historicDataError: errorMessage,
+        });
+        return;
+      }
 
-    if !current_chunk.is_empty() {
-        chunks.push(current_chunk);
+      // Success: update state with fetched data
+      const data = (await response.json()) as QueryResponse;
+      set({
+        historicData: data.aggregates,
+        historicDataStatus: 'success',
+        historicDataFetchedAt: Date.now(),
+        historicDataError: null,
+      });
+    } catch (error) {
+      set({
+        historicDataStatus: 'error',
+        historicDataError: error instanceof Error ? error.message : 'Unknown error',
+      });
     }
+  },
 
-    chunks
+  clearHistoricData: () => {
+    set({
+      historicData: [],
+      historicDataStatus: 'idle',
+      historicDataFetchedAt: null,
+      historicDataError: null,
+    });
+  },
+}));
+```
+
+Key store patterns:
+1. **Status state machine**: `idle` → `loading` → `success`/`error`
+2. **Timestamp tracking**: Use `Date.now()` for cache staleness detection
+3. **Error first validation**: Check configuration before fetch
+4. **Graceful degradation**: Parse error response, fallback to status text
+5. **Selective state updates**: Only update changed fields
+
+### Custom Hook Pattern with Store Selectors (Phase 5)
+
+Composite hooks using store with memoization:
+
+```typescript
+// hooks/useHistoricData.ts
+export interface UseHistoricDataResult {
+  readonly data: readonly HourlyAggregate[];
+  readonly status: HistoricDataStatus;
+  readonly error: string | null;
+  readonly fetchedAt: number | null;
+  readonly refetch: () => void;
+}
+
+const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+function isDataStale(fetchedAt: number | null): boolean {
+  if (fetchedAt === null) {
+    return true;
+  }
+  return Date.now() - fetchedAt > STALE_THRESHOLD_MS;
+}
+
+export function useHistoricData(days: 7 | 30): UseHistoricDataResult {
+  // Select individual slices to optimize re-renders
+  const historicData = useEventStore((state) => state.historicData);
+  const historicDataStatus = useEventStore((state) => state.historicDataStatus);
+  const historicDataFetchedAt = useEventStore((state) => state.historicDataFetchedAt);
+  const historicDataError = useEventStore((state) => state.historicDataError);
+  const fetchHistoricData = useEventStore((state) => state.fetchHistoricData);
+
+  // Memoized refetch function
+  const refetch = useCallback(() => {
+    void fetchHistoricData(days);
+  }, [days, fetchHistoricData]);
+
+  // Auto-fetch when stale
+  useEffect(() => {
+    const shouldFetch = isDataStale(historicDataFetchedAt);
+
+    if (shouldFetch && historicDataStatus !== 'loading') {
+      void fetchHistoricData(days);
+    }
+  }, [days, fetchHistoricData, historicDataFetchedAt, historicDataStatus]);
+
+  return {
+    data: historicData,
+    status: historicDataStatus,
+    error: historicDataError,
+    fetchedAt: historicDataFetchedAt,
+    refetch,
+  };
 }
 ```
 
-### Exponential Backoff with Jitter Pattern
+Key hook patterns:
+1. **Selector optimization**: Use individual selectors to prevent unnecessary re-renders
+2. **Stale-while-revalidate**: Auto-refetch when cache is older than threshold
+3. **Memoized callbacks**: Use `useCallback` to prevent effect re-triggers
+4. **Status checking**: Don't refetch if already loading
+5. **Manual refetch**: Always provide explicit refetch function
 
-Implement backoff for retry logic:
+### Store Direct Testing Pattern (Phase 5)
 
-```rust
-/// Calculate next retry delay with exponential backoff and jitter.
-fn calculate_retry_delay(attempt: u32, policy: &RetryPolicy) -> Duration {
-    // Exponential: initial_delay * 2^(attempt-1)
-    let base_delay_ms = policy.initial_delay_ms
-        .saturating_mul(2u64.pow(attempt.saturating_sub(1)))
-        .min(policy.max_delay_ms);
+Test Zustand store state directly without rendering components:
 
-    // Add jitter: ±(jitter_factor * base_delay)
-    if policy.jitter_factor == 0.0 {
-        Duration::from_millis(base_delay_ms)
-    } else {
-        let jitter_range = (base_delay_ms as f64 * policy.jitter_factor) as i64;
-        let mut rng = rand::thread_rng();
-        let jitter = rng.gen_range(-jitter_range..=jitter_range);
-        let final_delay_ms = (base_delay_ms as i64 + jitter).max(1) as u64;
-        Duration::from_millis(final_delay_ms)
-    }
-}
+```typescript
+// __tests__/App.test.tsx
+beforeEach(() => {
+  localStorage.clear();
+  useEventStore.setState({
+    status: 'disconnected',
+    events: [],
+    sessions: new Map(),
+    filters: { sessionId: null, timeRange: null },
+  });
+});
 
-// Usage in sender
-async fn flush_with_retry(&mut self) -> Result<usize> {
-    for attempt in 1..=self.config.retry_policy.max_attempts {
-        match self.send_batch().await {
-            Ok(count) => {
-                self.consecutive_failures = 0;
-                return Ok(count);
-            }
-            Err(e) if attempt >= self.config.retry_policy.max_attempts => {
-                return Err(e);
-            }
-            Err(_) => {
-                let delay = calculate_retry_delay(attempt, &self.config.retry_policy);
-                tokio::time::sleep(delay).await;
-            }
-        }
-    }
-}
+it('filter state can be updated via store actions', () => {
+  // Test store actions directly without rendering component
+  const { setSessionFilter, setTimeRangeFilter, clearFilters } =
+    useEventStore.getState();
+
+  // Set session filter
+  setSessionFilter('test-session-123');
+  expect(useEventStore.getState().filters.sessionId).toBe('test-session-123');
+
+  // Set time range filter
+  const startTime = new Date('2024-01-01T10:00:00Z');
+  const endTime = new Date('2024-01-01T11:00:00Z');
+  setTimeRangeFilter({ start: startTime, end: endTime });
+  expect(useEventStore.getState().filters.timeRange).toEqual({
+    start: startTime,
+    end: endTime,
+  });
+
+  // Clear filters
+  clearFilters();
+  expect(useEventStore.getState().filters.sessionId).toBeNull();
+  expect(useEventStore.getState().filters.timeRange).toBeNull();
+});
 ```
 
-## Module Documentation Standard (Phase 4)
+Key direct testing patterns:
+1. **Reset before each**: Use `setState` to reset to clean state
+2. **Get actions**: Use `getState()` to access action functions
+3. **Assert state changes**: Call actions then verify with `getState()`
+4. **Avoid component rendering**: Test logic without React overhead
+5. **Deterministic tests**: No async timing issues
 
-Every module includes detailed documentation:
+## Import Ordering
 
-```rust
-//! Event batching and persistence for Supabase edge function.
-//!
-//! This module handles batching and sending events to a Supabase edge function
-//! for historic storage and activity heatmap visualization.
-//!
-//! # Design
-//!
-//! - **Best-effort**: Persistence does not block real-time event flow. If the
-//!   edge function is unavailable, events are buffered and retried later.
-//!
-//! - **Batching**: Events are collected in a buffer and sent periodically or
-//!   when the buffer reaches [`MAX_BATCH_SIZE`] events (whichever comes first).
-//!
-//! - **Retry behavior**: Failed submissions use exponential backoff with a
-//!   configurable retry limit. After exceeding the limit, the batch is dropped
-//!   and the failure count is reset to prevent unbounded memory growth.
-//!
-//! # Example
-//!
-//! ```no_run
-//! use vibetea_monitor::persistence::{EventBatcher, PersistenceError};
-//! use vibetea_monitor::config::PersistenceConfig;
-//! use vibetea_monitor::crypto::Crypto;
-//!
-//! #[tokio::main]
-//! async fn main() -> Result<(), PersistenceError> {
-//!     let config = PersistenceConfig {
-//!         supabase_url: "https://xyz.supabase.co/functions/v1".to_string(),
-//!         batch_interval_secs: 60,
-//!         retry_limit: 3,
-//!     };
-//!     let crypto = Crypto::generate();
-//!     let mut batcher = EventBatcher::new(config, crypto);
-//!     // ... use batcher
-//!     Ok(())
-//! }
-//! ```
+Standard import order:
+
+1. External packages (react, zustand, msw, etc.)
+2. Internal hooks and utilities
+3. Type imports
+4. Test utilities (in test files only)
+
+Example:
+
+```typescript
+import { useCallback, useEffect } from 'react';
+import { useEventStore } from './useEventStore';
+import type { HourlyAggregate } from '../types/events';
+
+// Test imports (only in .test.ts files)
+import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen } from '@testing-library/react';
 ```
 
-Key module documentation patterns:
-1. **First line**: One-line summary
-2. **Design section**: High-level architecture and decision rationale
-3. **Example code**: Practical usage patterns with `no_run` for external examples
-4. **Key concepts**: Links to important types and constants using `[`Type`]`
+## Comments & Documentation
+
+| Type | When to Use | Format |
+|------|-------------|--------|
+| Module doc | Top of file, before imports | `/** ... */` block |
+| Function doc | Public functions and hooks | JSDoc with @param, @returns |
+| Inline | Complex logic or non-obvious code | `// Explanation` |
+| TODO | Planned work | `// TODO: description` |
+| FIXME | Known issues | `// FIXME: description` |
+
+Example module documentation (Phase 5):
+
+```typescript
+/**
+ * Hook for fetching and caching historic event aggregates
+ * with stale-while-revalidate pattern.
+ *
+ * This hook provides automatic background refetching when cached data
+ * becomes stale (older than 5 minutes), while immediately returning
+ * the cached data for a responsive user experience.
+ *
+ * @example
+ * ```tsx
+ * function HeatmapView() {
+ *   const { data, status, error, refetch } = useHistoricData(7);
+ *
+ *   if (status === 'loading' && data.length === 0) {
+ *     return <LoadingSpinner />;
+ *   }
+ *
+ *   return <Heatmap data={data} />;
+ * }
+ * ```
+ */
+```
 
 ## Git Conventions
 
-### Commit Messages (Phase 4)
+### Commit Messages (Phase 5 Update)
 
 Format: `type(scope): description`
 
-Phase 4 examples:
-- `feat(monitor): implement batch interval timer`
-- `feat(monitor): implement retry logic with exponential backoff`
-- `feat(monitor): implement signed batch submission`
-- `feat(monitor): implement event buffering with max 1000 events`
-- `feat(monitor): scaffold persistence module`
-- `feat(monitor): add persistence configuration`
-- `test(monitor): add persistence integration tests with wiremock`
+Phase 5 examples:
+- `feat(client): implement historic data hook with stale-while-revalidate`
+- `feat(client): add MSW handlers for query endpoint`
+- `feat(client): implement Zustand store async data fetching`
+- `test(client): add hook tests using renderHook and MSW`
+- `test(client): add App component tests with store mocking`
+
+### Branch Naming
+
+Format: `{type}/{ticket}-{description}`
+
+Example: `feat/005-historic-data-ui`
 
 ---
 
-*This document defines HOW to write code for Phase 4 (Supabase persistence). Update when conventions change.*
+*This document defines HOW to write code for Phase 5 (Historic data UI). Update when conventions change.*
