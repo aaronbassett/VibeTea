@@ -3381,19 +3381,31 @@ mod tests {
     #[test]
     fn app_state_set_connection_status_updates_dashboard() {
         let mut state = AppState::new();
-        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Disconnected);
+        assert_eq!(
+            state.dashboard.connection_status,
+            ConnectionStatus::Disconnected
+        );
 
         state.set_connection_status(ConnectionStatus::Connecting);
-        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Connecting);
+        assert_eq!(
+            state.dashboard.connection_status,
+            ConnectionStatus::Connecting
+        );
 
         state.set_connection_status(ConnectionStatus::Connected);
-        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Connected);
+        assert_eq!(
+            state.dashboard.connection_status,
+            ConnectionStatus::Connected
+        );
 
         state.set_connection_status(ConnectionStatus::Error);
         assert_eq!(state.dashboard.connection_status, ConnectionStatus::Error);
 
         state.set_connection_status(ConnectionStatus::Disconnected);
-        assert_eq!(state.dashboard.connection_status, ConnectionStatus::Disconnected);
+        assert_eq!(
+            state.dashboard.connection_status,
+            ConnectionStatus::Disconnected
+        );
     }
 
     // =============================================================================
