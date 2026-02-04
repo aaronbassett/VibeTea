@@ -382,9 +382,9 @@
 **Independent Test**: Run Storybook and verify all new animated components have documented stories
 
 ### Phase Start
-- [ ] T209 [GIT] Verify working tree is clean before starting Phase 10
-- [ ] T210 [GIT] Pull and rebase on origin/main if needed
-- [ ] T211 [US8] Create retro/P10.md for this phase
+- [x] T209 [GIT] Verify working tree is clean before starting Phase 10
+- [x] T210 [GIT] Pull and rebase on origin/main if needed
+- [x] T211 [US8] Create retro/P10.md for this phase
 
 ### Implementation
 - [ ] T212 [GIT] Commit: initialize phase 10 retro
