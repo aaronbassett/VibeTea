@@ -235,36 +235,36 @@
 **Independent Test**: Start monitor, observe "Connected" status, disconnect network, observe status change
 
 ### Phase Start
-- [ ] T113 [GIT] Verify working tree is clean before starting Phase 5
-- [ ] T114 [GIT] Pull and rebase on origin/main if needed
-- [ ] T115 [US3] Create retro/P5.md for this phase
-- [ ] T116 [GIT] Commit: initialize phase 5 retro
+- [x] T113 [GIT] Verify working tree is clean before starting Phase 5
+- [x] T114 [GIT] Pull and rebase on origin/main if needed
+- [x] T115 [US3] Create retro/P5.md for this phase
+- [x] T116 [GIT] Commit: initialize phase 5 retro
 
 ### Connection Status Types
-- [ ] T117 [US3] Implement ConnectionStatus enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T118 [GIT] Commit: add ConnectionStatus enum
-- [ ] T119 [US3] Add connection_status field to DashboardState in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T120 [GIT] Commit: add connection status to dashboard state
+- [x] T117 [US3] Implement ConnectionStatus enum in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T118 [GIT] Commit: add ConnectionStatus enum
+- [x] T119 [US3] Add connection_status field to DashboardState in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T120 [GIT] Commit: add connection status to dashboard state
 
 ### Connection Status Widget
-- [ ] T121 [US3] Implement connection_status widget in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T122 [GIT] Commit: add connection status widget
-- [ ] T123 [US3] Add color-blind safe indicators (symbols + colors) in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T124 [GIT] Commit: add accessible status indicators
+- [x] T121 [US3] Implement connection_status widget in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T122 [GIT] Commit: add connection status widget
+- [x] T123 [US3] Add color-blind safe indicators (symbols + colors) in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T124 [GIT] Commit: add accessible status indicators
 
 ### Header Widget
-- [ ] T125 [US3] Implement header widget combining logo and status in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T126 [GIT] Commit: add combined header widget
-- [ ] T127 [US3] Handle narrow terminal graceful degradation in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
-- [ ] T128 [GIT] Commit: add header graceful degradation
+- [x] T125 [US3] Implement header widget combining logo and status in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T126 [GIT] Commit: add combined header widget
+- [x] T127 [US3] Handle narrow terminal graceful degradation in monitor/src/tui/widgets/header.rs (use devs:rust-dev agent)
+- [x] T128 [GIT] Commit: add header graceful degradation
 
 ### Connection Status Updates
-- [ ] T129 [US3] Integrate sender connection state into TUI in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T130 [GIT] Commit: integrate connection status updates
+- [x] T129 [US3] Integrate sender connection state into TUI in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T130 [GIT] Commit: integrate connection status updates
 
 ### Codebase Mapping and Retro
-- [ ] T131 [US3] Run /sdd:map incremental for Phase 5 changes
-- [ ] T132 [GIT] Commit: update codebase documents for phase 5
+- [x] T131 [US3] Run /sdd:map incremental for Phase 5 changes
+- [x] T132 [GIT] Commit: update codebase documents for phase 5
 - [ ] T133 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T134 [GIT] Commit: finalize phase 5 retro
 
