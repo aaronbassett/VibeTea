@@ -1,0 +1,214 @@
+openapi: 3.1.0
+info:
+  title: VibeTea Ingest Edge Function
+  description: |
+    Edge function for batch event ingestion from monitors.
+    Validates Ed25519 signatures and inserts events into Supabase.
+  version: 1.0.0
+
+servers:
+  - url: https://{project}.supabase.co/functions/v1
+    description: Supabase Edge Functions
+    variables:
+      project:
+        default: your-project-ref
+        description: Supabase project reference
+
+paths:
+  /ingest:
+    post:
+      operationId: ingestEvents
+      summary: Batch insert events
+      description: |
+        Receives a batch of events from a monitor, validates the Ed25519 signature,
+        and inserts events into the database. Duplicate events (by ID) are silently
+        ignored using ON CONFLICT DO NOTHING.
+      security:
+        - ed25519Signature: []
+      parameters:
+        - name: X-Source-ID
+          in: header
+          required: true
+          description: Monitor source identifier (must match events' source field)
+          schema:
+            type: string
+            example: "macbook-pro-monitor"
+        - name: X-Signature
+          in: header
+          required: true
+          description: Base64-encoded Ed25519 signature of the request body
+          schema:
+            type: string
+            format: byte
+            example: "MEUCIQDKZo...base64..."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              maxItems: 1000
+              items:
+                $ref: '#/components/schemas/Event'
+            example:
+              - id: "evt_k7m2n9p4q1r6s3t8u5v0"
+                source: "macbook-pro-monitor"
+                timestamp: "2026-02-03T14:30:00Z"
+                eventType: "tool"
+                payload:
+                  sessionId: "550e8400-e29b-41d4-a716-446655440000"
+                  tool: "Read"
+                  status: "completed"
+                  context: "main.rs"
+      responses:
+        '200':
+          description: Events successfully processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+              example:
+                inserted: 847
+                message: "Successfully processed 1000 events (153 duplicates skipped)"
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidJson:
+                  value:
+                    error: "invalid_request"
+                    message: "Request body is not valid JSON"
+                emptyBatch:
+                  value:
+                    error: "empty_batch"
+                    message: "Request body must be a non-empty array"
+                batchTooLarge:
+                  value:
+                    error: "batch_too_large"
+                    message: "Maximum batch size is 1000 events"
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                missingHeaders:
+                  value:
+                    error: "missing_auth"
+                    message: "X-Source-ID and X-Signature headers are required"
+                invalidSignature:
+                  value:
+                    error: "invalid_signature"
+                    message: "Ed25519 signature verification failed"
+                unknownSource:
+                  value:
+                    error: "unknown_source"
+                    message: "No public key registered for source 'unknown-monitor'"
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                sourceMismatch:
+                  value:
+                    error: "source_mismatch"
+                    message: "Event source 'other-monitor' does not match authenticated source 'macbook-pro-monitor'"
+                invalidEventType:
+                  value:
+                    error: "invalid_event_type"
+                    message: "Invalid event type 'unknown' at index 5"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error: "internal_error"
+                message: "Database insertion failed"
+
+components:
+  securitySchemes:
+    ed25519Signature:
+      type: apiKey
+      in: header
+      name: X-Signature
+      description: |
+        Ed25519 signature of the request body, base64-encoded.
+        The signature is verified against the public key registered for the X-Source-ID.
+
+  schemas:
+    Event:
+      type: object
+      required:
+        - id
+        - source
+        - timestamp
+        - eventType
+        - payload
+      properties:
+        id:
+          type: string
+          pattern: "^evt_[a-z0-9]{20}$"
+          description: Unique event identifier
+          example: "evt_k7m2n9p4q1r6s3t8u5v0"
+        source:
+          type: string
+          minLength: 1
+          description: Monitor source identifier
+          example: "macbook-pro-monitor"
+        timestamp:
+          type: string
+          format: date-time
+          description: Event timestamp in RFC 3339 format
+          example: "2026-02-03T14:30:00Z"
+        eventType:
+          type: string
+          enum:
+            - session
+            - activity
+            - tool
+            - agent
+            - summary
+            - error
+          description: Event type discriminator
+        payload:
+          type: object
+          description: Event-specific payload (already privacy-filtered)
+          additionalProperties: true
+
+    IngestResponse:
+      type: object
+      required:
+        - inserted
+      properties:
+        inserted:
+          type: integer
+          minimum: 0
+          description: Number of events actually inserted (excludes duplicates)
+          example: 847
+        message:
+          type: string
+          description: Human-readable status message
+          example: "Successfully processed 1000 events (153 duplicates skipped)"
+
+    Error:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Machine-readable error code
+          example: "invalid_signature"
+        message:
+          type: string
+          description: Human-readable error description
+          example: "Ed25519 signature verification failed"

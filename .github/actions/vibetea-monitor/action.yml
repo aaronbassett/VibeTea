@@ -1,0 +1,166 @@
+# VibeTea Monitor GitHub Action
+#
+# This composite action simplifies deploying the VibeTea monitor in GitHub Actions
+# workflows. It handles downloading the monitor binary, configuring environment
+# variables, and starting the monitor in the background.
+#
+# Usage:
+#   - uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+#     with:
+#       server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+#       private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+#
+# The monitor captures Claude Code events during workflow execution.
+# It is non-blocking: network failures won't fail your workflow.
+
+name: 'VibeTea Monitor'
+description: 'Start VibeTea monitor to track Claude Code events during GitHub Actions workflows'
+author: 'aaronbassett'
+
+branding:
+  icon: 'activity'
+  color: 'green'
+
+inputs:
+  server-url:
+    description: 'URL of the VibeTea server'
+    required: true
+
+  private-key:
+    description: 'Base64-encoded Ed25519 private key (from vibetea-monitor export-key)'
+    required: true
+
+  source-id:
+    description: 'Custom source identifier for events (defaults to github-<repo>-<run_id>)'
+    required: false
+    default: ''
+
+  version:
+    description: 'Version of VibeTea monitor to download (default: latest)'
+    required: false
+    default: 'latest'
+
+  shutdown-timeout:
+    description: 'Timeout in seconds to wait for graceful shutdown (default: 5)'
+    required: false
+    default: '5'
+
+outputs:
+  monitor-pid:
+    description: 'Process ID of the running monitor (empty if not started)'
+    value: ${{ steps.start-monitor.outputs.pid }}
+
+  monitor-started:
+    description: 'Whether the monitor was successfully started (true/false)'
+    value: ${{ steps.start-monitor.outputs.started }}
+
+runs:
+  using: 'composite'
+  steps:
+    # Download the monitor binary
+    - name: Download VibeTea Monitor
+      id: download
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        DOWNLOAD_URL="https://github.com/aaronbassett/VibeTea/releases"
+
+        if [ "$VERSION" = "latest" ]; then
+          DOWNLOAD_URL="${DOWNLOAD_URL}/latest/download/vibetea-monitor-x86_64-unknown-linux-gnu"
+        else
+          DOWNLOAD_URL="${DOWNLOAD_URL}/download/${VERSION}/vibetea-monitor-x86_64-unknown-linux-gnu"
+        fi
+
+        echo "Downloading VibeTea monitor from: ${DOWNLOAD_URL}"
+
+        # Download to a temporary location
+        MONITOR_PATH="${{ runner.temp }}/vibetea-monitor"
+
+        if curl -fsSL -o "$MONITOR_PATH" "$DOWNLOAD_URL"; then
+          chmod +x "$MONITOR_PATH"
+          echo "path=${MONITOR_PATH}" >> $GITHUB_OUTPUT
+          echo "downloaded=true" >> $GITHUB_OUTPUT
+          echo "VibeTea monitor downloaded successfully"
+        else
+          echo "::warning::Failed to download VibeTea monitor binary"
+          echo "downloaded=false" >> $GITHUB_OUTPUT
+        fi
+
+    # Start the monitor in background
+    - name: Start VibeTea Monitor
+      id: start-monitor
+      shell: bash
+      env:
+        VIBETEA_PRIVATE_KEY: ${{ inputs.private-key }}
+        VIBETEA_SERVER_URL: ${{ inputs.server-url }}
+        VIBETEA_SOURCE_ID: ${{ inputs.source-id || format('github-{0}-{1}', github.repository, github.run_id) }}
+      run: |
+        MONITOR_PATH="${{ steps.download.outputs.path }}"
+        DOWNLOADED="${{ steps.download.outputs.downloaded }}"
+
+        if [ "$DOWNLOADED" != "true" ] || [ ! -f "$MONITOR_PATH" ]; then
+          echo "::warning::VibeTea monitor not available - skipping"
+          echo "started=false" >> $GITHUB_OUTPUT
+          echo "pid=" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        if [ -z "$VIBETEA_PRIVATE_KEY" ]; then
+          echo "::warning::VIBETEA_PRIVATE_KEY not provided - monitor will not start"
+          echo "started=false" >> $GITHUB_OUTPUT
+          echo "pid=" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        if [ -z "$VIBETEA_SERVER_URL" ]; then
+          echo "::warning::VIBETEA_SERVER_URL not provided - monitor will not start"
+          echo "started=false" >> $GITHUB_OUTPUT
+          echo "pid=" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Start monitor in background
+        echo "Starting VibeTea monitor..."
+        echo "Server: ${VIBETEA_SERVER_URL}"
+        echo "Source ID: ${VIBETEA_SOURCE_ID}"
+
+        "$MONITOR_PATH" run &
+        MONITOR_PID=$!
+
+        # Brief wait to check if process started successfully
+        sleep 1
+
+        if kill -0 "$MONITOR_PID" 2>/dev/null; then
+          echo "VibeTea monitor started (PID: $MONITOR_PID)"
+          echo "started=true" >> $GITHUB_OUTPUT
+          echo "pid=$MONITOR_PID" >> $GITHUB_OUTPUT
+
+          # Save PID for cleanup step
+          echo "VIBETEA_MONITOR_PID=$MONITOR_PID" >> $GITHUB_ENV
+        else
+          echo "::warning::VibeTea monitor failed to start"
+          echo "started=false" >> $GITHUB_OUTPUT
+          echo "pid=" >> $GITHUB_OUTPUT
+        fi
+
+    # Register the post-job cleanup hook
+    # Note: GitHub Actions composite actions don't support 'post' directly,
+    # so we document that users should add the cleanup step manually or
+    # the action should be used with the companion cleanup step.
+    - name: Save cleanup configuration
+      shell: bash
+      run: |
+        # Save shutdown timeout for potential manual cleanup
+        echo "VIBETEA_SHUTDOWN_TIMEOUT=${{ inputs.shutdown-timeout }}" >> $GITHUB_ENV
+        echo ""
+        echo "Note: Add the following step at the end of your job with 'if: always()'"
+        echo "to ensure graceful monitor shutdown:"
+        echo ""
+        echo "  - name: Stop VibeTea Monitor"
+        echo "    if: always()"
+        echo "    shell: bash"
+        echo "    run: |"
+        echo "      if [ -n \"\$VIBETEA_MONITOR_PID\" ]; then"
+        echo "        kill -TERM \$VIBETEA_MONITOR_PID 2>/dev/null || true"
+        echo "        sleep \${{ inputs.shutdown-timeout }}"
+        echo "      fi"

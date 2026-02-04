@@ -6,6 +6,7 @@
 //! # Commands
 //!
 //! - `vibetea-monitor init`: Generate Ed25519 keypair for server authentication
+//! - `vibetea-monitor export-key`: Export private key for GitHub Actions
 //! - `vibetea-monitor run`: Start the monitor daemon
 //!
 //! # Environment Variables
@@ -27,7 +28,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 use vibetea_monitor::config::Config;
-use vibetea_monitor::crypto::Crypto;
+use vibetea_monitor::crypto::{Crypto, KeySource};
 use vibetea_monitor::parser::{ParsedEvent, ParsedEventKind, SessionParser};
 use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
@@ -72,6 +73,9 @@ EXAMPLES:
     # Force overwrite existing keys
     vibetea-monitor init --force
 
+    # Export private key for GitHub Actions
+    vibetea-monitor export-key
+
     # Start the monitor
     export VIBETEA_SERVER_URL=https://vibetea.fly.dev
     vibetea-monitor run
@@ -94,6 +98,16 @@ enum Command {
         force: bool,
     },
 
+    /// Export private key for GitHub Actions.
+    ///
+    /// Outputs the base64-encoded private key seed to stdout.
+    /// Use this to set the VIBETEA_PRIVATE_KEY secret in GitHub Actions.
+    ExportKey {
+        /// Directory containing keypair.
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+    },
+
     /// Start the monitor daemon.
     ///
     /// Watches Claude Code session files and forwards events to the server.
@@ -107,6 +121,7 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Init { force } => run_init(force),
+        Command::ExportKey { path } => run_export_key(path),
         Command::Run => {
             // Initialize async runtime for the run command
             let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -162,6 +177,30 @@ fn run_init(force: bool) -> Result<()> {
     Ok(())
 }
 
+/// Runs the export-key command to output the private key seed.
+fn run_export_key(path: Option<PathBuf>) -> Result<()> {
+    // Determine key directory from argument or default
+    let key_dir = match path {
+        Some(p) => p,
+        None => get_key_directory()?,
+    };
+
+    // Load the keypair from file (not load_with_fallback - we're exporting from file)
+    match Crypto::load(&key_dir) {
+        Ok(crypto) => {
+            // Print ONLY the base64-encoded seed to stdout, followed by exactly one newline
+            println!("{}", crypto.seed_base64());
+            Ok(())
+        }
+        Err(_) => {
+            // Print error to stderr and exit with code 1
+            eprintln!("Error: No key found at {}/key.priv", key_dir.display());
+            eprintln!("Run 'vibetea-monitor init' first.");
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Runs the monitor daemon.
 async fn run_monitor() -> Result<()> {
     // Initialize logging
@@ -179,16 +218,38 @@ async fn run_monitor() -> Result<()> {
         "Configuration loaded"
     );
 
-    // Load cryptographic keys
-    let crypto = Crypto::load(&config.key_path).context(format!(
-        "Failed to load keys from {}. Run 'vibetea-monitor init' first.",
+    // Load cryptographic keys with environment variable precedence
+    let (crypto, key_source) = Crypto::load_with_fallback(&config.key_path).context(format!(
+        "Failed to load cryptographic key. Either set VIBETEA_PRIVATE_KEY environment variable \
+         or run 'vibetea-monitor init' to generate keys at {}.",
         config.key_path.display()
     ))?;
 
-    info!(
-        key_path = %config.key_path.display(),
-        "Cryptographic keys loaded"
-    );
+    // Log which key source is being used (FR-007)
+    match &key_source {
+        KeySource::EnvironmentVariable => {
+            // Check if file key also exists and log if it's being ignored (FR-002)
+            if Crypto::exists(&config.key_path) {
+                info!(
+                    ignored_path = %config.key_path.display(),
+                    "File key exists but VIBETEA_PRIVATE_KEY takes precedence"
+                );
+            }
+            info!(
+                source = "environment",
+                fingerprint = %crypto.public_key_fingerprint(),
+                "Cryptographic key loaded"
+            );
+        }
+        KeySource::File(path) => {
+            info!(
+                source = "file",
+                path = %path.display(),
+                fingerprint = %crypto.public_key_fingerprint(),
+                "Cryptographic key loaded"
+            );
+        }
+    }
 
     // Create sender
     let sender_config = SenderConfig::new(
