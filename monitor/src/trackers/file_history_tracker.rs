@@ -221,7 +221,9 @@ pub fn parse_file_version(filename: &str) -> Result<FileVersion> {
     }
 
     // Find the @v separator
-    let separator_pos = filename.rfind("@v").ok_or(FileHistoryParseError::MissingVersionSeparator)?;
+    let separator_pos = filename
+        .rfind("@v")
+        .ok_or(FileHistoryParseError::MissingVersionSeparator)?;
 
     // Extract hash (everything before @v)
     let hash = &filename[..separator_pos];
@@ -1082,7 +1084,10 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert!(matches!(err, FileHistoryParseError::MissingVersionSeparator));
+        assert!(matches!(
+            err,
+            FileHistoryParseError::MissingVersionSeparator
+        ));
         assert!(err.to_string().contains("@v"));
     }
 
@@ -1104,7 +1109,10 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert!(matches!(err, FileHistoryParseError::InvalidVersionNumber(_)));
+        assert!(matches!(
+            err,
+            FileHistoryParseError::InvalidVersionNumber(_)
+        ));
     }
 
     /// Verifies that non-hex characters in hash return an error.
@@ -1114,7 +1122,10 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert!(matches!(err, FileHistoryParseError::InvalidHashCharacter('g')));
+        assert!(matches!(
+            err,
+            FileHistoryParseError::InvalidHashCharacter('g')
+        ));
     }
 
     /// Verifies that an empty filename returns an error.
@@ -1188,7 +1199,10 @@ mod tests {
         assert!(result.is_err());
 
         let err = result.unwrap_err();
-        assert!(matches!(err, FileHistoryParseError::InvalidVersionNumber(_)));
+        assert!(matches!(
+            err,
+            FileHistoryParseError::InvalidVersionNumber(_)
+        ));
     }
 
     // =========================================================================
@@ -1756,11 +1770,17 @@ mod tests {
     }
 
     /// Creates a file version in the session directory.
-    fn create_test_file_version(session_dir: &Path, hash: &str, version: u32, content: &str) -> PathBuf {
+    fn create_test_file_version(
+        session_dir: &Path,
+        hash: &str,
+        version: u32,
+        content: &str,
+    ) -> PathBuf {
         let filename = format!("{}@v{}", hash, version);
         let file_path = session_dir.join(&filename);
         let mut file = std::fs::File::create(&file_path).expect("Failed to create file version");
-        file.write_all(content.as_bytes()).expect("Failed to write content");
+        file.write_all(content.as_bytes())
+            .expect("Failed to write content");
         file.flush().expect("Failed to flush");
         file_path
     }
@@ -1943,7 +1963,10 @@ mod tests {
 
         // Should NOT receive any event
         let result = timeout(TokioDuration::from_millis(300), rx.recv()).await;
-        assert!(result.is_err(), "Should not receive event for non-version file");
+        assert!(
+            result.is_err(),
+            "Should not receive event for non-version file"
+        );
     }
 
     #[tokio::test]
