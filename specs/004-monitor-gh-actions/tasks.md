@@ -272,10 +272,10 @@
 - [x] T106 Run full test suite: cargo test -p vibetea-monitor -- --test-threads=1
 - [x] T107 [GIT] Commit: verify all tests pass
 - [x] T108 Validate quickstart.md scenarios manually
-- [ ] T109 [GIT] Commit: quickstart validation complete
+- [x] T109 [GIT] Commit: quickstart validation complete
 
 ### Phase Completion
-- [ ] T110 Run /sdd:map incremental for Phase 7 changes
+- [x] T110 Run /sdd:map incremental for Phase 7 changes
 - [ ] T111 [GIT] Commit: final codebase document update
 - [ ] T112 Review retro/P7.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T113 [GIT] Commit: finalize phase 7 retro
