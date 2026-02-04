@@ -63,9 +63,18 @@
 //! assert_eq!(diff.lines_removed, 1);
 //! ```
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
+use chrono::Utc;
+use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
+use tokio::sync::{mpsc, RwLock};
+use tracing::{debug, error, info, trace, warn};
+
+use crate::types::FileChangeEvent;
+use crate::utils::debounce::Debouncer;
 
 /// Errors that can occur when parsing file version filenames.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -450,6 +459,536 @@ pub fn extract_session_id_from_path(path: &Path) -> Option<String> {
         .and_then(|p| p.file_name())
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
+}
+
+// ============================================================================
+// FileHistoryTracker Types
+// ============================================================================
+
+/// Errors that can occur during file history tracking operations.
+#[derive(Error, Debug)]
+pub enum FileHistoryTrackerError {
+    /// Failed to initialize the file system watcher.
+    #[error("failed to create watcher: {0}")]
+    WatcherInit(#[from] notify::Error),
+
+    /// Failed to read a file.
+    #[error("failed to read file: {0}")]
+    Io(#[from] std::io::Error),
+
+    /// The file-history directory does not exist.
+    #[error("claude file-history directory not found: {0}")]
+    ClaudeDirectoryNotFound(PathBuf),
+
+    /// Failed to send event through the channel.
+    #[error("failed to send event: channel closed")]
+    ChannelClosed,
+}
+
+/// Result type for file history tracker operations.
+pub type TrackerResult<T> = std::result::Result<T, FileHistoryTrackerError>;
+
+/// Configuration for the file history tracker.
+#[derive(Debug, Clone)]
+pub struct FileHistoryTrackerConfig {
+    /// Debounce duration in milliseconds. Default: 100ms.
+    ///
+    /// Per T164, 100ms is the recommended debounce interval for file-history
+    /// files to coalesce rapid writes during file version creation.
+    pub debounce_ms: u64,
+}
+
+impl Default for FileHistoryTrackerConfig {
+    fn default() -> Self {
+        Self { debounce_ms: 100 }
+    }
+}
+
+/// Creates a [`FileChangeEvent`] from file version and diff information.
+///
+/// # Arguments
+///
+/// * `session_id` - The session UUID
+/// * `file_version` - The parsed file version
+/// * `diff` - The calculated diff result
+///
+/// # Returns
+///
+/// A [`FileChangeEvent`] ready for transmission.
+///
+/// # Example
+///
+/// ```
+/// use vibetea_monitor::trackers::file_history_tracker::{
+///     FileVersion, DiffResult, create_file_change_event,
+/// };
+///
+/// let version = FileVersion::new("0123456789abcdef", 3);
+/// let diff = DiffResult { lines_added: 10, lines_removed: 5, lines_modified: 3 };
+/// let event = create_file_change_event("sess-123", &version, &diff);
+///
+/// assert_eq!(event.session_id, "sess-123");
+/// assert_eq!(event.file_hash, "0123456789abcdef");
+/// assert_eq!(event.version, 3);
+/// assert_eq!(event.lines_added, 10);
+/// assert_eq!(event.lines_removed, 5);
+/// assert_eq!(event.lines_modified, 3);
+/// ```
+#[must_use]
+pub fn create_file_change_event(
+    session_id: &str,
+    file_version: &FileVersion,
+    diff: &DiffResult,
+) -> FileChangeEvent {
+    FileChangeEvent {
+        session_id: session_id.to_string(),
+        file_hash: file_version.hash.clone(),
+        version: file_version.version,
+        lines_added: diff.lines_added,
+        lines_removed: diff.lines_removed,
+        lines_modified: diff.lines_modified,
+        timestamp: Utc::now(),
+    }
+}
+
+// ============================================================================
+// FileHistoryTracker - File Watching Implementation
+// ============================================================================
+
+/// State maintained for tracking file versions within a session.
+#[derive(Debug, Default)]
+struct SessionState {
+    /// Map of file hash to the highest known version number.
+    /// Used for detecting version gaps.
+    known_versions: std::collections::HashMap<String, u32>,
+}
+
+/// Tracker for Claude Code's file-history directory.
+///
+/// Watches `~/.claude/file-history/` for changes and emits [`FileChangeEvent`]s
+/// when new file versions (v2+) are detected. For each new version, it diffs
+/// against the previous version to calculate line changes.
+///
+/// # Directory Structure
+///
+/// The file-history directory has the following structure:
+/// ```text
+/// ~/.claude/file-history/
+///   <session-id>/
+///     <hash>@v1
+///     <hash>@v2
+///     <hash>@v3
+///     ...
+/// ```
+///
+/// # Processing Rules
+///
+/// - **v1 files**: Skipped (initial version, no previous to diff against)
+/// - **v2+ files**: Diffed against the previous version (or highest available)
+/// - **Version gaps**: Logged as warnings, diff against highest available
+///
+/// # Thread Safety
+///
+/// The tracker spawns a background task for async processing of file events.
+/// Communication is done via channels for thread safety.
+#[derive(Debug)]
+pub struct FileHistoryTracker {
+    /// The underlying file system watcher.
+    ///
+    /// Kept alive to maintain the watch subscription.
+    #[allow(dead_code)]
+    watcher: RecommendedWatcher,
+
+    /// Path to the file-history directory being watched.
+    root_dir: PathBuf,
+
+    /// Channel sender for emitting file change events.
+    #[allow(dead_code)]
+    event_sender: mpsc::Sender<FileChangeEvent>,
+
+    /// Per-session state tracking known versions.
+    #[allow(dead_code)]
+    session_state: Arc<RwLock<std::collections::HashMap<String, SessionState>>>,
+}
+
+impl FileHistoryTracker {
+    /// Creates a new file history tracker watching the default file-history directory.
+    ///
+    /// The default location is `~/.claude/file-history/`.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_sender` - Channel for emitting [`FileChangeEvent`]s
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The home directory cannot be determined
+    /// - The `~/.claude/file-history` directory does not exist
+    /// - The file system watcher cannot be initialized
+    pub fn new(event_sender: mpsc::Sender<FileChangeEvent>) -> TrackerResult<Self> {
+        Self::with_config(event_sender, FileHistoryTrackerConfig::default())
+    }
+
+    /// Creates a new file history tracker with the specified configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `event_sender` - Channel for emitting [`FileChangeEvent`]s
+    /// * `config` - Configuration options for the tracker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker cannot be initialized.
+    pub fn with_config(
+        event_sender: mpsc::Sender<FileChangeEvent>,
+        config: FileHistoryTrackerConfig,
+    ) -> TrackerResult<Self> {
+        let claude_dir = directories::BaseDirs::new()
+            .map(|dirs| dirs.home_dir().join(".claude"))
+            .ok_or_else(|| {
+                FileHistoryTrackerError::ClaudeDirectoryNotFound(PathBuf::from("~/.claude"))
+            })?;
+
+        Self::with_path_and_config(claude_dir.join("file-history"), event_sender, config)
+    }
+
+    /// Creates a new file history tracker watching a specific directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `root_dir` - Path to the file-history directory to watch
+    /// * `event_sender` - Channel for emitting [`FileChangeEvent`]s
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The specified directory does not exist
+    /// - The file system watcher cannot be initialized
+    pub fn with_path(
+        root_dir: PathBuf,
+        event_sender: mpsc::Sender<FileChangeEvent>,
+    ) -> TrackerResult<Self> {
+        Self::with_path_and_config(root_dir, event_sender, FileHistoryTrackerConfig::default())
+    }
+
+    /// Creates a new file history tracker with a specific path and configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `root_dir` - Path to the file-history directory to watch
+    /// * `event_sender` - Channel for emitting [`FileChangeEvent`]s
+    /// * `config` - Configuration options for the tracker
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the tracker cannot be initialized.
+    pub fn with_path_and_config(
+        root_dir: PathBuf,
+        event_sender: mpsc::Sender<FileChangeEvent>,
+        config: FileHistoryTrackerConfig,
+    ) -> TrackerResult<Self> {
+        // Verify the directory exists
+        if !root_dir.exists() {
+            return Err(FileHistoryTrackerError::ClaudeDirectoryNotFound(root_dir));
+        }
+
+        info!(
+            root_dir = %root_dir.display(),
+            debounce_ms = config.debounce_ms,
+            "Initializing file history tracker"
+        );
+
+        // Create the session state tracking
+        let session_state = Arc::new(RwLock::new(std::collections::HashMap::new()));
+
+        // Create channel for debounced file change notifications
+        let (debounce_tx, debounce_rx) = mpsc::channel::<(PathBuf, PathBuf)>(1000);
+
+        // Create the debouncer
+        let debouncer = Debouncer::new(Duration::from_millis(config.debounce_ms), debounce_tx);
+
+        // Spawn the async processing task
+        let sender_for_task = event_sender.clone();
+        let root_for_task = root_dir.clone();
+        let state_for_task = Arc::clone(&session_state);
+        tokio::spawn(async move {
+            process_debounced_changes(debounce_rx, sender_for_task, root_for_task, state_for_task)
+                .await;
+        });
+
+        // Create the file watcher
+        let watcher = create_file_history_watcher(root_dir.clone(), debouncer)?;
+
+        Ok(Self {
+            watcher,
+            root_dir,
+            event_sender,
+            session_state,
+        })
+    }
+
+    /// Returns the path to the file-history directory being watched.
+    #[must_use]
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
+}
+
+/// Creates the file system watcher for the file-history directory.
+fn create_file_history_watcher(
+    root_dir: PathBuf,
+    debouncer: Debouncer<PathBuf, PathBuf>,
+) -> TrackerResult<RecommendedWatcher> {
+    let watch_dir = root_dir.clone();
+
+    let mut watcher = RecommendedWatcher::new(
+        move |res: std::result::Result<Event, notify::Error>| {
+            handle_notify_event(res, &root_dir, &debouncer);
+        },
+        Config::default(),
+    )?;
+
+    // Watch the file-history directory recursively
+    // Structure: ~/.claude/file-history/<session-id>/<hash>@vN
+    watcher.watch(&watch_dir, RecursiveMode::Recursive)?;
+
+    debug!(
+        watch_dir = %watch_dir.display(),
+        "Started watching for file-history changes (recursive)"
+    );
+
+    Ok(watcher)
+}
+
+/// Handles raw notify events and sends them to the debouncer.
+fn handle_notify_event(
+    res: std::result::Result<Event, notify::Error>,
+    root_dir: &Path,
+    debouncer: &Debouncer<PathBuf, PathBuf>,
+) {
+    let event = match res {
+        Ok(event) => event,
+        Err(e) => {
+            error!(error = %e, "File watcher error");
+            return;
+        }
+    };
+
+    trace!(kind = ?event.kind, paths = ?event.paths, "Received notify event");
+
+    // Only process create and modify events
+    let should_process = matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_));
+
+    if !should_process {
+        trace!(kind = ?event.kind, "Ignoring event kind");
+        return;
+    }
+
+    // Process each path in the event
+    for path in &event.paths {
+        // Only process files (not directories)
+        if path.is_dir() {
+            continue;
+        }
+
+        // Verify the path is under the root directory
+        if !path.starts_with(root_dir) {
+            continue;
+        }
+
+        // Try to parse as a file version
+        if parse_file_version_from_path(path).is_err() {
+            trace!(path = %path.display(), "Ignoring non-version file");
+            continue;
+        }
+
+        debug!(
+            path = %path.display(),
+            kind = ?event.kind,
+            "File version changed, sending to debouncer"
+        );
+
+        // Send to debouncer (key is the path, value is also the path)
+        if !debouncer.try_send(path.clone(), path.clone()) {
+            warn!(path = %path.display(), "Failed to send to debouncer: channel full or closed");
+        }
+    }
+}
+
+/// Processes debounced file change events, calculating diffs and emitting events.
+async fn process_debounced_changes(
+    mut rx: mpsc::Receiver<(PathBuf, PathBuf)>,
+    sender: mpsc::Sender<FileChangeEvent>,
+    root_dir: PathBuf,
+    session_state: Arc<RwLock<std::collections::HashMap<String, SessionState>>>,
+) {
+    debug!("Starting file history change processor");
+
+    while let Some((path, _)) = rx.recv().await {
+        debug!(path = %path.display(), "Processing debounced file version change");
+
+        // Parse the file version from the path
+        let file_version = match parse_file_version_from_path(&path) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(path = %path.display(), error = %e, "Failed to parse file version");
+                continue;
+            }
+        };
+
+        // Check if we should skip this version (v1)
+        if should_skip_version(file_version.version) {
+            trace!(
+                path = %path.display(),
+                version = file_version.version,
+                "Skipping v1 file (no previous version to diff)"
+            );
+            continue;
+        }
+
+        // Extract session ID from path
+        let session_id = match extract_session_id_from_path(&path) {
+            Some(id) => id,
+            None => {
+                warn!(path = %path.display(), "Could not extract session ID from path");
+                continue;
+            }
+        };
+
+        // Find the previous version file
+        let prev_version = file_version.version - 1;
+        let (prev_path, actual_prev_version) =
+            find_previous_version(&path, &file_version, &root_dir).await;
+
+        // Check for version gaps
+        if actual_prev_version < prev_version {
+            warn!(
+                session_id = %session_id,
+                file_hash = %file_version.hash,
+                current_version = file_version.version,
+                expected_prev = prev_version,
+                actual_prev = actual_prev_version,
+                "Version gap detected, diffing against v{}", actual_prev_version
+            );
+        }
+
+        // Update known versions
+        {
+            let mut state = session_state.write().await;
+            let session = state.entry(session_id.clone()).or_default();
+            session
+                .known_versions
+                .insert(file_version.hash.clone(), file_version.version);
+        }
+
+        // Read the current and previous file contents
+        let current_content = match tokio::fs::read_to_string(&path).await {
+            Ok(content) => content,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    trace!(path = %path.display(), "File was deleted");
+                } else {
+                    warn!(path = %path.display(), error = %e, "Failed to read current file");
+                }
+                continue;
+            }
+        };
+
+        let prev_content = if let Some(ref prev_path) = prev_path {
+            match tokio::fs::read_to_string(prev_path).await {
+                Ok(content) => content,
+                Err(e) => {
+                    warn!(
+                        path = %prev_path.display(),
+                        error = %e,
+                        "Failed to read previous version, using empty content"
+                    );
+                    String::new()
+                }
+            }
+        } else {
+            // No previous version found (shouldn't happen for v2+, but handle gracefully)
+            warn!(
+                session_id = %session_id,
+                file_hash = %file_version.hash,
+                version = file_version.version,
+                "No previous version found, using empty content"
+            );
+            String::new()
+        };
+
+        // Calculate the diff
+        let diff = calculate_diff(&prev_content, &current_content);
+
+        // Create and emit the event
+        let event = create_file_change_event(&session_id, &file_version, &diff);
+
+        trace!(
+            session_id = %session_id,
+            file_hash = %file_version.hash,
+            version = file_version.version,
+            lines_added = diff.lines_added,
+            lines_removed = diff.lines_removed,
+            lines_modified = diff.lines_modified,
+            "Emitting file change event"
+        );
+
+        if let Err(e) = sender.send(event).await {
+            error!(error = %e, "Failed to send file change event: channel closed");
+            break;
+        }
+    }
+
+    debug!("File history change processor shutting down");
+}
+
+/// Finds the previous version file for diffing.
+///
+/// Returns the path to the previous version and its version number.
+/// If the expected previous version doesn't exist, searches for the highest
+/// available version less than the current one.
+async fn find_previous_version(
+    current_path: &Path,
+    current_version: &FileVersion,
+    _root_dir: &Path,
+) -> (Option<PathBuf>, u32) {
+    let parent = match current_path.parent() {
+        Some(p) => p,
+        None => return (None, 0),
+    };
+
+    let target_version = current_version.version - 1;
+
+    // First, try the expected previous version
+    let expected_prev_name = format!("{}@v{}", current_version.hash, target_version);
+    let expected_prev_path = parent.join(&expected_prev_name);
+
+    if expected_prev_path.exists() {
+        return (Some(expected_prev_path), target_version);
+    }
+
+    // If not found, search for the highest available version less than current
+    // This handles version gaps gracefully
+    let mut best_version = 0u32;
+    let mut best_path: Option<PathBuf> = None;
+
+    if let Ok(mut entries) = tokio::fs::read_dir(parent).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let entry_path = entry.path();
+            if let Ok(version) = parse_file_version_from_path(&entry_path) {
+                if version.hash == current_version.hash
+                    && version.version < current_version.version
+                    && version.version > best_version
+                {
+                    best_version = version.version;
+                    best_path = Some(entry_path);
+                }
+            }
+        }
+    }
+
+    (best_path, best_version)
 }
 
 #[cfg(test)]
@@ -1104,5 +1643,396 @@ mod tests {
 
         // v3 should still be processed (diff against v1 with warning)
         assert!(!should_skip_version(v3.version));
+    }
+
+    // =========================================================================
+    // FileHistoryTracker Types Tests
+    // =========================================================================
+
+    /// Verifies FileHistoryTrackerError display messages.
+    #[test]
+    fn tracker_error_display_messages() {
+        let err = FileHistoryTrackerError::ChannelClosed;
+        assert_eq!(err.to_string(), "failed to send event: channel closed");
+
+        let err = FileHistoryTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test/path"));
+        assert_eq!(
+            err.to_string(),
+            "claude file-history directory not found: /test/path"
+        );
+    }
+
+    /// Verifies FileHistoryTrackerError is Debug.
+    #[test]
+    fn tracker_error_is_debug() {
+        let err = FileHistoryTrackerError::ChannelClosed;
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ChannelClosed"));
+
+        let err = FileHistoryTrackerError::ClaudeDirectoryNotFound(PathBuf::from("/test"));
+        let debug_str = format!("{:?}", err);
+        assert!(debug_str.contains("ClaudeDirectoryNotFound"));
+    }
+
+    /// Verifies FileHistoryTrackerConfig default values.
+    #[test]
+    fn tracker_config_default() {
+        let config = FileHistoryTrackerConfig::default();
+        assert_eq!(config.debounce_ms, 100);
+    }
+
+    /// Verifies FileHistoryTrackerConfig clone.
+    #[test]
+    fn tracker_config_clone() {
+        let config = FileHistoryTrackerConfig { debounce_ms: 200 };
+        let cloned = config.clone();
+        assert_eq!(cloned.debounce_ms, 200);
+    }
+
+    // =========================================================================
+    // create_file_change_event Tests
+    // =========================================================================
+
+    /// Verifies create_file_change_event creates correct event.
+    #[test]
+    fn create_event_from_version_and_diff() {
+        let version = FileVersion::new("0123456789abcdef", 3);
+        let diff = DiffResult {
+            lines_added: 10,
+            lines_removed: 5,
+            lines_modified: 3,
+        };
+
+        let event = create_file_change_event("session-abc", &version, &diff);
+
+        assert_eq!(event.session_id, "session-abc");
+        assert_eq!(event.file_hash, "0123456789abcdef");
+        assert_eq!(event.version, 3);
+        assert_eq!(event.lines_added, 10);
+        assert_eq!(event.lines_removed, 5);
+        assert_eq!(event.lines_modified, 3);
+    }
+
+    /// Verifies event timestamp is set to now.
+    #[test]
+    fn create_event_has_timestamp() {
+        let version = FileVersion::new("0123456789abcdef", 2);
+        let diff = DiffResult::default();
+
+        let before = Utc::now();
+        let event = create_file_change_event("sess", &version, &diff);
+        let after = Utc::now();
+
+        assert!(event.timestamp >= before);
+        assert!(event.timestamp <= after);
+    }
+
+    /// Verifies event with zero diff values.
+    #[test]
+    fn create_event_empty_diff() {
+        let version = FileVersion::new("aaaaaaaaaaaaaaaa", 5);
+        let diff = DiffResult::default();
+
+        let event = create_file_change_event("test-session", &version, &diff);
+
+        assert_eq!(event.lines_added, 0);
+        assert_eq!(event.lines_removed, 0);
+        assert_eq!(event.lines_modified, 0);
+    }
+
+    // =========================================================================
+    // FileHistoryTracker File Operations Tests
+    // =========================================================================
+
+    use std::io::Write;
+    use tempfile::TempDir;
+    use tokio::time::{sleep, timeout, Duration as TokioDuration};
+
+    /// Creates a session directory with file versions for testing.
+    fn create_test_session(dir: &TempDir, session_id: &str) -> PathBuf {
+        let session_dir = dir.path().join(session_id);
+        std::fs::create_dir_all(&session_dir).expect("Failed to create session dir");
+        session_dir
+    }
+
+    /// Creates a file version in the session directory.
+    fn create_test_file_version(session_dir: &Path, hash: &str, version: u32, content: &str) -> PathBuf {
+        let filename = format!("{}@v{}", hash, version);
+        let file_path = session_dir.join(&filename);
+        let mut file = std::fs::File::create(&file_path).expect("Failed to create file version");
+        file.write_all(content.as_bytes()).expect("Failed to write content");
+        file.flush().expect("Failed to flush");
+        file_path
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_missing_directory() {
+        let (tx, _rx) = mpsc::channel(100);
+        let result = FileHistoryTracker::with_path(PathBuf::from("/nonexistent/file-history"), tx);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            FileHistoryTrackerError::ClaudeDirectoryNotFound(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_tracker_creation_with_valid_directory() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let result = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx);
+
+        assert!(result.is_ok(), "Should create tracker for valid directory");
+        assert_eq!(result.unwrap().root_dir(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_detects_new_v2_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a session directory
+        let session_id = "6e45a55c-3124-4cc8-ad85-040a5c316009";
+        let session_dir = create_test_session(&temp_dir, session_id);
+
+        // Create v1 (should be skipped)
+        let hash = "0123456789abcdef";
+        create_test_file_version(&session_dir, hash, 1, "line1\nline2");
+
+        // Give some time for v1 to be processed (skipped)
+        sleep(TokioDuration::from_millis(200)).await;
+
+        // Create v2 (should emit event)
+        create_test_file_version(&session_dir, hash, 2, "line1\nline2\nline3");
+
+        // Should receive a file change event
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for new v2 file");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert_eq!(event.file_hash, hash);
+        assert_eq!(event.version, 2);
+        assert_eq!(event.lines_added, 1); // line3 was added
+        assert_eq!(event.lines_removed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_tracker_skips_v1_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create a session directory and v1 file
+        let session_id = "test-session-v1";
+        let session_dir = create_test_session(&temp_dir, session_id);
+        create_test_file_version(&session_dir, "aaaaaaaaaaaaaaaa", 1, "initial content");
+
+        // Should NOT receive any event for v1
+        let result = timeout(TokioDuration::from_millis(300), rx.recv()).await;
+        assert!(result.is_err(), "Should not receive event for v1 file");
+    }
+
+    #[tokio::test]
+    async fn test_tracker_handles_version_sequence() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create session and versions
+        let session_id = "version-sequence-test";
+        let session_dir = create_test_session(&temp_dir, session_id);
+        let hash = "bbbbbbbbbbbbbbbb";
+
+        // Create v1
+        create_test_file_version(&session_dir, hash, 1, "a\nb\nc");
+        sleep(TokioDuration::from_millis(200)).await;
+
+        // Create v2
+        create_test_file_version(&session_dir, hash, 2, "a\nb\nc\nd");
+
+        // Should receive event for v2
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for v2");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.version, 2);
+        assert_eq!(event.lines_added, 1); // 'd' added
+
+        // Create v3
+        sleep(TokioDuration::from_millis(100)).await;
+        create_test_file_version(&session_dir, hash, 3, "a\nb\nc\nd\ne\nf");
+
+        // Should receive event for v3
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for v3");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.version, 3);
+        assert_eq!(event.lines_added, 2); // 'e' and 'f' added
+    }
+
+    #[tokio::test]
+    async fn test_tracker_handles_modified_file() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create session and initial versions
+        let session_id = "modify-test";
+        let session_dir = create_test_session(&temp_dir, session_id);
+        let hash = "cccccccccccccccc";
+
+        create_test_file_version(&session_dir, hash, 1, "original");
+        sleep(TokioDuration::from_millis(150)).await;
+
+        // Create v2 with modifications
+        create_test_file_version(&session_dir, hash, 2, "modified\nwith\nnew\nlines");
+
+        // Should receive event
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok(), "Should receive event for modified file");
+
+        let event = result.unwrap().unwrap();
+        assert_eq!(event.session_id, session_id);
+        assert_eq!(event.lines_added, 4); // 4 new lines
+        assert_eq!(event.lines_removed, 1); // 'original' removed
+    }
+
+    #[tokio::test]
+    async fn test_tracker_ignores_non_version_files() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create session directory
+        let session_id = "ignore-test";
+        let session_dir = create_test_session(&temp_dir, session_id);
+
+        // Create a non-version file
+        let random_file = session_dir.join("not-a-version.txt");
+        std::fs::write(&random_file, "random content").expect("Should write");
+
+        // Should NOT receive any event
+        let result = timeout(TokioDuration::from_millis(300), rx.recv()).await;
+        assert!(result.is_err(), "Should not receive event for non-version file");
+    }
+
+    #[tokio::test]
+    async fn test_tracker_config_with_custom_debounce() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, _rx) = mpsc::channel(100);
+        let config = FileHistoryTrackerConfig { debounce_ms: 50 };
+        let tracker =
+            FileHistoryTracker::with_path_and_config(temp_dir.path().to_path_buf(), tx, config)
+                .expect("Should create tracker");
+
+        // Tracker should be created successfully with custom config
+        assert_eq!(tracker.root_dir(), temp_dir.path());
+    }
+
+    #[tokio::test]
+    async fn test_tracker_multiple_sessions() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        // Give watcher time to start
+        sleep(TokioDuration::from_millis(50)).await;
+
+        // Create two sessions
+        let session1 = "session-1111-1111";
+        let session2 = "session-2222-2222";
+        let session_dir1 = create_test_session(&temp_dir, session1);
+        let session_dir2 = create_test_session(&temp_dir, session2);
+
+        let hash1 = "1111111111111111";
+        let hash2 = "2222222222222222";
+
+        // Create v1 for both
+        create_test_file_version(&session_dir1, hash1, 1, "content1");
+        create_test_file_version(&session_dir2, hash2, 1, "content2");
+        sleep(TokioDuration::from_millis(200)).await;
+
+        // Create v2 for both
+        create_test_file_version(&session_dir1, hash1, 2, "content1\nmore1");
+        create_test_file_version(&session_dir2, hash2, 2, "content2\nmore2");
+
+        // Should receive events for both
+        let mut events = Vec::new();
+        for _ in 0..2 {
+            if let Ok(Some(event)) = timeout(TokioDuration::from_millis(500), rx.recv()).await {
+                events.push(event);
+            }
+        }
+
+        assert_eq!(events.len(), 2, "Should receive events from both sessions");
+
+        let session_ids: Vec<_> = events.iter().map(|e| e.session_id.as_str()).collect();
+        assert!(session_ids.contains(&session1));
+        assert!(session_ids.contains(&session2));
+    }
+
+    #[tokio::test]
+    async fn test_tracker_calculates_diff_correctly() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+
+        let (tx, mut rx) = mpsc::channel(100);
+        let _tracker = FileHistoryTracker::with_path(temp_dir.path().to_path_buf(), tx)
+            .expect("Should create tracker");
+
+        sleep(TokioDuration::from_millis(50)).await;
+
+        let session_id = "diff-calc-test";
+        let session_dir = create_test_session(&temp_dir, session_id);
+        let hash = "dddddddddddddddd";
+
+        // v1: 3 lines
+        create_test_file_version(&session_dir, hash, 1, "line1\nline2\nline3");
+        sleep(TokioDuration::from_millis(200)).await;
+
+        // v2: replace line2 with line2-modified, add line4
+        create_test_file_version(&session_dir, hash, 2, "line1\nline2-modified\nline3\nline4");
+
+        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
+        assert!(result.is_ok());
+
+        let event = result.unwrap().unwrap();
+        // line2-modified and line4 added
+        // line2 removed
+        assert_eq!(event.lines_added, 2);
+        assert_eq!(event.lines_removed, 1);
+        assert_eq!(event.lines_modified, 1); // min(added, removed)
     }
 }
