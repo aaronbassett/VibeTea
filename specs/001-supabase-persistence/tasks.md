@@ -214,8 +214,8 @@
 - [x] T113 [GIT] Commit: add client historic data tests
 - [x] T114 [US3] Run codebase mapping for Phase 5 changes (/sdd:map incremental)
 - [x] T115 [GIT] Commit: update codebase documents for phase 5
-- [ ] T116 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T117 [GIT] Commit: finalize phase 5 retro
+- [x] T116 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T117 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
 - [ ] T118 [GIT] Push branch to origin (ensure pre-push hooks pass)

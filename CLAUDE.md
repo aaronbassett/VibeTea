@@ -10,3 +10,7 @@
 ### Security Patterns (Phase 3)
 - Use `subtle::ConstantTimeEq` for token comparison to prevent timing attacks
 - Use `ed25519_dalek::VerifyingKey::verify_strict()` for RFC 8032 compliant signature verification
+
+### Client Testing (Phase 5)
+- **MSW v2 API**: Use `http.get()` and `HttpResponse.json()` (not v1's `rest.get()` and `res(ctx.json())`)
+- **Zustand hook testing**: Mock store actions via `store.setState()`, reset in `beforeEach`
