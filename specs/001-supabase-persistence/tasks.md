@@ -220,8 +220,8 @@
 ### Phase Completion
 - [x] T118 [GIT] Push branch to origin (ensure pre-push hooks pass)
 - [x] T119 [GIT] Create/update PR to main with phase summary
-- [ ] T120 [GIT] Verify all CI checks pass
-- [ ] T121 [GIT] Report PR ready status
+- [x] T120 [GIT] Verify all CI checks pass
+- [x] T121 [GIT] Report PR ready status
 
 **Checkpoint**: Client fetches and caches historic aggregates; data available in Zustand store
 
