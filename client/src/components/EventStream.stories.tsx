@@ -85,7 +85,8 @@ function createSampleEvent(
     // Enhanced tracking event payloads
     agent_spawn: {
       sessionId,
-      agentType: ['Explore', 'Plan', 'Bash', 'general-purpose'][index % 4] ?? 'Explore',
+      agentType:
+        ['Explore', 'Plan', 'Bash', 'general-purpose'][index % 4] ?? 'Explore',
       description: 'Spawned agent to explore codebase',
       timestamp,
     },
@@ -96,7 +97,9 @@ function createSampleEvent(
       timestamp,
     },
     token_usage: {
-      model: ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku'][index % 3] ?? 'claude-3-sonnet',
+      model:
+        ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku'][index % 3] ??
+        'claude-3-sonnet',
       inputTokens: 1000 + index * 100,
       outputTokens: 500 + index * 50,
       cacheReadTokens: 200,
@@ -113,8 +116,18 @@ function createSampleEvent(
     },
     model_distribution: {
       modelUsage: {
-        'claude-3-opus': { inputTokens: 5000, outputTokens: 2500, cacheReadTokens: 1000, cacheCreationTokens: 500 },
-        'claude-3-sonnet': { inputTokens: 10000, outputTokens: 5000, cacheReadTokens: 2000, cacheCreationTokens: 1000 },
+        'claude-3-opus': {
+          inputTokens: 5000,
+          outputTokens: 2500,
+          cacheReadTokens: 1000,
+          cacheCreationTokens: 500,
+        },
+        'claude-3-sonnet': {
+          inputTokens: 10000,
+          outputTokens: 5000,
+          cacheReadTokens: 2000,
+          cacheCreationTokens: 1000,
+        },
       },
     },
     todo_progress: {

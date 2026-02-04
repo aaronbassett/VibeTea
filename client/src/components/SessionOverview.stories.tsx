@@ -84,15 +84,63 @@ function generateRecentEvents(
       summary: { sessionId, summary: 'Completed task successfully' },
       error: { sessionId, category: 'timeout' },
       // Enhanced tracking event payloads
-      agent_spawn: { sessionId, agentType: 'Explore', description: 'Exploring codebase', timestamp },
-      skill_invocation: { sessionId, skillName: 'commit', project: 'vibetea', timestamp },
-      token_usage: { model: 'claude-3-sonnet', inputTokens: 1000, outputTokens: 500, cacheReadTokens: 200, cacheCreationTokens: 100 },
-      session_metrics: { totalSessions: 10, totalMessages: 100, totalToolUsage: 50, longestSession: '2h 30m' },
+      agent_spawn: {
+        sessionId,
+        agentType: 'Explore',
+        description: 'Exploring codebase',
+        timestamp,
+      },
+      skill_invocation: {
+        sessionId,
+        skillName: 'commit',
+        project: 'vibetea',
+        timestamp,
+      },
+      token_usage: {
+        model: 'claude-3-sonnet',
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 200,
+        cacheCreationTokens: 100,
+      },
+      session_metrics: {
+        totalSessions: 10,
+        totalMessages: 100,
+        totalToolUsage: 50,
+        longestSession: '2h 30m',
+      },
       activity_pattern: { hourCounts: { '9': 10, '10': 15, '14': 20 } },
-      model_distribution: { modelUsage: { 'claude-3-sonnet': { inputTokens: 5000, outputTokens: 2500, cacheReadTokens: 1000, cacheCreationTokens: 500 } } },
-      todo_progress: { sessionId, completed: 5, inProgress: 2, pending: 3, abandoned: false },
-      file_change: { sessionId, fileHash: 'abc123', version: 1, linesAdded: 50, linesRemoved: 10, linesModified: 20, timestamp },
-      project_activity: { projectPath: '/home/user/projects/vibetea', sessionId, isActive: true },
+      model_distribution: {
+        modelUsage: {
+          'claude-3-sonnet': {
+            inputTokens: 5000,
+            outputTokens: 2500,
+            cacheReadTokens: 1000,
+            cacheCreationTokens: 500,
+          },
+        },
+      },
+      todo_progress: {
+        sessionId,
+        completed: 5,
+        inProgress: 2,
+        pending: 3,
+        abandoned: false,
+      },
+      file_change: {
+        sessionId,
+        fileHash: 'abc123',
+        version: 1,
+        linesAdded: 50,
+        linesRemoved: 10,
+        linesModified: 20,
+        timestamp,
+      },
+      project_activity: {
+        projectPath: '/home/user/projects/vibetea',
+        sessionId,
+        isActive: true,
+      },
     };
 
     events.push({

@@ -157,15 +157,15 @@ impl<'a> EventStreamWidget<'a> {
             DisplayEventType::Summary => self.theme.event_type_summary,
             DisplayEventType::Error => self.theme.event_type_error,
             // Enhanced tracking event types - use appropriate similar styles
-            DisplayEventType::AgentSpawn => self.theme.event_type_agent,  // similar to agent
-            DisplayEventType::SkillInvocation => self.theme.event_type_tool,  // similar to tool
-            DisplayEventType::TokenUsage => self.theme.event_type_activity,  // metrics
-            DisplayEventType::SessionMetrics => self.theme.event_type_summary,  // stats
-            DisplayEventType::ActivityPattern => self.theme.event_type_activity,  // activity
-            DisplayEventType::ModelDistribution => self.theme.event_type_activity,  // metrics
-            DisplayEventType::TodoProgress => self.theme.event_type_summary,  // progress
+            DisplayEventType::AgentSpawn => self.theme.event_type_agent, // similar to agent
+            DisplayEventType::SkillInvocation => self.theme.event_type_tool, // similar to tool
+            DisplayEventType::TokenUsage => self.theme.event_type_activity, // metrics
+            DisplayEventType::SessionMetrics => self.theme.event_type_summary, // stats
+            DisplayEventType::ActivityPattern => self.theme.event_type_activity, // activity
+            DisplayEventType::ModelDistribution => self.theme.event_type_activity, // metrics
+            DisplayEventType::TodoProgress => self.theme.event_type_summary, // progress
             DisplayEventType::FileChange => self.theme.event_type_tool,  // file ops
-            DisplayEventType::ProjectActivity => self.theme.event_type_session,  // project
+            DisplayEventType::ProjectActivity => self.theme.event_type_session, // project
         }
     }
 
