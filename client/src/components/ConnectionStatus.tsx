@@ -13,6 +13,7 @@ import { LazyMotion, domAnimation, m } from 'framer-motion';
 
 import { COLORS } from '../constants/design-tokens';
 import { useEventStore } from '../hooks/useEventStore';
+import { useReducedMotion } from '../hooks/useReducedMotion';
 
 import type { ConnectionStatus as ConnectionStatusType } from '../hooks/useEventStore';
 
@@ -262,6 +263,9 @@ export function ConnectionStatus({
   className = '',
   onReconnect,
 }: ConnectionStatusProps) {
+  // Respect user's reduced motion preference (FR-008)
+  const prefersReducedMotion = useReducedMotion();
+
   // Selective subscription: only re-render when status changes
   const status = useEventStore((state) => state.status);
 
@@ -306,37 +310,76 @@ export function ConnectionStatus({
         aria-label={`Connection status: ${config.label}${isInteractive ? '. Click to reconnect.' : ''}`}
       >
         {isConnected ? (
-          <m.span
-            className={`h-2.5 w-2.5 rounded-full ${config.color}`}
-            aria-hidden="true"
-            animate={CONNECTED_PULSE_ANIMATION}
-            transition={CONNECTED_PULSE_TRANSITION}
-            style={{
-              backgroundColor: COLORS.status.connected,
-            }}
-          />
-        ) : isConnecting ? (
-          <span
-            className="relative inline-flex h-2.5 w-2.5"
-            aria-hidden="true"
-          >
-            {/* Animated expanding ring */}
-            <m.span
-              className="absolute inset-0 rounded-full"
-              animate={CONNECTING_RING_ANIMATION}
-              transition={CONNECTING_RING_TRANSITION}
-              style={{
-                backgroundColor: COLORS.status.connecting,
-              }}
-            />
-            {/* Static indicator dot */}
+          prefersReducedMotion ? (
+            /* Static green dot for reduced motion users */
             <span
-              className="relative h-2.5 w-2.5 rounded-full"
+              className="h-2.5 w-2.5 rounded-full"
+              aria-hidden="true"
+              style={{
+                backgroundColor: COLORS.status.connected,
+              }}
+            />
+          ) : (
+            /* Animated pulse for standard users */
+            <m.span
+              className={`h-2.5 w-2.5 rounded-full ${config.color}`}
+              aria-hidden="true"
+              animate={CONNECTED_PULSE_ANIMATION}
+              transition={CONNECTED_PULSE_TRANSITION}
+              style={{
+                backgroundColor: COLORS.status.connected,
+              }}
+            />
+          )
+        ) : isConnecting ? (
+          prefersReducedMotion ? (
+            /* Static yellow dot for reduced motion users */
+            <span
+              className="h-2.5 w-2.5 rounded-full"
+              aria-hidden="true"
               style={{
                 backgroundColor: COLORS.status.connecting,
               }}
             />
-          </span>
+          ) : (
+            /* Animated ring for standard users */
+            <span
+              className="relative inline-flex h-2.5 w-2.5"
+              aria-hidden="true"
+            >
+              {/* Animated expanding ring */}
+              <m.span
+                className="absolute inset-0 rounded-full"
+                animate={CONNECTING_RING_ANIMATION}
+                transition={CONNECTING_RING_TRANSITION}
+                style={{
+                  backgroundColor: COLORS.status.connecting,
+                }}
+              />
+              {/* Static indicator dot */}
+              <span
+                className="relative h-2.5 w-2.5 rounded-full"
+                style={{
+                  backgroundColor: COLORS.status.connecting,
+                }}
+              />
+            </span>
+          )
+        ) : prefersReducedMotion ? (
+          /* Static red dot for reduced motion users - maintains interactivity */
+          <span
+            className={`h-2.5 w-2.5 rounded-full ${isInteractive ? 'cursor-pointer hover:brightness-125 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-transparent' : ''}`}
+            aria-hidden={!isInteractive}
+            role={isInteractive ? 'button' : undefined}
+            tabIndex={isInteractive ? 0 : undefined}
+            aria-label={isInteractive ? 'Reconnect to server' : undefined}
+            onClick={isInteractive ? handleReconnectClick : undefined}
+            onKeyDown={isInteractive ? handleKeyDown : undefined}
+            style={{
+              backgroundColor: COLORS.status.disconnected,
+            }}
+            title={isInteractive ? 'Click to reconnect' : undefined}
+          />
         ) : (
           /* Disconnected state: animated warning flash with optional click-to-reconnect */
           <m.span
