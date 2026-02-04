@@ -390,11 +390,11 @@
 - [x] T212 [GIT] Commit: initialize phase 10 retro
 - [x] T213 [US8] Initialize Storybook with Vite builder in client/ using npx storybook@latest init (use devs:typescript-dev agent)
 - [x] T214 [GIT] Commit: initialize Storybook
-- [ ] T215 [US8] Configure Storybook for Tailwind 4 and framer-motion in client/.storybook/main.ts (use devs:typescript-dev agent)
-- [ ] T216 [GIT] Commit: configure Storybook for Tailwind and motion
-- [ ] T217 [P] [US8] Create ASCIIHeader.stories.tsx with animateOnLoad variations (use devs:react-dev agent)
-- [ ] T218 [P] [US8] Create AnimatedBackground.stories.tsx with grid/particle toggles (use devs:react-dev agent)
-- [ ] T219 [P] [US8] Create ErrorBoundary.stories.tsx with error trigger demonstration (use devs:react-dev agent)
+- [x] T215 [US8] Configure Storybook for Tailwind 4 and framer-motion in client/.storybook/main.ts (use devs:typescript-dev agent)
+- [x] T216 [GIT] Commit: configure Storybook for Tailwind and motion
+- [x] T217 [P] [US8] Create ASCIIHeader.stories.tsx with animateOnLoad variations (use devs:react-dev agent)
+- [x] T218 [P] [US8] Create AnimatedBackground.stories.tsx with grid/particle toggles (use devs:react-dev agent)
+- [x] T219 [P] [US8] Create ErrorBoundary.stories.tsx with error trigger demonstration (use devs:react-dev agent)
 - [ ] T220 [GIT] Commit: add animated component stories
 - [ ] T221 [P] [US8] Create ActivityGraph.stories.tsx with sample data and time range controls (use devs:react-dev agent)
 - [ ] T222 [P] [US8] Create EventDistributionChart.stories.tsx with various event distributions (use devs:react-dev agent)
