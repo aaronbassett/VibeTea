@@ -263,10 +263,10 @@
 - [x] T133 [GIT] Commit: add debounce to todo_tracker
 - [x] T134 [US4] Add client store handler for todo_progress events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
 - [x] T135 [GIT] Commit: add client todo_progress handler
-- [ ] T136 [US4] Run /sdd:map incremental for Phase 6 changes
-- [ ] T137 [GIT] Commit: update codebase documents for phase 6
-- [ ] T138 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T139 [GIT] Commit: finalize phase 6 retro
+- [x] T136 [US4] Run /sdd:map incremental for Phase 6 changes
+- [x] T137 [GIT] Commit: update codebase documents for phase 6
+- [x] T138 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T139 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
 - [ ] T140 [GIT] Push branch to origin (ensure pre-push hooks pass)
