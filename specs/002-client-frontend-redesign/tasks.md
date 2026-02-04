@@ -345,8 +345,8 @@
 - [x] T185 [GIT] Commit: initialize phase 9 retro
 - [x] T186 [P] [US7] Add ActivityDataPoint and ActivityGraphProps interfaces to client/src/types/ or inline (use devs:typescript-dev agent)
 - [x] T187 [P] [US7] Add EventTypeDistribution and EventDistributionChartProps interfaces (use devs:typescript-dev agent)
-- [ ] T188 [GIT] Commit: add graph data interfaces
-- [ ] T189 [US7] Create ActivityGraph component at client/src/components/graphs/ActivityGraph.tsx using Recharts (use devs:react-dev agent)
+- [x] T188 [GIT] Commit: add graph data interfaces
+- [x] T189 [US7] Create ActivityGraph component at client/src/components/graphs/ActivityGraph.tsx using Recharts (use devs:react-dev agent)
 - [ ] T190 [GIT] Commit: add ActivityGraph component
 - [ ] T191 [US7] Add time range toggle (1h/6h/24h) to ActivityGraph with callback support (use devs:react-dev agent)
 - [ ] T192 [GIT] Commit: add time range toggle to ActivityGraph
