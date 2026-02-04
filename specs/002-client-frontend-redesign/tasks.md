@@ -445,8 +445,8 @@
 - [x] T251 [P] Add Storybook build step to GitHub workflow (CI-002) (use devs:typescript-dev agent)
 - [x] T252 [P] Add reduced-motion compliance check to GitHub workflow (CI-003) (use devs:typescript-dev agent)
 - [x] T253 [GIT] Commit: add CI workflow enhancements
-- [ ] T254 Run bundle size analysis and verify animation library < 50KB gzipped (NFR-001)
-- [ ] T255 [GIT] Commit: verify bundle size compliance
+- [x] T254 Run bundle size analysis and verify animation library < 50KB gzipped (NFR-001)
+- [x] T255 [GIT] Commit: verify bundle size compliance
 - [ ] T256 Run quickstart.md validation - verify all setup steps work (use devs:typescript-dev agent)
 - [ ] T257 [GIT] Commit: validate quickstart documentation
 - [ ] T258 Update CLAUDE.md with final feature documentation summary
