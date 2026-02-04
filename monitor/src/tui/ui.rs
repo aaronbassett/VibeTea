@@ -31,13 +31,15 @@
 //! ```
 
 use ratatui::{
-    layout::Alignment,
-    widgets::{Block, Borders, Paragraph},
+    layout::{Constraint, Direction, Layout},
     Frame,
 };
 
-use crate::tui::app::{AppState, Screen};
-use crate::tui::widgets::SetupFormWidget;
+use crate::tui::app::{AppState, Credentials, Screen};
+use crate::tui::widgets::{
+    header_height, CredentialsWidget, EventStreamWidget, HeaderWidget, SetupFormWidget,
+    CREDENTIALS_HEIGHT,
+};
 
 /// Renders the appropriate screen based on the current application state.
 ///
@@ -101,24 +103,23 @@ pub fn render_setup_screen(frame: &mut Frame, state: &AppState) {
     frame.render_widget(setup_widget, frame.area());
 }
 
-/// Renders the main dashboard screen (placeholder).
+/// Renders the main dashboard screen with header, event stream, and credentials.
 ///
-/// This function renders a placeholder dashboard view. The full implementation
-/// will be added in Phase 4 (User Story 2) and will include:
+/// This function renders the complete dashboard view with a three-section layout:
 ///
-/// - Header with connection status and server info
-/// - Event stream showing real-time session events
-/// - Statistics footer with event counts and keybindings
-/// - Credentials panel with device public key
+/// 1. **Header** - Shows "VibeTea" branding and connection status indicator
+/// 2. **Event stream** - Scrollable list of session events with timestamps and icons
+/// 3. **Credentials** - Session name and public key for server configuration
 ///
-/// # TODO
-///
-/// This will be fully implemented in Phase 4 (User Story 2).
+/// The layout adapts to terminal size using ratatui's Layout system:
+/// - Header gets a fixed height based on terminal width
+/// - Credentials panel gets a fixed height of 4 rows
+/// - Event stream fills the remaining vertical space
 ///
 /// # Arguments
 ///
 /// * `frame` - The ratatui frame to render into
-/// * `_state` - The application state (unused in placeholder)
+/// * `state` - The application state containing dashboard data
 ///
 /// # Example
 ///
@@ -128,19 +129,56 @@ pub fn render_setup_screen(frame: &mut Frame, state: &AppState) {
 ///
 /// let mut state = AppState::new();
 /// state.screen = Screen::Dashboard;
+/// state.dashboard.session_name = "my-macbook".to_string();
+/// state.dashboard.public_key = "AAAAC3NzaC1lZDI1NTE5...".to_string();
 /// terminal.draw(|frame| {
 ///     render_dashboard_screen(frame, &state);
 /// })?;
 /// ```
-fn render_dashboard_screen(frame: &mut Frame, _state: &AppState) {
-    let placeholder = Paragraph::new("Dashboard coming soon...")
-        .alignment(Alignment::Center)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" VibeTea Monitor "),
-        );
-    frame.render_widget(placeholder, frame.area());
+fn render_dashboard_screen(frame: &mut Frame, state: &AppState) {
+    let area = frame.area();
+
+    // Calculate the header height based on terminal width
+    let h_height = header_height(area.width);
+
+    // Create the three-section vertical layout
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(h_height),        // Header
+            Constraint::Min(1),                  // Event stream (fills remaining space)
+            Constraint::Length(CREDENTIALS_HEIGHT), // Credentials
+        ])
+        .split(area);
+
+    // Render the header widget
+    let header_widget = HeaderWidget::new(
+        state.dashboard.connection_status,
+        &state.theme,
+        &state.symbols,
+    )
+    .with_session_name(&state.dashboard.session_name);
+    frame.render_widget(header_widget, chunks[0]);
+
+    // Render the event stream widget
+    // Calculate visible height for the event stream (excluding borders if any)
+    let event_visible_height = chunks[1].height;
+    let event_stream_widget = EventStreamWidget::new(
+        &state.dashboard.event_buffer,
+        &state.theme,
+        &state.symbols,
+        state.dashboard.scroll.offset(),
+        event_visible_height,
+    );
+    frame.render_widget(event_stream_widget, chunks[1]);
+
+    // Create credentials from dashboard state and render the credentials widget
+    let credentials = Credentials {
+        session_name: state.dashboard.session_name.clone(),
+        public_key: state.dashboard.public_key.clone(),
+    };
+    let credentials_widget = CredentialsWidget::new(&credentials, &state.theme);
+    frame.render_widget(credentials_widget, chunks[2]);
 }
 
 #[cfg(test)]
@@ -261,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn render_dashboard_screen_contains_placeholder_text() {
+    fn render_dashboard_screen_contains_credentials_section() {
         let mut terminal = create_test_terminal();
         let state = AppState::new();
 
@@ -278,13 +316,13 @@ mod tests {
             .collect();
 
         assert!(
-            content.contains("Dashboard coming soon"),
-            "Dashboard should show placeholder text"
+            content.contains("Credentials"),
+            "Dashboard should show Credentials section"
         );
     }
 
     #[test]
-    fn render_dashboard_screen_contains_title() {
+    fn render_dashboard_screen_contains_header_title() {
         let mut terminal = create_test_terminal();
         let state = AppState::new();
 
@@ -300,8 +338,8 @@ mod tests {
             .collect();
 
         assert!(
-            content.contains("VibeTea Monitor"),
-            "Dashboard should show title"
+            content.contains("VibeTea"),
+            "Dashboard should show VibeTea title in header"
         );
     }
 
@@ -343,7 +381,7 @@ mod tests {
             .draw(|f| render(f, &state))
             .expect("Drawing via render() should not fail");
 
-        // Verify dashboard screen is rendered by checking for placeholder text
+        // Verify dashboard screen is rendered by checking for credentials section
         let buffer = terminal.backend().buffer();
         let content: String = buffer
             .content
@@ -352,8 +390,8 @@ mod tests {
             .collect();
 
         assert!(
-            content.contains("Dashboard coming soon"),
-            "Should dispatch to dashboard screen"
+            content.contains("Credentials"),
+            "Should dispatch to dashboard screen (Credentials visible)"
         );
     }
 
@@ -396,7 +434,7 @@ mod tests {
             .draw(|f| render(f, &state))
             .expect("Drawing dashboard should not fail");
 
-        // Verify dashboard is now shown
+        // Verify dashboard is now shown by checking for Credentials section
         let buffer = terminal.backend().buffer();
         let content: String = buffer
             .content
@@ -405,8 +443,8 @@ mod tests {
             .collect();
 
         assert!(
-            content.contains("Dashboard coming soon"),
-            "After transition should show dashboard"
+            content.contains("Credentials"),
+            "After transition should show dashboard (Credentials visible)"
         );
     }
 

@@ -291,16 +291,16 @@
 - [ ] T142 [GIT] Commit: initialize phase 6 retro
 
 ### Credentials Types
-- [ ] T143 [US4] Implement Credentials struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
-- [ ] T144 [GIT] Commit: add Credentials struct
+- [x] T143 [US4] Implement Credentials struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
+- [x] T144 [GIT] Commit: add Credentials struct
 
 ### Credentials Widget
-- [ ] T145 [US4] Implement credentials widget in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
-- [ ] T146 [GIT] Commit: add credentials widget
-- [ ] T147 [US4] Format public key in base64 for copy-paste in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
-- [ ] T148 [GIT] Commit: add base64 public key formatting
-- [ ] T149 [US4] Handle narrow terminal key display (wrap/truncate) in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
-- [ ] T150 [GIT] Commit: handle narrow terminal for credentials
+- [x] T145 [US4] Implement credentials widget in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
+- [x] T146 [GIT] Commit: add credentials widget
+- [x] T147 [US4] Format public key in base64 for copy-paste in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
+- [x] T148 [GIT] Commit: add base64 public key formatting (combined with T146)
+- [x] T149 [US4] Handle narrow terminal key display (wrap/truncate) in monitor/src/tui/widgets/credentials.rs (use devs:rust-dev agent)
+- [x] T150 [GIT] Commit: handle narrow terminal for credentials (combined with T146)
 
 ### Dashboard Layout Integration
 - [ ] T151 [US4] Integrate credentials panel into dashboard layout in monitor/src/tui/ui.rs (use devs:rust-dev agent)
