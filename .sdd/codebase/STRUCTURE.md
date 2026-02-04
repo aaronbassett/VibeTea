@@ -1,336 +1,308 @@
 # Project Structure
 
 > **Purpose**: Document directory layout, module boundaries, and where to add new code.
-> **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Generated**: 2026-02-04
+> **Last Updated**: 2026-02-04
 
 ## Directory Layout
 
 ```
 VibeTea/
-├── monitor/                    # Rust CLI for watching Claude Code sessions
+├── server/                  # Rust HTTP server (event hub)
 │   ├── src/
-│   │   ├── main.rs            # Entry point, CLI commands (init, run)
-│   │   ├── lib.rs             # Module exports
-│   │   ├── config.rs          # Environment configuration loading
-│   │   ├── watcher.rs         # File system watcher (inotify/FSEvents/ReadDirectoryChangesW)
-│   │   ├── parser.rs          # Claude Code JSONL parsing
-│   │   ├── privacy.rs         # Event payload sanitization
-│   │   ├── crypto.rs          # Ed25519 keypair generation/management
-│   │   ├── sender.rs          # HTTP client with retry and buffering
-│   │   ├── types.rs           # Event type definitions
-│   │   └── error.rs           # Error types
-│   ├── tests/
-│   │   ├── privacy_test.rs    # Privacy filtering tests
-│   │   └── sender_recovery_test.rs  # Retry logic tests
-│   └── Cargo.toml
-│
-├── server/                     # Rust HTTP server (event hub)
+│   │   ├── main.rs         # Server entry point (startup, logging, graceful shutdown)
+│   │   ├── lib.rs          # Library root with module declarations
+│   │   ├── routes.rs       # HTTP route handlers (POST /events, GET /ws, GET /health)
+│   │   ├── auth.rs         # Ed25519 signature verification and token validation
+│   │   ├── broadcast.rs    # Event broadcaster with Tokio broadcast channel
+│   │   ├── rate_limit.rs   # Per-source rate limiting
+│   │   ├── config.rs       # Environment variable configuration
+│   │   ├── error.rs        # Error types and HTTP status mapping
+│   │   └── types.rs        # Shared event types (EventType, EventPayload, etc.)
+│   ├── tests/              # Integration tests for server
+│   └── Cargo.toml          # Package manifest (inherits from workspace)
+├── monitor/                 # Rust CLI monitor (event producer)
 │   ├── src/
-│   │   ├── main.rs            # Entry point, logging, graceful shutdown
-│   │   ├── lib.rs             # Module exports
-│   │   ├── routes.rs          # HTTP route handlers (POST /events, GET /ws, GET /health)
-│   │   ├── auth.rs            # Ed25519 signature verification + token validation
-│   │   ├── broadcast.rs       # Event distribution to WebSocket subscribers
-│   │   ├── rate_limit.rs      # Per-source rate limiting
-│   │   ├── config.rs          # Environment configuration loading
-│   │   ├── types.rs           # Event type definitions (shared with monitor)
-│   │   └── error.rs           # Error types
-│   ├── tests/
-│   │   └── unsafe_mode_test.rs # Auth bypass mode tests
-│   └── Cargo.toml
-│
-├── client/                     # React SPA (dashboard)
+│   │   ├── main.rs         # Monitor entry point (CLI, init and run commands)
+│   │   ├── lib.rs          # Library root with module declarations
+│   │   ├── watcher.rs      # File system watcher for session files
+│   │   ├── parser.rs       # JSONL parsing from Claude Code sessions
+│   │   ├── privacy.rs      # Event sanitization pipeline
+│   │   ├── crypto.rs       # Ed25519 keypair and signing operations
+│   │   ├── sender.rs       # HTTP client with buffering and retries
+│   │   ├── config.rs       # Environment variable configuration
+│   │   ├── types.rs        # Event type definitions
+│   │   └── error.rs        # Error types
+│   ├── tests/              # Integration tests for monitor
+│   └── Cargo.toml          # Package manifest (inherits from workspace)
+├── client/                  # React TypeScript web dashboard
 │   ├── src/
-│   │   ├── main.tsx           # ReactDOM entry point
-│   │   ├── App.tsx            # Root component (layout + page state)
-│   │   ├── components/
-│   │   │   ├── ConnectionStatus.tsx   # WebSocket connection indicator
-│   │   │   ├── TokenForm.tsx          # Authentication token input
-│   │   │   ├── EventStream.tsx        # Virtualized event list
-│   │   │   ├── SessionOverview.tsx    # Active sessions table
-│   │   │   └── Heatmap.tsx           # Activity over time visualization
-│   │   ├── hooks/
-│   │   │   ├── useWebSocket.ts       # WebSocket connection management
-│   │   │   ├── useEventStore.ts      # Zustand store (state + selectors)
-│   │   │   └── useSessionTimeouts.ts # Session state machine (Active → Inactive → Ended)
-│   │   ├── types/
-│   │   │   └── events.ts             # TypeScript event interfaces
-│   │   ├── utils/
-│   │   │   └── formatting.ts         # Timestamp, event type formatting
-│   │   ├── __tests__/
-│   │   │   ├── App.test.tsx          # Integration tests
-│   │   │   ├── events.test.ts        # Event parsing/filtering tests
-│   │   │   └── formatting.test.ts    # Formatting utility tests
-│   │   └── index.css
-│   ├── public/
-│   ├── vite.config.ts
-│   ├── package.json
-│   └── tsconfig.json
-│
-├── discovery/                  # AI assistant discovery module (future expansion)
-│   └── src/
-│
-├── specs/                      # API specifications (future OpenAPI)
-│
-├── .sdd/
-│   └── codebase/               # This documentation
-│
-├── Cargo.toml                  # Workspace root (members: monitor, server)
-├── Cargo.lock
-├── PRD.md                      # Product requirements
-├── README.md
-├── CLAUDE.md                   # Project guidelines & learnings
-└── lefthook.yml               # Pre-commit hooks
+│   │   ├── main.tsx        # Vite entry point
+│   │   ├── App.tsx         # Root React component (state coordination, layout)
+│   │   ├── components/     # Presentational components
+│   │   │   ├── ConnectionStatus.tsx     # Connection indicator and status
+│   │   │   ├── EventStream.tsx          # Live event log display
+│   │   │   ├── Heatmap.tsx              # Activity heatmap visualization
+│   │   │   ├── SessionOverview.tsx      # Summary of active sessions
+│   │   │   └── TokenForm.tsx            # Authentication token input
+│   │   ├── hooks/          # Custom React hooks
+│   │   │   ├── useWebSocket.ts          # WebSocket connection management
+│   │   │   ├── useEventStore.ts         # Zustand event store
+│   │   │   └── useSessionTimeouts.ts    # Session inactivity detection
+│   │   ├── types/          # TypeScript type definitions
+│   │   │   └── events.ts               # Event type definitions (mirrors server)
+│   │   ├── utils/          # Utility functions
+│   │   │   └── formatting.ts           # Time and data formatting
+│   │   ├── __tests__/      # Unit tests
+│   │   └── vite-env.d.ts   # Vite environment types
+│   ├── dist/               # Built artifacts (Vite output)
+│   ├── tests/              # Integration tests
+│   ├── package.json        # Dependencies (React, Zustand, TailwindCSS, Vite)
+│   ├── vite.config.ts      # Vite build configuration
+│   ├── tsconfig.json       # TypeScript configuration
+│   ├── tailwind.config.ts  # TailwindCSS configuration
+│   └── eslint.config.js    # ESLint configuration
+├── specs/                   # Feature specifications and requirements
+│   ├── 001-vibetea/        # Core feature specification
+│   ├── 002-supabase-auth/  # Supabase authentication spec
+│   ├── 002-client-frontend-redesign/ # UI redesign spec
+│   ├── 003-monitor-tui/    # Terminal UI spec
+│   ├── 004-monitor-gh-actions/ # GitHub Actions monitoring
+│   └── 005-monitor-enhanced-tracking/ # Enhanced tracking features
+├── .sdd/                    # System Design Document
+│   ├── codebase/           # Codebase documentation (this directory)
+│   │   ├── ARCHITECTURE.md # System design and patterns
+│   │   ├── STRUCTURE.md    # Directory layout (this file)
+│   │   ├── STACK.md        # Technology stack
+│   │   ├── INTEGRATIONS.md # External services
+│   │   ├── CONVENTIONS.md  # Code style and naming
+│   │   ├── TESTING.md      # Test strategy
+│   │   ├── SECURITY.md     # Auth and security
+│   │   └── CONCERNS.md     # Tech debt and risks
+│   └── memory/             # Persistent project memory
+├── Cargo.toml              # Workspace manifest (server, monitor)
+├── fly.toml                # Fly.io deployment configuration
+├── Dockerfile              # Container image definition
+├── ralph.toml              # Ralph project configuration
+├── CLAUDE.md               # Critical learnings and patterns
+└── README.md               # Project overview
+
 ```
 
 ## Key Directories
 
-### `monitor/src/` - Monitor Component
+### `server/src/` - Event Hub Implementation
 
-| File | Purpose | Key Types |
-|------|---------|-----------|
-| `main.rs` | CLI entry (init/run commands), signal handling | `Cli`, `Command` |
-| `config.rs` | Load from env vars: `VIBETEA_*` | `Config` |
-| `watcher.rs` | inotify/FSEvents for `~/.claude/projects/**/*.jsonl` | `FileWatcher`, `WatchEvent` |
-| `parser.rs` | Parse JSONL, extract Session/Activity/Tool events | `SessionParser`, `ParsedEvent`, `ParsedEventKind` |
-| `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
-| `crypto.rs` | Ed25519 keypair (generate, load, save) | `Crypto` |
-| `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
-| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType` |
-| `error.rs` | Error types | `MonitorError`, custom errors |
+| File | Purpose | Responsibility |
+|------|---------|-----------------|
+| `main.rs` | Server binary entry point | Startup, config loading, signal handling, graceful shutdown |
+| `lib.rs` | Library root | Module declarations for reusability |
+| `routes.rs` | HTTP route definitions | Handlers for POST /events, GET /ws, GET /health |
+| `auth.rs` | Authentication logic | Ed25519 signature verification, token validation |
+| `broadcast.rs` | Event distribution | Tokio broadcast channel, subscriber filtering |
+| `rate_limit.rs` | Request throttling | Per-source rate limit tracking with cleanup |
+| `config.rs` | Configuration management | Environment variable parsing, validation |
+| `error.rs` | Error handling | Custom error types, HTTP status mapping |
+| `types.rs` | Data models | EventType, EventPayload, Event, etc. |
 
-### `server/src/` - Server Component
+### `monitor/src/` - Session Monitoring Implementation
 
-| File | Purpose | Key Types |
-|------|---------|-----------|
-| `main.rs` | Startup, logging, graceful shutdown, signal handling | — |
-| `routes.rs` | HTTP handlers + middleware, `AppState` | `AppState`, route handlers |
-| `auth.rs` | Ed25519 sig verification, token validation | `AuthError`, `verify_signature()`, `validate_token()` |
-| `broadcast.rs` | Event distribution to WebSocket subscribers | `EventBroadcaster`, `SubscriberFilter` |
-| `rate_limit.rs` | Per-source rate limiting with TTL cleanup | `RateLimiter`, `RateLimitResult` |
-| `config.rs` | Load from env: `VIBETEA_PUBLIC_KEYS`, `VIBETEA_SUBSCRIBER_TOKEN` | `Config` |
-| `types.rs` | Event schema (shared with monitor) | `Event`, `EventPayload`, `EventType` |
-| `error.rs` | Server error types | `ServerError`, `ApiError` |
+| File | Purpose | Responsibility |
+|------|---------|-----------------|
+| `main.rs` | Monitor binary entry point | CLI parsing, init/run subcommands, event loop |
+| `lib.rs` | Library root | Module declarations for reusability |
+| `watcher.rs` | File system watching | Detects changes in `~/.claude/projects/**/*.jsonl` |
+| `parser.rs` | JSONL parsing | Extracts session events from Claude Code logs |
+| `privacy.rs` | Data sanitization | Removes sensitive content, retains metadata only |
+| `crypto.rs` | Cryptographic operations | Generates Ed25519 keypairs, signs payloads |
+| `sender.rs` | HTTP transmission | Buffers events, handles retries, manages backoff |
+| `config.rs` | Configuration management | Environment variable parsing, defaults |
+| `types.rs` | Event definitions | Event, EventPayload, EventType enums |
+| `error.rs` | Error handling | Custom error types for monitor operations |
 
-### `client/src/` - Client Component
+### `client/src/` - React Dashboard
 
-| File | Purpose | Key Types |
-|------|---------|-----------|
-| `App.tsx` | Root layout, token form, conditional rendering | `App` component |
-| `main.tsx` | ReactDOM.createRoot() | — |
-| `components/ConnectionStatus.tsx` | Status badge (connecting/connected/disconnected) | `ConnectionStatus` component |
-| `components/TokenForm.tsx` | Input for auth token, localStorage persistence | `TokenForm` component |
-| `components/EventStream.tsx` | Virtualized list of events with filtering | `EventStream` component |
-| `components/SessionOverview.tsx` | Table of active sessions with stats | `SessionOverview` component |
-| `components/Heatmap.tsx` | Activity heatmap binned by time | `Heatmap` component |
-| `hooks/useWebSocket.ts` | WebSocket lifecycle, reconnection with backoff | `useWebSocket()` hook |
-| `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters | `useEventStore()` hook |
-| `hooks/useSessionTimeouts.ts` | Session state machine (Active → Inactive → Ended) | `useSessionTimeouts()` hook |
-| `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session` |
-| `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
-| `__tests__/` | Vitest unit + integration tests | — |
+| Directory | Purpose | Naming Convention |
+|-----------|---------|-------------------|
+| `components/` | React UI components | PascalCase files, export React.FC<Props> |
+| `hooks/` | Custom React hooks | camelCase files, export useHookName functions |
+| `types/` | TypeScript types | PascalCase for types, types.ts or domain.ts |
+| `utils/` | Helper functions | camelCase files, export utility functions |
+| `__tests__/` | Unit tests | `{component}.test.tsx`, `{util}.test.ts` |
+
+### `tests/` Directories
+
+Integration tests are located in each package:
+- `server/tests/` - Server integration tests
+- `monitor/tests/` - Monitor integration tests
+- `client/tests/` - Client E2E tests
 
 ## Module Boundaries
 
-### Monitor Module
+### Server Modules
 
-Self-contained CLI with these responsibilities:
-1. **Watch** files via `FileWatcher`
-2. **Parse** JSONL via `SessionParser`
-3. **Filter** events via `PrivacyPipeline`
-4. **Sign** events via `Crypto`
-5. **Send** to server via `Sender`
-
-No cross-dependencies with Server or Client.
+The server is organized as layers that flow downward:
 
 ```
-monitor/src/main.rs
-├── config.rs (load env)
-├── watcher.rs → sender.rs
-│   ↓
-├── parser.rs → privacy.rs
-│   ↓
-├── sender.rs (HTTP, retry, buffering)
-│   ├── crypto.rs (sign events)
-│   └── types.rs (Event schema)
+routes (HTTP handlers)
+  ↓ uses
+auth + broadcast + rate_limit
+  ↓ uses
+types + config + error
 ```
 
-### Server Module
+**Module Access Rules:**
+- `routes` can access: `auth`, `broadcast`, `rate_limit`, `config`, `types`, `error`
+- `auth` can access: `config`, `types`, `error` (NO access to routes or broadcast)
+- `broadcast` can access: `types`, `error` (independent utility)
+- `rate_limit` can access: nothing (independent utility)
+- `config` has no dependencies (data only)
 
-Central hub with these responsibilities:
-1. **Route** HTTP requests to handlers
-2. **Authenticate** monitors (verify signatures)
-3. **Validate** tokens for WebSocket clients
-4. **Broadcast** events to subscribers
-5. **Rate limit** per-source
+### Monitor Modules
 
-No direct dependencies on Monitor or Client implementation.
-
-```
-server/src/main.rs
-├── config.rs (load env)
-├── routes.rs (HTTP handlers)
-│   ├── auth.rs (verify signatures, validate tokens)
-│   ├── broadcast.rs (WebSocket distribution)
-│   └── rate_limit.rs (per-source rate limiting)
-└── types.rs (Event schema)
-```
-
-### Client Module
-
-React SPA with these responsibilities:
-1. **Connect** to server via WebSocket
-2. **Manage** application state (Zustand)
-3. **Display** events, sessions, heatmap
-4. **Filter** by session/time range
-5. **Persist** authentication token
-
-No back-end dependencies (except server WebSocket).
+The monitor forms a pipeline for event processing:
 
 ```
-client/src/App.tsx (root)
-├── hooks/
-│   ├── useWebSocket.ts (WebSocket, reconnect)
-│   ├── useEventStore.ts (Zustand state)
-│   └── useSessionTimeouts.ts (session state machine)
-├── components/
-│   ├── TokenForm.tsx (auth)
-│   ├── ConnectionStatus.tsx (status badge)
-│   ├── EventStream.tsx (virtualized list)
-│   ├── SessionOverview.tsx (table)
-│   └── Heatmap.tsx (visualization)
-└── types/events.ts (TypeScript interfaces)
+watcher (file system) → parser (JSONL) → privacy (sanitize) → sender (HTTP)
+                                               ↓
+                                            types
+                                               ↓
+                                            crypto
+```
+
+**Module Access Rules:**
+- `watcher` creates events from file changes, passes to parser
+- `parser` creates ParsedEvent from JSONL, passes to main loop
+- `privacy` sanitizes EventPayload, returns sanitized event
+- `sender` queues events, handles HTTP transmission with retry
+- `crypto` provides keypair and signing (used by sender)
+- All modules can access `config`, `types`, `error`
+
+### Client Module Hierarchy
+
+```
+App (root coordinator)
+  ↓
+hooks/ (state management)
+  - useWebSocket (connection)
+  - useEventStore (Zustand store)
+  - useSessionTimeouts (inactivity)
+  ↓
+components/ (presentational, receive props from hooks)
+  - EventStream
+  - Heatmap
+  - SessionOverview
+  - ConnectionStatus
+  - TokenForm
+  ↓
+utils/ (pure functions)
+  - formatting (timestamp, data display)
+  ↓
+types/ (TypeScript definitions)
 ```
 
 ## Where to Add New Code
 
-| If you're adding... | Put it in... | Example |
-|---------------------|--------------|---------|
-| **New Monitor command** | `monitor/src/main.rs` (add to `Command` enum) | `Command::Status` |
-| **New Monitor feature** | `monitor/src/<feature>.rs` (new module) | `monitor/src/compression.rs` |
-| **New Server endpoint** | `server/src/routes.rs` (add route handler) | `POST /events/:id/ack` |
-| **New Server middleware** | `server/src/routes.rs` or `server/src/` (new module) | `server/src/middleware.rs` |
-| **New event type** | `server/src/types.rs` + `monitor/src/types.rs` (sync both) | New `EventPayload` variant |
-| **New Client component** | `client/src/components/` | `client/src/components/EventDetail.tsx` |
-| **New Client hook** | `client/src/hooks/` | `client/src/hooks/useFilters.ts` |
-| **New Client page** | `client/src/pages/` (if routing added) | `client/src/pages/Analytics.tsx` |
-| **Shared utilities** | Monitor: `monitor/src/utils/` (if created), Server: `server/src/utils/`, Client: `client/src/utils/` | `format_`, `validate_` |
-| **Tests** | Colocate with source: `file.rs` → `file_test.rs` (Rust), `file.ts` → `__tests__/file.test.ts` (TS) | — |
+### Adding a New Server API Endpoint
 
-## Import Paths & Module Organization
+1. **Route definition**: Add handler to `server/src/routes.rs`
+2. **Business logic**: Create new module if needed (e.g., `server/src/billing.rs`)
+3. **Types**: Add variant to `EventType` or new payload in `server/src/types.rs` if needed
+4. **Auth**: If requires authentication, call `auth::verify_signature()` in handler
+5. **Rate limiting**: If needs limiting, check `rate_limit` in handler
 
-### Monitor/Server (Rust)
-
-**Convention**: Use fully qualified names from crate root via `use` statements.
-
-```rust
-// In monitor/src/main.rs
-use vibetea_monitor::config::Config;
-use vibetea_monitor::watcher::FileWatcher;
-use vibetea_monitor::sender::Sender;
-use vibetea_monitor::types::Event;
-
-// In server/src/routes.rs
-use vibetea_server::auth::verify_signature;
-use vibetea_server::broadcast::EventBroadcaster;
-use vibetea_server::config::Config;
-use vibetea_server::types::Event;
+Example structure:
+```
+server/src/
+├── routes.rs (add route: `router.post("/new-endpoint", handle_new)`)
+├── billing.rs (NEW: business logic)
+└── error.rs (add error variant if needed)
 ```
 
-**Modules**:
-- `monitor/src/lib.rs` re-exports public API
-- `server/src/lib.rs` re-exports public API
-- Internal modules use relative `use` statements
+### Adding a New Event Type
 
-### Client (TypeScript)
+1. **Server types**: Add variant to `EventType` enum in `server/src/types.rs`
+2. **Payload**: Add variant to `EventPayload` in `server/src/types.rs`
+3. **Monitor support**: Add parsing in `monitor/src/parser.rs`
+4. **Privacy filtering**: Add rules in `monitor/src/privacy.rs`
+5. **Client display**: Add component in `client/src/components/`
 
-**Convention**: Absolute paths from `src/` root via `tsconfig.json` alias or relative imports.
+### Adding a New React Component
 
-```typescript
-// In client/src/App.tsx
-import { useWebSocket } from './hooks/useWebSocket';
-import { useEventStore } from './hooks/useEventStore';
-import type { VibeteaEvent } from './types/events';
+1. **Create file**: `client/src/components/YourComponent.tsx` (PascalCase)
+2. **Define props**: Use TypeScript interface extending React.HTMLAttributes
+3. **Export**: `export const YourComponent: React.FC<YourComponentProps> = ...`
+4. **Use in App**: Import and add to `client/src/App.tsx` or parent component
+5. **Test**: Create `client/src/__tests__/YourComponent.test.tsx`
 
-// In client/src/components/EventStream.tsx
-import { useEventStore } from '../hooks/useEventStore';
-import type { Session } from '../types/events';
-```
+### Adding a New Hook
 
-**Conventions**:
-- Components: PascalCase (e.g., `EventStream.tsx`)
-- Hooks: camelCase starting with `use` (e.g., `useWebSocket.ts`)
-- Utils: camelCase (e.g., `formatting.ts`)
-- Types: camelCase (e.g., `events.ts`)
+1. **Create file**: `client/src/hooks/useYourHook.ts` (camelCase)
+2. **Define return type**: TypeScript interface for returned value
+3. **Export**: `export function useYourHook(): ReturnType { ... }`
+4. **Use in component**: Import and call in component body (before other hooks)
+5. **Test**: Create `client/src/__tests__/useYourHook.test.ts`
+
+## Import Paths
+
+| Alias | Maps To | Usage | Example |
+|-------|---------|-------|---------|
+| (none) | Relative imports | Within same package | `use crate::types::Event;` (Rust) |
+| `@/` | `client/src/` | Client cross-module | `import { App } from '@/App';` |
+| (none) | Relative imports | Client cross-module | `import { Event } from '../types/events';` |
 
 ## Entry Points
 
-| Component | File | Launch Command |
-|-----------|------|-----------------|
-| **Monitor** | `monitor/src/main.rs` | `cargo run -p vibetea-monitor -- run` |
-| **Server** | `server/src/main.rs` | `cargo run -p vibetea-server` |
-| **Client** | `client/src/main.tsx` | `npm run dev` (from `client/`) |
+| File | Purpose | How to Run |
+|------|---------|-----------|
+| `server/src/main.rs` | Server binary | `cargo run --bin vibetea-server` |
+| `monitor/src/main.rs` | Monitor binary | `cargo run --bin vibetea-monitor -- init` |
+| `client/src/main.tsx` | Client app | `npm run dev` |
 
-## Generated/Auto-Configured Files
+## Generated Files
 
-Files that are auto-generated or should not be manually edited:
+Files generated automatically and should NOT be manually edited:
 
 | Location | Generator | Regenerate Command |
 |----------|-----------|-------------------|
-| `Cargo.lock` | Cargo | `cargo lock` (auto-managed) |
-| `target/` | Rust compiler | `cargo build` |
 | `client/dist/` | Vite | `npm run build` |
-| `client/node_modules/` | pnpm | `pnpm install` |
+| `target/` | Cargo | `cargo build` |
+| `target/doc/` | Rustdoc | `cargo doc --no-deps` |
 
-## Naming Conventions
+## Configuration Files
 
-### Rust Modules and Types
+### Workspace Level (`Cargo.toml`)
 
-| Category | Pattern | Example |
-|----------|---------|---------|
-| Module names | `snake_case` | `parser.rs`, `privacy.rs` |
-| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload` |
-| Function names | `snake_case` | `verify_signature()`, `calculate_backoff()` |
-| Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX` |
-| Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs` |
+- Defines Rust workspace members: `server`, `monitor`
+- Declares shared dependencies with versions
+- Sets release profile optimization
 
-### TypeScript Components and Functions
+### Package Level
 
-| Category | Pattern | Example |
-|----------|---------|---------|
-| Component files | `PascalCase.tsx` | `EventStream.tsx`, `TokenForm.tsx` |
-| Hook files | `camelCase.ts` | `useWebSocket.ts`, `useEventStore.ts` |
-| Utility files | `camelCase.ts` | `formatting.ts` |
-| Type files | `camelCase.ts` | `events.ts` |
-| Constants | `UPPER_SNAKE_CASE` | `TOKEN_STORAGE_KEY`, `MAX_BACKOFF_MS` |
-| Test files | `__tests__/{name}.test.ts` | `__tests__/formatting.test.ts` |
+- `server/Cargo.toml` - Server-specific dependencies
+- `monitor/Cargo.toml` - Monitor-specific dependencies
+- `client/package.json` - Node.js dependencies
+- `server/src/config.rs` - Runtime environment variables
+- `monitor/src/config.rs` - Runtime environment variables
 
-## Dependency Boundaries (Import Rules)
+### Build Configuration
 
-### Monitor
-
-```
-✓ CAN import:     types, config, crypto, watcher, parser, privacy, sender, error
-✓ CAN import:     std, tokio, serde, ed25519-dalek, notify, reqwest
-✗ CANNOT import:  server modules, client code
-```
-
-### Server
-
-```
-✓ CAN import:     types, config, auth, broadcast, rate_limit, error, routes
-✓ CAN import:     std, tokio, axum, serde, ed25519-dalek
-✗ CANNOT import:  monitor modules, client code
-```
-
-### Client
-
-```
-✓ CAN import:     components, hooks, types, utils, React, Zustand, third-party UI libs
-✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
-```
+- `Dockerfile` - Container image for server deployment
+- `fly.toml` - Fly.io deployment manifest
+- `vite.config.ts` - Client build configuration
+- `tsconfig.json` - TypeScript compiler options
+- `tailwind.config.ts` - TailwindCSS utility classes
+- `ralph.toml` - Ralph configuration (project metadata)
 
 ---
 
-*This document shows WHERE code lives. Consult ARCHITECTURE.md for HOW the system is organized.*
+## What Does NOT Belong Here
+
+- Architecture patterns → ARCHITECTURE.md
+- Technology choices → STACK.md
+- Code style rules → CONVENTIONS.md
+- Test patterns → TESTING.md
+
+---
+
+*This document shows WHERE code lives. Update when directory structure changes.*

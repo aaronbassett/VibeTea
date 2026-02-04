@@ -1,249 +1,215 @@
 # Architecture
 
 > **Purpose**: Document system design, patterns, component relationships, and data flow.
-> **Generated**: 2026-02-03
-> **Last Updated**: 2026-02-03
+> **Generated**: 2026-02-04
+> **Last Updated**: 2026-02-04
 
 ## Architecture Overview
 
-VibeTea is a distributed event aggregation and broadcast system for AI coding assistants with three independent components:
+VibeTea is a distributed real-time event hub system that monitors Claude Code sessions and broadcasts events to subscribers. The architecture follows a producer-consumer pattern with three main components:
 
-- **Monitor** (Rust CLI) - Watches local Claude Code session files and forwards privacy-filtered events to the server
-- **Server** (Rust HTTP API) - Central hub that receives events from monitors and broadcasts them to subscribers via WebSocket
-- **Client** (React SPA) - Real-time dashboard displaying aggregated event streams, session activity, and usage heatmaps
+- **Monitor (Producer)**: Rust CLI that watches Claude Code session files and sends events to the server
+- **Server (Event Hub)**: Rust HTTP server that ingests events, authenticates requests, and broadcasts to WebSocket clients
+- **Client (Consumer)**: React TypeScript web dashboard that subscribes to events and displays real-time session activity
 
-The system follows a **hub-and-spoke architecture** where the Server acts as a central event bus, decoupling multiple Monitor sources from multiple Client consumers. Events flow unidirectionally: Monitors → Server → Clients, with no persistent storage.
+The system is designed for privacy-first monitoring with zero session data persistence.
 
 ## Architecture Pattern
 
 | Pattern | Description |
 |---------|-------------|
-| **Hub-and-Spoke** | Central Server acts as event aggregation point, Monitors feed events, Clients consume |
-| **Producer-Consumer** | Monitors are event producers, Clients are event consumers, Server mediates asynchronous delivery |
-| **Privacy-First** | Events contain only structural metadata (timestamps, tool names, file basenames), never code or sensitive content |
-| **Real-time Streaming** | WebSocket-based live event delivery with no message persistence (fire-and-forget) |
+| **Event-Driven** | Pub/sub architecture using WebSocket broadcast channels for real-time event distribution |
+| **Layered (Server)** | HTTP routes → Auth → Business logic → Broadcast → WebSocket connections |
+| **Modular Monorepo** | Cargo workspace with separate `server` and `monitor` binaries sharing types and utilities |
+| **Client-Server** | React client communicates with server via HTTP (POST) for events, WebSocket (GET) for subscriptions |
 
 ## Core Components
 
-### Monitor (Source)
+### Monitor (Event Producer)
 
-- **Purpose**: Watches Claude Code session files in `~/.claude/projects/**/*.jsonl` and emits structured events
+- **Purpose**: Watches Claude Code session files at `~/.claude/projects/**/*.jsonl`, parses events, applies privacy filtering, signs with Ed25519 keypair, and sends to the server
 - **Location**: `monitor/src/`
-- **Key Responsibilities**:
-  - File watching via `inotify` (Linux), `FSEvents` (macOS), `ReadDirectoryChangesW` (Windows)
-  - Privacy-preserving JSONL parsing (extracts metadata only)
-  - Cryptographic signing of events (Ed25519)
-  - Event buffering and exponential backoff retry
-  - Graceful shutdown with event flushing
-- **Dependencies**:
-  - Monitors depend on **Server** (via HTTP POST to `/events`)
-  - Monitors depend on local Claude Code installation (`~/.claude/`)
-- **Dependents**: None (source component)
+- **Entry Point**: `monitor/src/main.rs` (CLI-based with `init` and `run` subcommands)
+- **Key Modules**:
+  - `watcher`: File system watcher using `notify` crate for file change detection
+  - `parser`: JSONL parsing from Claude Code session files (privacy-preserving)
+  - `privacy`: Event sanitization pipeline to remove sensitive data
+  - `crypto`: Ed25519 keypair generation and Ed25519 signature creation
+  - `sender`: HTTP client with buffering, retry logic, and rate limiting
+  - `config`: Environment variable configuration management
+- **Dependencies**: Monitor → Server (HTTP POST with signature)
+- **Key Behaviors**:
+  - CLI-based: `vibetea-monitor init` generates keypair, `vibetea-monitor run` starts daemon
+  - Parses JSONL lines for session start, activity, tool invocation, and completion events
+  - Applies privacy filtering before transmission (removes code, prompts, responses)
+  - Signs event payloads with Ed25519 private key
+  - Buffers events (default 1000) and flushes periodically or on reaching limit
+  - Graceful shutdown with 5-second timeout to flush pending events
 
-### Server (Hub)
+### Server (Event Hub)
 
-- **Purpose**: Central event aggregation point that validates, authenticates, and broadcasts events to all subscribers
+- **Purpose**: Receives events from monitors, validates authentication/signatures, manages rate limiting, and broadcasts events to WebSocket subscribers
 - **Location**: `server/src/`
-- **Key Responsibilities**:
-  - Receiving and authenticating events from Monitors (Ed25519 signature verification)
-  - Rate limiting (per-source basis, configurable)
-  - Broadcasting events to WebSocket subscribers
-  - Token-based authentication for WebSocket clients
-  - Graceful shutdown with timeout for in-flight requests
-- **Dependencies**:
-  - Broadcasts to **Clients** (via WebSocket `/ws` endpoint)
-  - Depends on Monitor-provided public keys for signature verification
-- **Dependents**: Clients (consumers)
+- **Entry Point**: `server/src/main.rs` (HTTP server on port 8080)
+- **Key Modules**:
+  - `routes`: HTTP route handlers (POST /events, GET /ws, GET /health)
+  - `auth`: Ed25519 signature verification and bearer token validation
+  - `broadcast`: Event broadcaster using tokio broadcast channels for pub/sub
+  - `rate_limit`: Per-source rate limiting to prevent abuse
+  - `config`: Environment variable configuration and auth settings
+  - `error`: Centralized error types with HTTP status mapping
+  - `types`: Shared event data structures (EventType, EventPayload, etc.)
+- **Dependencies**: Server → Monitor (receives events), Server → Clients (broadcasts events)
+- **Key Behaviors**:
+  - Validates incoming events using public keys registered via VIBETEA_PUBLIC_KEYS
+  - Implements constant-time comparison for tokens (prevent timing attacks)
+  - Rate limiting per source_id with exponential backoff
+  - Spawns background cleanup task every 30 seconds for stale rate limit entries
+  - Broadcasts events to all connected WebSocket clients
+  - Supports optional subscriber filtering by event type, project, session
+  - Graceful shutdown with 30-second timeout for in-flight requests
+  - Structured JSON logging for production monitoring
 
-### Client (Consumer)
+### Client (Event Consumer)
 
-- **Purpose**: Real-time dashboard displaying aggregated event stream from the Server
+- **Purpose**: Real-time web dashboard displaying session activity, event stream, heatmap, and connection status
 - **Location**: `client/src/`
-- **Key Responsibilities**:
-  - WebSocket connection management with exponential backoff reconnection
-  - Event buffering (1000 events max) with FIFO eviction
-  - Session state management (Active, Inactive, Ended, Removed)
-  - Event filtering (by session ID, time range)
-  - Real-time visualization (event list, session overview, heatmap)
-- **Dependencies**:
-  - Depends on **Server** (via WebSocket connection to `/ws`)
-  - No persistence layer (in-memory Zustand store)
-- **Dependents**: None (consumer component)
+- **Entry Point**: `client/src/main.tsx` (React 19 app with Vite)
+- **Key Components**:
+  - `App.tsx`: Main component coordinating global state and layout
+  - `components/`: Presentational components (EventStream, Heatmap, SessionOverview, ConnectionStatus, TokenForm)
+  - `hooks/`: Custom React hooks for WebSocket management and event store
+  - `utils/`: Formatting utilities for timestamps and data display
+  - `types/`: TypeScript type definitions for events
+- **Dependencies**: Client → Server (WebSocket subscription)
+- **Key Behaviors**:
+  - Stores authentication token in localStorage
+  - Opens WebSocket connection with bearer token authentication
+  - Manages event store with Zustand (global state)
+  - Implements session timeout detection (30 seconds of inactivity)
+  - Supports filtering by session and time range
+  - Real-time UI updates via WebSocket events
+  - Graceful disconnection/reconnection with status indicators
 
 ## Data Flow
 
-### Primary Monitor-to-Client Flow
+### Primary Event Ingestion Flow
 
-Claude Code → Monitor → Server → Client:
-1. JSONL line written to `~/.claude/projects/<uuid>.jsonl`
-2. File watcher detects change via inotify/FSEvents
-3. Parser extracts event metadata (no code/prompts)
-4. Privacy pipeline sanitizes payload
-5. Sender signs with Ed25519, buffers, and retries on failure
-6. POST /events sent to Server with X-Source-ID and X-Signature headers
-7. Server verifies signature and rate limit
-8. Broadcaster sends event to all WebSocket subscribers
-9. Client receives via useWebSocket hook
-10. Zustand store adds event (FIFO eviction at 1000 limit)
-11. React renders updated event list, session overview, heatmap
+```
+Monitor watches file → Parses JSONL → Privacy filters → Signs with Ed25519 →
+  Buffers event → HTTP POST /events to Server (with X-Source-ID, X-Signature headers) →
+  Server authenticates signature → Rate limit check → Broadcast to subscribers
+```
 
-### Detailed Request/Response Cycle
+### Primary Client Subscription Flow
 
-1. **Event Creation** (Monitor/Parser):
-   - JSONL line parsed from `~/.claude/projects/<uuid>.jsonl`
-   - `SessionParser` extracts timestamp, tool name, action
-   - `PrivacyPipeline` removes sensitive fields (code, prompts)
-   - `Event` struct created with unique ID (`evt_` prefix + 20-char suffix)
+```
+Client provides bearer token → WebSocket GET /ws to Server →
+  Server validates token → Creates subscription → Sends events in real-time →
+  Client receives, applies optional filters → React state update → UI renders
+```
 
-2. **Event Signing** (Monitor/Sender):
-   - Event payload serialized to JSON
-   - Ed25519 signature computed over message body
-   - Event queued in local buffer (max 1000, FIFO eviction)
+### Detailed Steps for Event Ingestion
 
-3. **Event Transmission** (Monitor/Sender):
-   - `POST /events` with headers: `X-Source-ID`, `X-Signature`
-   - On 429 (rate limit): parse `Retry-After` header
-   - On network failure: exponential backoff (1s → 60s, ±25% jitter)
-   - On success: continue flushing buffered events
+1. **Event Detection**: File watcher detects changes in `~/.claude/projects/**/*.jsonl`
+2. **Parsing**: SessionParser extracts structured events from JSONL (session start, activity, tool invocations, completion)
+3. **Privacy Filtering**: PrivacyPipeline removes code content, prompts, responses; retains metadata only
+4. **Signing**: Monitor signs the JSON-serialized event payload with Ed25519 private key
+5. **HTTP Request**: POST /events with body as signed payload, headers:
+   - `X-Source-ID`: Monitor identifier (e.g., hostname)
+   - `X-Signature`: Base64-encoded Ed25519 signature
+   - `Content-Type: application/json`
+6. **Server Validation**:
+   - Extracts source_id from header
+   - Looks up public key in VIBETEA_PUBLIC_KEYS map
+   - Verifies signature using `ed25519_dalek::VerifyingKey::verify_strict()`
+   - Constant-time comparison to prevent timing attacks
+7. **Rate Limiting**: Per-source rate limiter checks request count, returns 429 if exceeded
+8. **Broadcasting**: Valid event is distributed to all connected WebSocket subscribers
+9. **Persistence**: Events are NOT persisted to disk (ephemeral, real-time only)
 
-4. **Event Ingestion** (Server):
-   - Extract `X-Source-ID` and `X-Signature` headers
-   - Load Monitor's public key from config (`VIBETEA_PUBLIC_KEYS`)
-   - Verify Ed25519 signature using `subtle::ConstantTimeEq` (timing-safe)
-   - Rate limit check per source_id
-   - Broadcast event to all WebSocket subscribers via `tokio::broadcast`
+### Detailed Steps for Client Subscription
 
-5. **Event Delivery** (Server → Client):
-   - WebSocket subscriber receives `BroadcastEvent`
-   - Client's `useWebSocket` hook calls `addEvent()` action
-   - Zustand store updates event buffer (evicts oldest if > 1000)
-   - Session state updated (Active/Inactive/Ended/Removed)
-   - React re-renders only affected components (via Zustand selectors)
-
-6. **Visualization** (Client):
-   - `EventStream` component renders with virtualized scrolling
-   - `SessionOverview` shows active sessions with metadata
-   - `Heatmap` displays activity over time bins
-   - `ConnectionStatus` shows server connectivity
+1. **Token Management**: Client checks localStorage for saved token
+2. **Token Entry**: If missing, TokenForm prompts for token entry
+3. **WebSocket Connection**: useWebSocket hook opens WS connection to GET /ws with token in query param
+4. **Server Authentication**: Server validates token against VIBETEA_SUBSCRIBER_TOKEN
+5. **Subscription Active**: Server queues all broadcast events for this client
+6. **Event Reception**: Client receives events as JSON, parses, and stores in Zustand
+7. **Filtering**: useEventStore applies optional filters (session_id, time range)
+8. **UI Update**: React components subscribe to store changes and render updates
+9. **Session Timeouts**: useSessionTimeouts tracks inactivity and marks sessions as timed out after 30s
 
 ## Layer Boundaries
 
 | Layer | Responsibility | Can Access | Cannot Access |
 |-------|----------------|------------|---------------|
-| **Monitor** | Observe local activity, preserve privacy, authenticate | FileSystem, HTTP client, Crypto | Server internals, other Monitors, network stack details |
-| **Server** | Route, authenticate, broadcast, rate limit | All Monitors' public keys, event config, rate limiter state | File system, external APIs, Client implementation details |
-| **Client** | Display, interact, filter, manage WebSocket | Server WebSocket, local storage (token), state store | Server internals, other Clients' state, file system |
+| **HTTP Routes** | HTTP parsing, header extraction | Auth, Broadcast, Rate Limiter | Database (none exists) |
+| **Authentication** | Signature/token validation | Config (public keys) | Internal state, routes directly |
+| **Rate Limiting** | Per-source request counting | Config | Routes, Auth (no feedback to them) |
+| **Broadcast** | Event distribution to subscribers | Types, Events | Auth, Routes directly |
+| **Config** | Environment variable parsing | Nothing (immutable) | Routes, Auth (must be passed) |
+| **Monitor File Watcher** | File system event detection | Parser, Crypto | Sender (event queuing only) |
+| **Monitor Privacy Pipeline** | Event sanitization | Type definitions | Sender, Watcher, Crypto |
+| **Monitor Sender** | HTTP transmission with retry | Crypto (for signing), Config | Watcher, Parser |
 
 ## Dependency Rules
 
-- **Monitor → Server**: Only on startup (load server URL from config), then periodically via HTTP POST
-- **Server → Monitor**: None (server doesn't initiate contact)
-- **Server ↔ Client**: Bidirectional (Client initiates WebSocket, Server sends events, Client sends nothing back)
-- **Cross-Monitor**: No inter-Monitor communication (all go through Server)
-- **Persistence**: None at any layer (no database, no cache persistence)
+- **Server Routes** depend on Auth, Broadcast, RateLimiter, Config (one-way)
+- **Auth** depends only on Config (public key lookup)
+- **Broadcast** is independent, used by Routes
+- **RateLimiter** is independent, used by Routes
+- **Monitor** components form a pipeline: Watcher → Parser → PrivacyPipeline → Event → Sender
+- **Client** has no dependencies on server internals; communicates only via HTTP/WebSocket APIs
+- **No circular dependencies**: All dependencies flow downward (routes depend on lower layers)
 
 ## Key Interfaces & Contracts
 
 | Interface | Purpose | Implementations |
 |-----------|---------|-----------------|
-| `Event` | Core event struct with type + payload | JSON serialization via `serde` |
-| `EventPayload` | Tagged union of event variants | Session, Activity, Tool, Agent, Summary, Error |
-| `EventType` | Enum discriminator | 6 variants (Session, Activity, Tool, Agent, Summary, Error) |
-| `AuthError` | Auth failure codes | InvalidSignature, UnknownSource, InvalidToken |
-| `RateLimitResult` | Rate limit outcome | Allowed, Blocked (with retry delay) |
-| `SubscriberFilter` | Optional event filtering | by_event_type, by_project, by_source |
-
-## Authentication & Authorization
-
-### Monitor Authentication (Source)
-
-- **Mechanism**: Ed25519 signature verification
-- **Flow**:
-  1. Monitor generates keypair: `vibetea-monitor init`
-  2. Public key registered with Server: `VIBETEA_PUBLIC_KEYS=monitor1:base64pubkey`
-  3. On `POST /events`, Monitor signs message body with private key
-  4. Server verifies signature against pre-registered public key
-  5. Invalid signatures rejected with 401 Unauthorized
-- **Security**: Uses `ed25519_dalek::VerifyingKey::verify_strict()` (RFC 8032 compliant)
-- **Timing Attack Prevention**: `subtle::ConstantTimeEq` for signature comparison
-
-### Client Authentication (Consumer)
-
-- **Mechanism**: Bearer token (HTTP header)
-- **Flow**:
-  1. Client obtains token (out-of-band, server-configured)
-  2. Token sent in WebSocket upgrade request: `?token=secret`
-  3. Server calls `validate_token()` to check token
-  4. Invalid/missing tokens rejected with 401 Unauthorized
-- **Storage**: Client stores token in localStorage under `vibetea_token` key
+| `AppState` | Shared server state holder | Created once at startup, cloned for each request |
+| `EventBroadcaster` | Multi-producer broadcast channel | Tokio broadcast channel with up to 1000 event capacity |
+| `RateLimiter` | Per-source rate limit tracking | In-memory HashMap with cleanup task |
+| `FileWatcher` | File system change notification | Wrapper around `notify` crate with mpsc channel |
+| `SessionParser` | JSONL event parsing | Stateful per-session, parses Claude Code JSONL format |
+| `PrivacyPipeline` | Event payload sanitization | Configurable via VIBETEA_BASENAME_ALLOWLIST |
+| `Crypto` | Ed25519 operations | Keypair generation, signing, verification |
+| `Sender` | HTTP transmission with retries | Buffered, with exponential backoff |
 
 ## State Management
 
-### Server State
-| State Type | Location | Pattern |
-|------------|----------|---------|
-| **Configuration** | `Arc<Config>` in `AppState` | Immutable, shared across requests |
-| **Broadcast Channel** | `EventBroadcaster` (tokio::broadcast) | Multi-producer, multi-consumer, lossy if slow subscribers |
-| **Rate Limiter** | `RateLimiter` (Arc<Mutex<HashMap>>) | Per-source tracking with TTL-based cleanup |
-| **Uptime** | `Instant` in `AppState` | Initialized at startup for health checks |
-
-### Client State
-| State Type | Location | Pattern |
-|------------|----------|---------|
-| **Connection Status** | Zustand store | Driven by WebSocket events (connecting, connected, disconnected, reconnecting) |
-| **Event Buffer** | Zustand store (Vec, max 1000) | FIFO eviction when full, newest first |
-| **Sessions** | Zustand store (Map<sessionId, Session>) | Keyed by UUID, state machines (Active → Inactive → Ended → Removed) |
-| **Filters** | Zustand store | Session ID filter, time range filter |
-| **Authentication Token** | localStorage | Persisted across page reloads |
-
-### Monitor State
-| State Type | Location | Pattern |
-|------------|----------|---------|
-| **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown |
-| **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
-| **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
+| State Type | Location | Pattern | Scope |
+|------------|----------|---------|-------|
+| **Server Config** | AppState (Arc) | Read-only, loaded once | Application lifetime |
+| **Rate Limits** | AppState.rate_limiter (Arc<Mutex>) | Per-source counters with TTL | Runtime, cleaned every 30s |
+| **Broadcast Events** | AppState.broadcaster (Arc) | Tokio broadcast channel | All connected WebSocket clients |
+| **Client Auth Token** | localStorage | String persistence | Session/browser lifetime |
+| **Client Events** | Zustand store | Immutable event log with filters | React component lifetime |
+| **Client Connections** | useWebSocket hook | WebSocket instance | Component lifetime |
+| **Monitor Session Parsers** | HashMap in main loop | Per-file state | Until file is removed |
+| **Monitor Event Buffer** | Sender buffer (Vec) | Queue with configurable size | Until flushed |
 
 ## Cross-Cutting Concerns
 
 | Concern | Implementation | Location |
 |---------|----------------|----------|
-| **Logging** | Structured JSON (tracing crate) | Server: `main.rs`, Monitor: `main.rs`, Client: error boundaries in components |
-| **Error Handling** | Custom error enums + thiserror | `server/src/error.rs`, `monitor/src/error.rs` |
-| **Rate Limiting** | Per-source counter with TTL | `server/src/rate_limit.rs` |
-| **Privacy** | Event payload sanitization | `monitor/src/privacy.rs` (removes sensitive fields) |
-| **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
-| **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
-
-## Design Decisions
-
-### Why Hub-and-Spoke?
-
-- **Decouples sources from sinks**: Multiple Monitor instances can run independently
-- **Centralized authentication**: Server is the only point needing cryptographic keys
-- **Easy horizontal scaling**: Monitors and Clients scale independently
-- **No inter-Monitor coupling**: Monitors don't need to know about each other
-
-### Why No Persistence?
-
-- **Simplifies deployment**: No database to manage
-- **Supports distributed monitoring**: Each Client sees latest events only
-- **Privacy-first**: Events never written to disk (except logs)
-- **Real-time focus**: System optimized for live streams, not historical analysis
-
-### Why Ed25519?
-
-- **Widely supported**: NIST-standardized modern elliptic curve
-- **Signature verification only**: Public key crypto prevents Monitors impersonating each other
-- **Timing-safe implementation**: `subtle::ConstantTimeEq` prevents timing attacks
-- **Small key size**: ~32 bytes per key, easy to share via env vars
-
-### Why WebSocket?
-
-- **Bi-directional low-latency**: Better than HTTP polling for real-time updates
-- **Connection persistence**: Single connection replaces request/response overhead
-- **Native browser support**: No additional libraries needed for basic connectivity
-- **Standard protocol**: Works with existing proxies and load balancers
+| **Logging** | Structured JSON logging with tracing crate | `server/src/main.rs`, `monitor/src/main.rs`, all modules |
+| **Error Handling** | Custom error types with thiserror, HTTP status mapping | `server/src/error.rs`, `monitor/src/error.rs` |
+| **Authentication** | Ed25519 signatures + bearer tokens | `server/src/auth.rs`, `monitor/src/crypto.rs` |
+| **Privacy** | Event payload filtering before transmission | `monitor/src/privacy.rs` |
+| **Rate Limiting** | Per-source request counting with cleanup | `server/src/rate_limit.rs` |
+| **Graceful Shutdown** | Signal handlers (SIGTERM/SIGINT) with timeouts | `server/src/main.rs`, `monitor/src/main.rs` |
+| **Configuration** | Environment variables with defaults | `server/src/config.rs`, `monitor/src/config.rs` |
 
 ---
 
-*This document describes HOW the system is organized. Consult STRUCTURE.md for WHERE code lives.*
+## What Does NOT Belong Here
+
+- Directory structure details → STRUCTURE.md
+- Technology versions → STACK.md
+- External service configs → INTEGRATIONS.md
+- Code style rules → CONVENTIONS.md
+
+---
+
+*This document describes HOW the system is organized. Keep focus on patterns and relationships.*
