@@ -465,10 +465,10 @@
 - [x] T228 [GIT] Commit: integrate logo into header
 
 ### Codebase Mapping and Retro
-- [ ] T229 [US8] Run /sdd:map incremental for Phase 10 changes
-- [ ] T230 [GIT] Commit: update codebase documents for phase 10
-- [ ] T231 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T232 [GIT] Commit: finalize phase 10 retro
+- [x] T229 [US8] Run /sdd:map incremental for Phase 10 changes
+- [x] T230 [GIT] Commit: update codebase documents for phase 10
+- [x] T231 [US8] Review retro/P10.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T232 [GIT] Commit: finalize phase 10 retro
 
 ### Phase Completion
 - [ ] T233 [GIT] Push branch to origin (ensure pre-push hooks pass)
