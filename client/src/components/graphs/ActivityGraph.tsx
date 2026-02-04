@@ -15,6 +15,7 @@
  * @module components/graphs/ActivityGraph
  */
 
+import type React from 'react';
 import { useMemo } from 'react';
 import {
   AreaChart,
@@ -24,8 +25,9 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+import { LazyMotion, domAnimation, m } from 'framer-motion';
 
-import { COLORS } from '../../constants/design-tokens';
+import { COLORS, SPRING_CONFIGS } from '../../constants/design-tokens';
 import { useReducedMotion } from '../../hooks/useReducedMotion';
 
 import type { ActivityGraphProps, ActivityDataPoint, TimeRange } from '../../types/graphs';
@@ -254,6 +256,168 @@ function EmptyState({ timeRange }: { readonly timeRange: TimeRange }) {
   );
 }
 
+/**
+ * Available time range options for the toggle.
+ */
+const TIME_RANGE_OPTIONS: readonly TimeRange[] = ['1h', '6h', '24h'];
+
+/**
+ * Display labels for each time range option.
+ */
+const TIME_RANGE_LABELS: Record<TimeRange, string> = {
+  '1h': '1h',
+  '6h': '6h',
+  '24h': '24h',
+};
+
+/**
+ * Props for the TimeRangeToggle sub-component.
+ */
+interface TimeRangeToggleProps {
+  /** Currently selected time range. */
+  readonly timeRange: TimeRange;
+  /** Callback when a different time range is selected. */
+  readonly onTimeRangeChange?: (range: TimeRange) => void;
+  /** Whether user prefers reduced motion. */
+  readonly prefersReducedMotion: boolean;
+}
+
+/**
+ * Segmented control for selecting the time range.
+ *
+ * Displays a pill-shaped toggle with 1h, 6h, and 24h options.
+ * Uses spring animation for the selection indicator (respects reduced motion).
+ * Fully keyboard accessible with proper focus states.
+ */
+function TimeRangeToggle({
+  timeRange,
+  onTimeRangeChange,
+  prefersReducedMotion,
+}: TimeRangeToggleProps) {
+  // Calculate the selected option index for positioning the indicator
+  const selectedIndex = TIME_RANGE_OPTIONS.indexOf(timeRange);
+
+  /**
+   * Handle option click.
+   */
+  const handleOptionClick = (range: TimeRange) => {
+    if (onTimeRangeChange !== undefined) {
+      onTimeRangeChange(range);
+    }
+  };
+
+  /**
+   * Handle keyboard navigation within the toggle group.
+   */
+  const handleKeyDown = (event: React.KeyboardEvent, index: number) => {
+    if (onTimeRangeChange === undefined) return;
+
+    let newIndex = index;
+
+    switch (event.key) {
+      case 'ArrowLeft':
+      case 'ArrowUp':
+        event.preventDefault();
+        newIndex = index === 0 ? TIME_RANGE_OPTIONS.length - 1 : index - 1;
+        break;
+      case 'ArrowRight':
+      case 'ArrowDown':
+        event.preventDefault();
+        newIndex = index === TIME_RANGE_OPTIONS.length - 1 ? 0 : index + 1;
+        break;
+      case 'Home':
+        event.preventDefault();
+        newIndex = 0;
+        break;
+      case 'End':
+        event.preventDefault();
+        newIndex = TIME_RANGE_OPTIONS.length - 1;
+        break;
+      default:
+        return;
+    }
+
+    const newRange = TIME_RANGE_OPTIONS[newIndex];
+    if (newRange !== undefined) {
+      onTimeRangeChange(newRange);
+      // Focus the new option
+      const newButton = event.currentTarget.parentElement?.querySelector(
+        `[data-range-index="${newIndex}"]`
+      ) as HTMLButtonElement | null;
+      newButton?.focus();
+    }
+  };
+
+  return (
+    <LazyMotion features={domAnimation}>
+      <div
+        role="radiogroup"
+        aria-label="Select time range"
+        className="relative inline-flex rounded-full p-0.5"
+        style={{
+          backgroundColor: COLORS.background.tertiary,
+        }}
+      >
+        {/* Animated selection indicator */}
+        {prefersReducedMotion ? (
+          <span
+            className="absolute top-0.5 bottom-0.5 rounded-full"
+            style={{
+              backgroundColor: COLORS.accent.orange,
+              width: `calc((100% - 4px) / ${TIME_RANGE_OPTIONS.length})`,
+              left: `calc(2px + (100% - 4px) / ${TIME_RANGE_OPTIONS.length} * ${selectedIndex})`,
+            }}
+            aria-hidden="true"
+          />
+        ) : (
+          <m.span
+            className="absolute top-0.5 bottom-0.5 rounded-full"
+            style={{
+              backgroundColor: COLORS.accent.orange,
+              width: `calc((100% - 4px) / ${TIME_RANGE_OPTIONS.length})`,
+            }}
+            animate={{
+              left: `calc(2px + (100% - 4px) / ${TIME_RANGE_OPTIONS.length} * ${selectedIndex})`,
+            }}
+            transition={SPRING_CONFIGS.standard}
+            aria-hidden="true"
+          />
+        )}
+
+        {/* Toggle options */}
+        {TIME_RANGE_OPTIONS.map((range, index) => {
+          const isSelected = range === timeRange;
+          const isDisabled = onTimeRangeChange === undefined;
+
+          return (
+            <button
+              key={range}
+              type="button"
+              role="radio"
+              aria-checked={isSelected}
+              data-range-index={index}
+              disabled={isDisabled}
+              tabIndex={isSelected ? 0 : -1}
+              onClick={() => handleOptionClick(range)}
+              onKeyDown={(e) => handleKeyDown(e, index)}
+              className="relative z-10 px-3 py-1 text-xs font-medium rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+              style={{
+                color: isSelected ? COLORS.text.primary : COLORS.text.secondary,
+                // Focus ring uses the accent color
+                // @ts-expect-error CSS custom property for focus ring
+                '--tw-ring-color': COLORS.accent.orange,
+                '--tw-ring-offset-color': COLORS.background.tertiary,
+              }}
+            >
+              {TIME_RANGE_LABELS[range]}
+            </button>
+          );
+        })}
+      </div>
+    </LazyMotion>
+  );
+}
+
 // -----------------------------------------------------------------------------
 // Main Component
 // -----------------------------------------------------------------------------
@@ -282,7 +446,11 @@ function EmptyState({ timeRange }: { readonly timeRange: TimeRange }) {
  * />
  * ```
  */
-export function ActivityGraph({ events, timeRange }: ActivityGraphProps) {
+export function ActivityGraph({
+  events,
+  timeRange,
+  onTimeRangeChange,
+}: ActivityGraphProps) {
   // Respect user's reduced motion preference
   const prefersReducedMotion = useReducedMotion();
 
@@ -310,16 +478,25 @@ export function ActivityGraph({ events, timeRange }: ActivityGraphProps) {
 
   return (
     <div
-      className="w-full h-full min-h-[200px]"
+      className="relative w-full h-full min-h-[200px]"
       role="img"
       aria-label={`Activity graph showing event counts over the last ${timeRange === '1h' ? 'hour' : timeRange === '6h' ? '6 hours' : '24 hours'}`}
       style={{ backgroundColor: COLORS.background.secondary }}
     >
+      {/* Time range toggle in top-right corner */}
+      <div className="absolute top-2 right-2 z-10">
+        <TimeRangeToggle
+          timeRange={timeRange}
+          onTimeRangeChange={onTimeRangeChange}
+          prefersReducedMotion={prefersReducedMotion}
+        />
+      </div>
+
       {hasEvents ? (
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
             data={data as ActivityDataPoint[]}
-            margin={{ top: 20, right: 20, left: 0, bottom: 20 }}
+            margin={{ top: 40, right: 20, left: 0, bottom: 20 }}
           >
             {/* Gradient definition for area fill */}
             <defs>
