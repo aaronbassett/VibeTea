@@ -1757,17 +1757,23 @@ pub struct StatsCache {
 
 /// Events emitted by the stats tracker.
 ///
-/// The stats tracker emits two types of events:
-/// - [`TokenUsageEvent`] for each model's token consumption
-/// - [`SessionMetricsEvent`] for global session statistics
+/// The stats tracker emits five types of events (Phase 8-10):
+/// - [`SessionMetricsEvent`] for global session statistics (Phase 8, always emitted)
+/// - [`TokenUsageEvent`] for per-model token consumption (Phase 8, one per model)
+/// - [`ActivityPatternEvent`] for hourly activity distribution (Phase 9, when non-empty)
+/// - [`ModelDistributionEvent`] for usage summary across models (Phase 10, when non-empty)
 ///
 /// Callers can pattern match on this enum to handle each event type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatsEvent {
-    /// Token usage event for a specific model.
-    TokenUsage(TokenUsageEvent),
     /// Global session metrics event.
     SessionMetrics(SessionMetricsEvent),
+    /// Token usage event for a specific model.
+    TokenUsage(TokenUsageEvent),
+    /// Hourly activity distribution event (Phase 9).
+    ActivityPattern(ActivityPatternEvent),
+    /// Model distribution event showing usage breakdown (Phase 10).
+    ModelDistribution(ModelDistributionEvent),
 }
 
 /// Tracker for Claude Code's stats-cache.json file.
@@ -1786,10 +1792,11 @@ impl StatsTracker {
 }
 ```
 
-Key conventions in stats_tracker module (Phase 8):
+Key conventions in stats_tracker module (Phase 8-10):
 - **File watching with debounce**: Uses `notify` crate with 200ms debounce for rapid changes
 - **Retry on parse failure**: Handles file-mid-write issues with configurable retries
-- **Dual event emission**: Emits `SessionMetricsEvent` once per file read, `TokenUsageEvent` per model
+- **5 event types** (Phase 8-10): `SessionMetrics` (always), `TokenUsage` per model, `ActivityPattern` (Phase 9, non-empty only), `ModelDistribution` (Phase 10, non-empty only)
+- **Empty event filtering** (Phase 9-10): ActivityPattern and ModelDistribution only emit when data is non-empty to avoid noisy events
 - **Lenient parsing**: All fields use `#[serde(default)]` for forward compatibility
 - **camelCase JSON mapping**: Uses `#[serde(rename_all = "camelCase")]` to match Claude Code format
 - **Error handling**: Specific errors for watcher init, I/O, parse, and channel failures
@@ -2041,7 +2048,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::types::{SessionMetricsEvent, TokenUsageEvent};
+use crate::types::{ActivityPatternEvent, ModelDistributionEvent, SessionMetricsEvent, TokenUsageEvent};
 use crate::utils::debounce::Debouncer;
 ```
 

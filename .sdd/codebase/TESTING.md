@@ -69,7 +69,7 @@ monitor/src/
     ├── agent_tracker.rs   # Agent spawn detection (Phase 4) with 28+ tests
     ├── skill_tracker.rs   # Skill invocation tracking (Phase 5) with 20+ tests
     ├── todo_tracker.rs    # Todo list monitoring (Phase 6) with 79 tests
-    └── stats_tracker.rs   # Token usage tracking (Phase 8) with tests
+    └── stats_tracker.rs   # Token usage tracking (Phase 8-10) with 40+ tests
 ```
 
 **Test organization strategy**: Co-located `#[cfg(test)] mod tests` blocks at end of each module file.
@@ -410,9 +410,9 @@ Key patterns for Phase 6 todo_tracker:
 - **Privacy verification**: Tests validate that only status counts/metadata captured, not task content
 - **Abandonment logic**: Tests verify the combination of session end + incomplete tasks = abandoned
 
-### Stats Tracker Tests (Phase 8)
+### Stats Tracker Tests (Phase 8-10)
 
-The `stats_tracker` module watches `~/.claude/stats-cache.json` and emits token usage events:
+The `stats_tracker` module watches `~/.claude/stats-cache.json` and emits 5 types of events:
 
 **Pattern: File parsing with retry logic and event emission**
 
@@ -422,89 +422,140 @@ From `monitor/src/trackers/stats_tracker.rs`:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::TempDir;
+    use tokio::time::{sleep, timeout, Duration};
 
-    #[test]
-    fn parse_stats_cache_with_valid_json() {
-        let json_str = r#"{
-            "totalSessions": 150,
-            "totalMessages": 2500,
-            "totalToolUsage": 8000,
-            "longestSession": "00:45:30",
-            "hourCounts": { "0": 10, "1": 5 },
-            "modelUsage": {
-                "claude-sonnet-4-20250514": {
-                    "inputTokens": 1500000,
-                    "outputTokens": 300000,
-                    "cacheReadInputTokens": 800000,
-                    "cacheCreationInputTokens": 100000
-                }
+    const SAMPLE_STATS: &str = r#"{
+        "totalSessions": 150,
+        "totalMessages": 2500,
+        "totalToolUsage": 8000,
+        "longestSession": "00:45:30",
+        "hourCounts": { "9": 50, "14": 100, "17": 75 },
+        "modelUsage": {
+            "claude-sonnet-4-20250514": {
+                "inputTokens": 1500000,
+                "outputTokens": 300000,
+                "cacheReadInputTokens": 800000,
+                "cacheCreationInputTokens": 100000
+            },
+            "claude-opus-4-20250514": {
+                "inputTokens": 500000,
+                "outputTokens": 150000,
+                "cacheReadInputTokens": 200000,
+                "cacheCreationInputTokens": 50000
             }
-        }"#;
-
-        let cache: StatsCache = serde_json::from_str(json_str).expect("should parse");
-        assert_eq!(cache.total_sessions, 150);
-        assert_eq!(cache.total_messages, 2500);
-        assert_eq!(cache.total_tool_usage, 8000);
-    }
-
-    #[test]
-    fn model_tokens_uses_serde_defaults() {
-        // Stats cache JSON may be missing fields; serde(default) handles this
-        let json_str = r#"{ "inputTokens": 1000 }"#;
-        let tokens: ModelTokens = serde_json::from_str(json_str).expect("should parse");
-
-        assert_eq!(tokens.input_tokens, 1000);
-        assert_eq!(tokens.output_tokens, 0);  // default
-        assert_eq!(tokens.cache_read_input_tokens, 0);  // default
-    }
-
-    #[test]
-    fn stats_event_enum_pattern_matching() {
-        let metrics_event = SessionMetricsEvent {
-            total_sessions: 42,
-            total_messages: 1234,
-            total_tool_usage: 567,
-            longest_session: "sess_longest".to_string(),
-        };
-
-        let stats_event = StatsEvent::SessionMetrics(metrics_event.clone());
-
-        match stats_event {
-            StatsEvent::SessionMetrics(evt) => {
-                assert_eq!(evt.total_sessions, 42);
-            }
-            StatsEvent::TokenUsage(_) => panic!("expected SessionMetrics"),
         }
-    }
+    }"#;
 
     #[test]
-    fn token_usage_event_from_model_tokens() {
-        let model_tokens = ModelTokens {
-            input_tokens: 5000,
-            output_tokens: 2500,
-            cache_read_input_tokens: 1000,
-            cache_creation_input_tokens: 500,
-        };
+    fn test_parse_stats_cache_full() {
+        let stats = parse_stats_cache(SAMPLE_STATS).expect("Should parse");
 
-        let event = TokenUsageEvent {
-            model: "claude-3-opus".to_string(),
-            input_tokens: model_tokens.input_tokens,
-            output_tokens: model_tokens.output_tokens,
-            cache_read_tokens: model_tokens.cache_read_input_tokens,
-            cache_creation_tokens: model_tokens.cache_creation_input_tokens,
-        };
+        assert_eq!(stats.total_sessions, 150);
+        assert_eq!(stats.total_messages, 2500);
+        assert_eq!(stats.total_tool_usage, 8000);
+        assert_eq!(stats.longest_session, "00:45:30");
+        assert_eq!(stats.hour_counts.len(), 3);
+        assert_eq!(stats.model_usage.len(), 2);
+    }
 
-        assert_eq!(event.model, "claude-3-opus");
-        assert_eq!(event.input_tokens, 5000);
-        assert_eq!(event.cache_read_tokens, 1000);
+    #[tokio::test]
+    async fn test_emit_stats_events_for_each_model() {
+        let (_temp_dir, stats_path) = create_test_stats_file(SAMPLE_STATS);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        emit_stats_events(&stats_path, &tx)
+            .await
+            .expect("Should emit events");
+
+        // Should receive 5 events (Phase 9-10):
+        // 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage
+        let mut received = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
+            received.push(event);
+        }
+
+        assert_eq!(
+            received.len(),
+            5,
+            "Should emit 1 session metrics + 1 activity pattern + 1 model distribution + 2 token usage events"
+        );
+
+        // Verify SessionMetrics event (first)
+        let session_metrics = match &received[0] {
+            StatsEvent::SessionMetrics(m) => m,
+            _ => panic!("First event should be SessionMetrics"),
+        };
+        assert_eq!(session_metrics.total_sessions, 150);
+
+        // Verify ActivityPattern event (Phase 9)
+        let activity_pattern = received
+            .iter()
+            .find_map(|e| match e {
+                StatsEvent::ActivityPattern(a) => Some(a),
+                _ => None,
+            })
+            .expect("Should have ActivityPattern event");
+        assert_eq!(activity_pattern.hour_counts.len(), 3);
+
+        // Verify ModelDistribution event (Phase 10)
+        let model_dist = received
+            .iter()
+            .find_map(|e| match e {
+                StatsEvent::ModelDistribution(m) => Some(m),
+                _ => None,
+            })
+            .expect("Should have ModelDistribution event");
+        assert_eq!(model_dist.model_usage.len(), 2);
+
+        // Verify TokenUsage events (2 models)
+        let token_events: Vec<_> = received
+            .iter()
+            .filter_map(|e| match e {
+                StatsEvent::TokenUsage(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(token_events.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_emit_session_metrics_only_for_empty_model_usage() {
+        let json = r#"{"totalSessions": 10, "modelUsage": {}}"#;
+        let (_temp_dir, stats_path) = create_test_stats_file(json);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        emit_stats_events(&stats_path, &tx)
+            .await
+            .expect("Should succeed");
+
+        // Should receive only 1 event (session metrics) when model data is empty
+        let mut received = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
+            received.push(event);
+        }
+
+        assert_eq!(received.len(), 1, "Should emit only session metrics when no model data");
+
+        match &received[0] {
+            StatsEvent::SessionMetrics(m) => assert_eq!(m.total_sessions, 10),
+            _ => panic!("Event should be SessionMetrics"),
+        }
     }
 }
 ```
 
-Key patterns for Phase 8 stats_tracker:
+Key patterns for Phase 8-10 stats_tracker:
 - **Lenient JSON parsing**: All fields use `#[serde(default)]` for missing or extra fields
 - **camelCase mapping**: Uses `#[serde(rename_all = "camelCase")]` to match Claude Code JSON format
-- **Event emission pattern**: Tests verify StatsEvent enum matching for both TokenUsage and SessionMetrics
+- **5 event types** (Phase 8-10):
+  - `SessionMetrics`: Global session stats (emitted always)
+  - `TokenUsage`: Per-model token consumption (Phase 8, emitted per model)
+  - `ActivityPattern`: Hourly activity distribution (Phase 9, emitted when non-empty)
+  - `ModelDistribution`: Usage summary across all models (Phase 10, emitted when non-empty)
+  - These are organized in enum `StatsEvent`
+- **Empty event filtering** (Phase 9-10): Activity and Model Distribution events only emit when data is non-empty
 - **Model iteration**: Tests verify events emitted per model in stats cache
 - **File retry logic**: Debouncing and retry handling for mid-write file reads
 - **Error handling**: Tests for file watcher init, parse failures, and channel closure
@@ -609,35 +660,40 @@ fn create_test_todo_file(dir: &TempDir, session_id: &str, content: &str) -> Path
 }
 ```
 
-### Phase 8 Stats Tracker Fixtures
+### Phase 8-10 Stats Tracker Fixtures
 
 ```rust
-fn create_test_stats_cache() -> StatsCache {
-    let mut model_usage = HashMap::new();
-    model_usage.insert(
-        "claude-sonnet-4-20250514".to_string(),
-        ModelTokens {
-            input_tokens: 1500000,
-            output_tokens: 300000,
-            cache_read_input_tokens: 800000,
-            cache_creation_input_tokens: 100000,
+const SAMPLE_STATS: &str = r#"{
+    "totalSessions": 150,
+    "totalMessages": 2500,
+    "totalToolUsage": 8000,
+    "longestSession": "00:45:30",
+    "hourCounts": { "9": 50, "14": 100, "17": 75 },
+    "modelUsage": {
+        "claude-sonnet-4-20250514": {
+            "inputTokens": 1500000,
+            "outputTokens": 300000,
+            "cacheReadInputTokens": 800000,
+            "cacheCreationInputTokens": 100000
         },
-    );
-
-    StatsCache {
-        total_sessions: 150,
-        total_messages: 2500,
-        total_tool_usage: 8000,
-        longest_session: "00:45:30".to_string(),
-        hour_counts: {
-            let mut counts = HashMap::new();
-            counts.insert("0".to_string(), 10);
-            counts.insert("9".to_string(), 25);
-            counts.insert("17".to_string(), 50);
-            counts
-        },
-        model_usage,
+        "claude-opus-4-20250514": {
+            "inputTokens": 500000,
+            "outputTokens": 150000,
+            "cacheReadInputTokens": 200000,
+            "cacheCreationInputTokens": 50000
+        }
     }
+}"#;
+
+fn create_test_stats_file(content: &str) -> (TempDir, PathBuf) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let stats_path = temp_dir.path().join("stats-cache.json");
+    let mut file = std::fs::File::create(&stats_path).expect("Failed to create stats file");
+    file.write_all(content.as_bytes())
+        .expect("Failed to write stats content");
+    file.flush().expect("Failed to flush");
+
+    (temp_dir, stats_path)
 }
 ```
 
@@ -678,7 +734,7 @@ Critical path tests that verify basic functionality:
 - `agent_tracker.rs`: Task tool input parsing works (Phase 4)
 - `skill_tracker.rs`: History entry parsing works (Phase 5)
 - `todo_tracker.rs`: Todo file parsing and abandonment detection works (Phase 6)
-- `stats_tracker.rs`: Stats cache JSON parsing and event creation works (Phase 8)
+- `stats_tracker.rs`: Stats cache JSON parsing and 5 event types emission works (Phase 8-10)
 
 ### Regression Tests
 
@@ -722,7 +778,7 @@ The CI workflow would run:
 
 2. Rust tests (Cargo)
    - Server tests with `--test-threads=1`
-   - Monitor tests with `--test-threads=1` (includes todo_tracker and stats_tracker)
+   - Monitor tests with `--test-threads=1` (includes all trackers and stats_tracker)
    - All tests must pass
 
 3. Code quality checks

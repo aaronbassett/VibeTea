@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 8 Implementation Complete - Enhanced token and session metrics tracking
+**Status**: Phase 10 Implementation Complete - Enhanced activity pattern and model distribution event tracking
 **Generated**: 2026-02-04
 **Last Updated**: 2026-02-04
 
@@ -8,7 +8,7 @@
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, skill tracking, todo tracking, stats tracking, HTTP transmission |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, skill tracking, todo tracking, stats tracking (including activity patterns and model distribution), HTTP transmission |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution and rate limiting |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization and real-time monitoring |
 
@@ -131,7 +131,7 @@
 | Claude Code Sessions | JSONL (JSON Lines) | Privacy-first parsing extracting metadata only |
 | History File | JSONL (JSON Lines) | One JSON object per line, append-only file |
 | Todo Files | JSON Array | Array of todo entries with status fields |
-| Stats Cache | JSON Object | Claude Code stats-cache.json with model usage data |
+| Stats Cache | JSON Object | Claude Code stats-cache.json with model usage data and hour counts |
 | Cryptographic Keys | Base64 + raw bytes | Public keys base64-encoded, private keys raw 32-byte seeds |
 
 ## Build Output
@@ -180,7 +180,7 @@
 - `main.rs` - CLI entry point (init, run commands)
 - `trackers/` - Specialized tracking modules
   - `agent_tracker.rs` - Task tool agent spawn detection
-  - `stats_tracker.rs` - Token and session statistics from stats-cache.json (1279 lines)
+  - `stats_tracker.rs` - Token and session statistics with activity patterns and model distribution (Phase 10: 1400+ lines)
   - `skill_tracker.rs` - Skill/slash command tracking from history.jsonl (1837 lines)
   - `todo_tracker.rs` - Todo list progress and abandonment detection (2345 lines)
   - `file_history_tracker.rs` - Line change tracking for edited files
@@ -197,90 +197,61 @@
 | Client | CDN | Static files | Optimized builds with Brotli compression |
 | Monitor | Local | Native binary | Users download and run locally |
 
-## Phase 8 - Enhanced Token and Session Metrics Tracking (Complete)
+## Phase 10 - Enhanced Activity Pattern and Model Distribution Tracking (Complete)
 
-**Status**: Implementation complete
+**Status**: Implementation complete - ActivityPatternEvent and ModelDistributionEvent emission
 
-### New Module: `monitor/src/trackers/stats_tracker.rs` (1279 lines)
+### Enhanced Module: `monitor/src/trackers/stats_tracker.rs` (1400+ lines)
 
-**Core Types**:
-- `StatsEvent` - Enum with two variants: `SessionMetrics` and `TokenUsage`
-- `SessionMetricsEvent` - Global session statistics from stats-cache.json
-- `TokenUsageEvent` - Per-model token consumption metrics
-- `StatsCache` - Deserialized stats-cache.json structure
-- `ModelTokens` - Per-model token counts and cache metrics
-- `StatsTracker` - File watcher for stats-cache.json
-- `StatsTrackerConfig` - Configuration (debounce interval)
-- `StatsTrackerError` - Comprehensive error types
+**Phase 9 & 10 Additions**:
 
-**Parsing Functions**:
-- `read_stats_with_retry()` - Reads JSON with retry logic (up to 3 attempts)
-- `read_stats()` - Synchronous file read and parse
-- `parse_stats_cache()` - Public helper for testing
-- `emit_stats_events()` - Creates and sends SessionMetricsEvent + TokenUsageEvents
+1. **New Event Types** (in StatsEvent enum):
+   - `ActivityPattern(ActivityPatternEvent)` - Hourly activity distribution
+   - `ModelDistribution(ModelDistributionEvent)` - Per-model usage breakdown
 
-**Event Emission**:
-- Emits `SessionMetricsEvent` once per stats-cache.json read
-- Emits `TokenUsageEvent` for each model in modelUsage section
-- Includes per-model metrics: input tokens, output tokens, cache read tokens, cache creation tokens
-- Includes session metrics: total_sessions, total_messages, total_tool_usage, longest_session
+2. **ActivityPatternEvent**:
+   - Source: `hourCounts` field from stats-cache.json
+   - Field: `hour_counts: HashMap<String, u64>`
+   - Keys: String hours "0" through "23" for JSON reliability
+   - Values: Activity count per hour
+   - Emitted: Once per stats-cache.json read (before token events)
+   - Purpose: Real-time hourly distribution visualization
 
-**File Watching**:
-- Monitors `~/.claude/stats-cache.json` for changes
-- 200ms debounce interval to coalesce rapid writes
-- Handles initial read if file exists on startup
-- Retries JSON parse with 100ms delays (up to 3 attempts)
-- Uses notify crate for cross-platform FSEvents/inotify
+3. **ModelDistributionEvent**:
+   - Source: `modelUsage` field from stats-cache.json
+   - Field: `model_usage: HashMap<String, TokenUsageSummary>`
+   - Maps model names to aggregated token counts
+   - TokenUsageSummary structure:
+     - `input_tokens: u64`
+     - `output_tokens: u64`
+     - `cache_read_tokens: u64`
+     - `cache_creation_tokens: u64`
+   - Emitted: Once per stats-cache.json read (after token events)
+   - Purpose: Model-level usage distribution and cost analysis
+
+4. **Event Emission Order**:
+   - SessionMetricsEvent (global stats)
+   - ActivityPatternEvent (hourly breakdown)
+   - TokenUsageEvent for each model (individual metrics)
+   - ModelDistributionEvent (aggregated by model)
 
 **Main Event Loop Integration** (`monitor/src/main.rs`):
-- StatsTracker initialization during startup (optional, warns on failure)
-- Dedicated channel for stats events: `mpsc::channel::<StatsEvent>`
-- Stats event processing in main select! loop
-- `process_stats_event()` handler converts to Event and queues for sending
-- Graceful handling if stats tracker unavailable
+- Event handlers for new event types added
+- `StatsEvent::ActivityPattern` processing (line 548)
+- `StatsEvent::ModelDistribution` processing (line 559)
+- Conversion to EventPayload for transmission
 
-**Event Types** (`monitor/src/types.rs`):
-- `EventType::SessionMetrics` - New enum variant
-- `EventType::TokenUsage` - New enum variant
-- `EventPayload::SessionMetrics(SessionMetricsEvent)` - Session metrics payload
-- `EventPayload::TokenUsage(TokenUsageEvent)` - Token usage payload
+**Event Types** (`server/src/types.rs`):
+- `EventType::ActivityPattern` - New enum variant
+- `EventType::ModelDistribution` - New enum variant
+- `EventPayload::ActivityPattern(ActivityPatternEvent)` - Activity pattern payload
+- `EventPayload::ModelDistribution(ModelDistributionEvent)` - Model distribution payload
 
-**Test Coverage**: 60+ comprehensive tests covering:
-- JSON parsing (7 tests)
-- Model token parsing (6 tests)
-- Empty/partial stats (3 tests)
-- Malformed JSON handling (3 tests)
-- Stats event emission (3 tests)
-- Token event ordering (2 tests)
-- Debounce timing (2 tests)
-- Parse retry logic (2 tests)
-- Missing/malformed files (3 tests)
-- Tracker creation (2 tests)
-- Initial read behavior (1 test)
-- Refresh method (1 test)
-- Error display (1 test)
-- Struct equality/clone (5 tests)
-- Enum variant tests (3 tests)
-- Field mapping tests (3 tests)
-
-**File Format** (`~/.claude/stats-cache.json`):
-```json
-{
-  "totalSessions": 150,
-  "totalMessages": 2500,
-  "totalToolUsage": 8000,
-  "longestSession": "00:45:30",
-  "hourCounts": { "0": 10, "1": 5, ..., "23": 50 },
-  "modelUsage": {
-    "claude-sonnet-4-20250514": {
-      "inputTokens": 1500000,
-      "outputTokens": 300000,
-      "cacheReadInputTokens": 800000,
-      "cacheCreationInputTokens": 100000
-    }
-  }
-}
-```
+**Test Coverage** (Phase 10):
+- ActivityPatternEvent equality and clone tests
+- ModelDistributionEvent equality and clone tests
+- Event emission tests for both new types
+- Integration tests with stats_tracker emission
 
 ## Key Features & Capabilities
 
@@ -298,6 +269,8 @@
 - Skill/slash command invocation tracking (Phase 5)
 - Todo list progress and abandonment detection (Phase 6)
 - Token usage and session statistics accumulation (Phase 8)
+- Hourly activity pattern tracking (Phase 10)
+- Per-model usage distribution (Phase 10)
 - Real-time activity heatmaps
 
 ### Reliability

@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 8 Implementation Complete - Enhanced token and session metrics tracking
+**Status**: Phase 10 Implementation Complete - Enhanced activity pattern and model distribution event tracking
 **Generated**: 2026-02-04
 **Last Updated**: 2026-02-04
 
@@ -240,15 +240,15 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - Pattern: `<session-uuid>-agent-<session-uuid>.json`
 - Returns Option<String> with first UUID
 
-### Claude Code Stats Cache (Phase 8)
+### Claude Code Stats Cache (Phase 8-10)
 
 **Source**: `~/.claude/stats-cache.json`
-**Format**: JSON object with model usage and session metrics
+**Format**: JSON object with model usage, session metrics, and hourly distribution
 **Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents)
 
-**Stats Tracker Location**: `monitor/src/trackers/stats_tracker.rs` (1279 lines)
+**Stats Tracker Location**: `monitor/src/trackers/stats_tracker.rs` (1400+ lines, Phase 10)
 
-**Purpose**: Track token usage per model and global session statistics
+**Purpose**: Track token usage per model, global session statistics, hourly activity patterns, and model distribution
 
 **Stats Cache File Structure**:
 ```json
@@ -292,11 +292,14 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 **Stats Tracker Module** (`monitor/src/trackers/stats_tracker.rs`):
 
 1. **Core Types**:
-   - `StatsEvent` - Enum with variants: `SessionMetrics`, `TokenUsage`
+   - `StatsEvent` - Enum with variants: `SessionMetrics`, `TokenUsage`, `ActivityPattern` (Phase 10), `ModelDistribution` (Phase 10)
    - `SessionMetricsEvent` - Global session statistics
    - `TokenUsageEvent` - Per-model token consumption
+   - `ActivityPatternEvent` (Phase 10) - Hourly activity distribution
+   - `ModelDistributionEvent` (Phase 10) - Per-model usage breakdown
    - `StatsCache` - Deserialized stats-cache.json
    - `ModelTokens` - Per-model token counts
+   - `TokenUsageSummary` - Aggregated token metrics for each model
    - `StatsTracker` - File watcher for stats-cache.json
    - `StatsTrackerError` - Comprehensive error types
 
@@ -304,11 +307,13 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
    - `read_stats_with_retry()` - Reads with retry logic (up to 3 attempts)
    - `read_stats()` - Synchronous file read and parse
    - `parse_stats_cache()` - Public helper for testing
-   - `emit_stats_events()` - Creates SessionMetricsEvent + TokenUsageEvents
+   - `emit_stats_events()` - Creates all event types and sends them
 
-3. **Event Emission**:
+3. **Event Emission** (Phase 10):
    - Emits `SessionMetricsEvent` once per stats-cache.json read
+   - Emits `ActivityPatternEvent` for hourly distribution (if hour_counts present)
    - Emits `TokenUsageEvent` for each model in modelUsage
+   - Emits `ModelDistributionEvent` with aggregated model metrics (if models present)
    - Per-model events include: input tokens, output tokens, cache read tokens, cache creation tokens
 
 4. **File Watching**:
@@ -319,11 +324,29 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
    - Uses notify crate for cross-platform FSEvents/inotify
    - Graceful degradation if file unavailable
 
-5. **Main Event Loop Integration**:
+5. **Main Event Loop Integration** (Phase 10):
    - StatsTracker initialization during startup (optional, warns on failure)
    - Dedicated channel: `mpsc::channel::<StatsEvent>`
    - Stats event processing in main select! loop
    - `process_stats_event()` handler in main.rs converts to Event
+   - `StatsEvent::ActivityPattern` processing (line 548)
+   - `StatsEvent::ModelDistribution` processing (line 559)
+
+**ActivityPatternEvent** (Phase 10):
+- **Field**: `hour_counts: HashMap<String, u64>`
+- **Keys**: String hours "0" through "23" (for JSON serialization reliability)
+- **Values**: Activity count per hour
+- **Source**: `hourCounts` field from stats-cache.json
+- **Emission**: Once per stats-cache.json read, before TokenUsageEvents
+- **Purpose**: Real-time hourly activity distribution visualization
+
+**ModelDistributionEvent** (Phase 10):
+- **Field**: `model_usage: HashMap<String, TokenUsageSummary>`
+- **Maps**: Model names to aggregated token counts
+- **TokenUsageSummary**: Contains input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+- **Source**: `modelUsage` field from stats-cache.json
+- **Emission**: Once per stats-cache.json read, after TokenUsageEvents
+- **Purpose**: Model-level usage distribution and cost analysis
 
 **Configuration**:
 - Default location: `~/.claude/stats-cache.json`
@@ -332,19 +355,25 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - Max retries: 3 attempts
 - No environment variables required (uses `directories` crate)
 
-**Test Coverage**: 60+ comprehensive tests covering:
+**Test Coverage** (Phase 10): 70+ comprehensive tests covering:
 - JSON parsing (7 tests)
 - Model token parsing (6 tests)
 - Empty/partial stats (3 tests)
 - Malformed JSON handling (3 tests)
 - Stats event emission (3 tests)
+- ActivityPatternEvent tests (5 tests)
+- ModelDistributionEvent tests (5 tests)
+- Token event ordering (2 tests)
 - Debounce timing (2 tests)
 - Parse retry logic (2 tests)
 - Missing/malformed files (3 tests)
 - Tracker creation (2 tests)
 - Initial read behavior (1 test)
 - Refresh method (1 test)
-- Enum/equality tests (10 tests)
+- Error display (1 test)
+- Struct equality/clone (8 tests)
+- Enum variant tests (6 tests)
+- Field mapping tests (3 tests)
 
 ## Privacy & Data Sanitization
 
@@ -391,6 +420,8 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 | TodoProgress | Pass through unchanged (only counts) |
 | SessionMetrics | Pass through unchanged (aggregate data) |
 | TokenUsage | Pass through unchanged (aggregate data) |
+| ActivityPattern | Pass through unchanged (hourly counts) |
+| ModelDistribution | Pass through unchanged (model usage) |
 | Summary | Text replaced with "Session ended" |
 | Error | Pass through unchanged |
 
@@ -404,9 +435,11 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - No task content or descriptions transmitted
 - Counts are aggregate, non-sensitive metadata
 
-**Stats Privacy**:
+**Stats Privacy** (Phase 10):
 - SessionMetricsEvent contains only aggregate counts
+- ActivityPatternEvent contains hourly distribution (non-sensitive)
 - TokenUsageEvent contains per-model consumption metrics
+- ModelDistributionEvent contains model-level aggregation
 - No per-session data or user information
 - Cache metrics are transparent usage data
 
@@ -472,7 +505,7 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 
 ## External APIs
 
-There are no external third-party API integrations in Phase 8. The system is self-contained:
+There are no external third-party API integrations in Phase 10. The system is self-contained:
 - All data sources are local files
 - All services are internal (Monitor, Server, Client)
 - No SaaS dependencies or external service calls
@@ -618,7 +651,7 @@ There are no external third-party API integrations in Phase 8. The system is sel
 - `~/.claude/projects/**/*.jsonl` - Session events
 - `~/.claude/history.jsonl` - Skill invocations
 - `~/.claude/todos/*.json` - Todo lists
-- `~/.claude/stats-cache.json` - Token/session statistics
+- `~/.claude/stats-cache.json` - Token/session statistics with activity patterns and model distribution
 
 **Mechanism**: `notify` crate file system events
 **Update Strategy**: Incremental line reading with position tracking (sessions/history), file debouncing (todos/stats)
@@ -652,15 +685,17 @@ There are no external third-party API integrations in Phase 8. The system is sel
 8. TodoProgressEvent emitted via mpsc channel
 9. Changes debounced at 100ms to coalesce rapid writes
 
-**Stats File Monitoring** (Phase 8):
+**Stats File Monitoring** (Phase 8-10):
 1. StatsTracker initialized with stats-cache.json path
 2. Watcher monitors `~/.claude/` directory
 3. File creation/modification detected
 4. File content read as JSON object
 5. SessionMetricsEvent created and emitted
-6. TokenUsageEvent created for each model
-7. Events emitted via mpsc channel
-8. Changes debounced at 200ms to coalesce rapid writes
+6. ActivityPatternEvent created and emitted (Phase 10)
+7. TokenUsageEvent created for each model
+8. ModelDistributionEvent created and emitted (Phase 10)
+9. Events emitted via mpsc channel
+10. Changes debounced at 200ms to coalesce rapid writes
 
 **Efficiency Features**:
 - Position tracking prevents re-reading (sessions/history)
@@ -751,7 +786,7 @@ Event {
 }
 ```
 
-**Supported Event Types** (Phase 8):
+**Supported Event Types** (Phase 10):
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `session` | sessionId, action, project | Session lifecycle |
@@ -763,6 +798,8 @@ Event {
 | `todo_progress` | sessionId, completed, in_progress, pending, abandoned | Todo tracking |
 | `session_metrics` | total_sessions, total_messages, total_tool_usage, longest_session | Global stats |
 | `token_usage` | model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens | Per-model consumption |
+| `activity_pattern` | hour_counts | Hourly activity distribution (Phase 10) |
+| `model_distribution` | model_usage | Model-level usage breakdown (Phase 10) |
 | `summary` | sessionId, summary | Session end |
 | `error` | sessionId, category | Error reporting |
 
@@ -783,7 +820,7 @@ Event {
 - Environment-based filtering
 - Structured context in logs
 
-**No External Service Integration** (Phase 8):
+**No External Service Integration** (Phase 10):
 - Logs to stdout/stderr only
 - Future: Integration with logging services (Datadog, ELK)
 
@@ -791,7 +828,7 @@ Event {
 
 ### Cryptographic Authentication
 
-**Ed25519 Signatures** (Phase 8):
+**Ed25519 Signatures** (Phase 10):
 - Library: `ed25519-dalek` crate (version 2.1)
 - Key generation: 32-byte seed via OS RNG
 - Signature verification: Base64-encoded public keys per source
@@ -821,11 +858,13 @@ Event {
 - Abandonment flag is only metadata
 - Session correlation via session_id only
 
-**Stats Cache** (Phase 8):
+**Stats Cache** (Phase 8-10):
 - Only aggregate statistics transmitted
 - No per-session or per-user data
 - Model names and consumption metrics only
 - Cache metrics for transparency
+- Hourly patterns (no individual session mapping)
+- Model distribution (no confidential usage details)
 
 ### Data in Transit
 

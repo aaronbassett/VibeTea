@@ -10,205 +10,175 @@
 
 | Method | Implementation | Configuration |
 |--------|----------------|---------------|
-| Ed25519 Signature | ed25519_dalek with RFC 8032 strict verification | `server/src/auth.rs` |
-| Bearer Token | Constant-time comparison for WebSocket clients | `server/src/auth.rs` |
+| Monitor API | Ed25519 signature verification (RFC 8032 strict) | `server/src/auth.rs` |
+| WebSocket Client | Bearer token with constant-time comparison | `server/src/auth.rs` |
 
 ### Token Configuration
 
 | Setting | Value | Location |
 |---------|-------|----------|
-| Token type | Bearer token for WebSocket subscriptions | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Signature algorithm | Ed25519 (RFC 8032 compliant) | `ed25519_dalek` crate |
-| Signature encoding | Base64 standard encoding | `X-Signature` header |
-| Public key encoding | Base64 standard (32-byte keys) | `VIBETEA_PUBLIC_KEYS` env var |
-| Constant-time comparison | `subtle::ConstantTimeEq` | `validate_token()` function |
+| Signature algorithm | Ed25519 (RFC 8032 compliant via `verify_strict()`) | `server/src/auth.rs:231` |
+| Signing method | `ed25519_dalek::VerifyingKey::verify_strict()` | `server/src/auth.rs:45,230-232` |
+| Token comparison | Constant-time via `subtle::ConstantTimeEq` | `server/src/auth.rs:290` |
+| Signature encoding | Base64 standard | `server/src/routes.rs:874` |
+| Public key encoding | Base64 standard (32 bytes) | `server/src/config.rs:48-49` |
 
 ### Monitor Authentication Flow
-
-The authentication flow for event submission (POST /events):
 
 1. Monitor signs request body with Ed25519 private key
 2. Sends `X-Source-ID` header with monitor identifier
 3. Sends `X-Signature` header with base64-encoded signature
-4. Server verifies signature against registered public key
-5. Validates event source matches authenticated source ID
+4. Server verifies signature using registered public key
+5. Server validates event.source matches X-Source-ID header
 
 ### Session Management
 
 | Setting | Value |
 |---------|-------|
-| WebSocket authentication | Query parameter token validation |
+| WebSocket authentication | Query parameter token validation (`?token=xxx`) |
 | Token validation | Case-sensitive, constant-time comparison |
-| Token format | Any string (configurable via environment) |
 | Session duration | Determined by WebSocket connection lifetime |
+| Idle timeout | TCP keepalive (OS-level) |
 
 ## Authorization
 
 ### Authorization Model
 
-| Model | Description | Implementation |
-|-------|-------------|-----------------|
-| Source-based | Events attributed to authenticated source ID | Event source field must match X-Source-ID |
-| Token-based | WebSocket clients require valid subscriber token | Query parameter token validation |
-| No RBAC | No role-based or attribute-based access control | All authenticated sources have equal permissions |
+| Model | Description |
+|-------|-------------|
+| Source-based access control | Each monitor has unique `source_id` with registered Ed25519 public key |
+| Token-based access control | WebSocket clients authenticate with shared subscriber token |
+| Event source validation | Event payload source must match authenticated X-Source-ID header |
 
 ### Permission Enforcement Points
 
-| Location | Pattern | Example |
-|----------|---------|---------|
-| Event ingestion | Source ID validation | `post_events()` - `routes.rs:348-365` |
-| Event submission | Signature verification | `post_events()` - `routes.rs:293-307` |
-| WebSocket connection | Token validation | `get_ws()` - `routes.rs:458-491` |
-| Rate limiting | Per-source limits | `RateLimiter` - `rate_limit.rs` |
+| Location | Pattern | Implementation |
+|----------|---------|-----------------|
+| Event ingestion | Signature verification | `server/src/routes.rs:293-307` |
+| Event source validation | Cross-check header vs payload | `server/src/routes.rs:348-365` |
+| WebSocket connection | Token validation | `server/src/routes.rs:458-491` |
+| Rate limiting | Per-source token bucket | `server/src/rate_limit.rs` |
 
 ## Input Validation
 
 ### Validation Strategy
 
-| Layer | Method | Library |
-|-------|--------|---------|
-| API request | JSON schema validation | `serde` with custom types |
-| Headers | String length and content checks | Manual validation in routes |
-| Signatures | Base64 format and cryptographic verification | `ed25519_dalek` |
-| Event payload | Serde deserialization with typed fields | `Event` struct in `types.rs` |
-| Todo files | JSON array parsing with entry validation | `serde` with lenient fallback parsing in `todo_tracker.rs` |
-| Stats cache | JSON parsing with retry on failure | `serde` with graceful fallback in `stats_tracker.rs` |
+| Layer | Method | Implementation |
+|-------|--------|-----------------|
+| JSON deserialization | Type-safe serde deserialization | `server/src/routes.rs:329-342` |
+| Header validation | Non-empty string checks | `server/src/routes.rs:263-290` |
+| Signature verification | Base64 decode + Ed25519 verification | `server/src/auth.rs:192-233` |
+| Request body | Size limit (1 MB max) | `server/src/routes.rs:72,182` |
+| Public key format | Base64 decode + 32-byte length validation | `server/src/auth.rs:204-211` |
 
 ### Sanitization
 
-| Data Type | Sanitization | Location |
-|-----------|--------------|----------|
-| JSON payloads | Serde deserialization (type-safe) | `routes.rs:329-342` |
-| Request body | Size limit (1 MB max) | `routes.rs:72` and `DefaultBodyLimit` |
-| Headers | Non-empty validation | `routes.rs:263-273` (X-Source-ID), `277-290` (X-Signature) |
-| Base64 data | Decoding validation | `auth.rs:204-206`, `218-220` |
-| Todo content | Never transmitted (metadata only) | `monitor/src/trackers/todo_tracker.rs:45-48` |
-| Stats cache file | Parsed with retries; invalid entries silently skipped | `monitor/src/trackers/stats_tracker.rs:175-207` |
+| Data Type | Method | Location |
+|-----------|--------|----------|
+| File paths in tools | Basename extraction (no full paths) | `monitor/src/privacy.rs:445-454` |
+| Sensitive tool context | Bash/Grep/Glob patterns stripped | `monitor/src/privacy.rs:380-382` |
+| Source code content | Tool context redacted | `monitor/src/privacy.rs:378-401` |
+| Prompts/responses | Completely stripped from payloads | `monitor/src/privacy.rs:352-355` |
+| Shell commands | Never transmitted | `monitor/src/privacy.rs:63` (Bash in SENSITIVE_TOOLS) |
+| Search patterns | Never transmitted | `monitor/src/privacy.rs:63` (Grep in SENSITIVE_TOOLS) |
 
 ## Data Protection
 
 ### Sensitive Data Handling
 
-| Data Type | Protection Method | Storage |
-|-----------|-------------------|---------|
-| Ed25519 private keys (Monitor) | Raw 32-byte seed in file (mode 0600) | `~/.vibetea/key.priv` on monitor |
-| Ed25519 public keys | Base64-encoded, registered in config | `VIBETEA_PUBLIC_KEYS` env var |
-| Subscriber token | Stored in environment variable | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Event payloads | Not encrypted at rest | In-memory broadcasting only |
-| Signatures | Base64-encoded, verified against message | Not stored |
-| Todo task content | Never extracted or transmitted | Files read locally, only counts emitted |
-| Todo file paths | Validated with UUID pattern matching | `monitor/src/trackers/todo_tracker.rs:504-506` |
-| Stats cache file | Read-only access; metrics aggregated | `monitor/src/trackers/stats_tracker.rs:33-86` |
+| Data Type | Protection Method | Location |
+|-----------|-------------------|----------|
+| Ed25519 private keys | File storage (file mode 0600 by user) | `monitor/src/config.rs:76` |
+| Ed25519 public keys | Base64-encoded in environment variable | `server/src/config.rs:48-49` |
+| Bearer token | Environment variable, constant-time comparison | `server/src/auth.rs:269-294` |
+| Source code | Privacy pipeline strips before transmission | `monitor/src/privacy.rs:222-372` |
+| Event payloads | In-memory broadcasting only (no persistence) | `server/src/broadcast.rs` |
 
 ### Cryptography
 
-| Type | Algorithm | Key Management |
-|------|-----------|----------------|
-| Authentication (Monitor) | Ed25519 (RFC 8032 strict) | Public keys from `VIBETEA_PUBLIC_KEYS` |
-| Authentication (WebSocket) | Constant-time string comparison | `VIBETEA_SUBSCRIBER_TOKEN` env var |
-| Transport security | HTTPS/TLS (application-agnostic) | Configured at load balancer/reverse proxy |
+| Type | Algorithm | Implementation | Key Management |
+|------|-----------|-----------------|-----------------|
+| Signature verification | Ed25519 | `ed25519_dalek::VerifyingKey::verify_strict()` | Public keys from `VIBETEA_PUBLIC_KEYS` |
+| Token comparison | Constant-time | `subtle::ConstantTimeEq` | `VIBETEA_SUBSCRIBER_TOKEN` env var |
+| Transport security | HTTPS/TLS 1.3 | Configured at reverse proxy | Deployment responsibility |
 
 ## Privacy Controls
 
-### Agent Tracking Privacy
+### Privacy Pipeline (Monitor)
+
+The monitor implements a comprehensive privacy pipeline to ensure no sensitive data is transmitted:
 
 | Aspect | Implementation | Location |
 |--------|----------------|----------|
-| Task tool extraction | Metadata only (no prompts) | `monitor/src/trackers/agent_tracker.rs` |
-| Extracted fields | `subagent_type`, `description` | `TaskToolInput` struct |
-| Privacy-first principle | `prompt` field intentionally omitted | Line 75, struct definition |
-| Events transmitted | Contain only agent_type and description | `monitor/src/types.rs:64` (AgentSpawnEvent) |
+| Path sanitization | Full paths reduced to basenames | `monitor/src/privacy.rs:445-454` |
+| Sensitive tool stripping | Bash, Grep, Glob, WebSearch, WebFetch context set to None | `monitor/src/privacy.rs:55-63,380-382` |
+| Extension allowlist | Optional filter via `VIBETEA_BASENAME_ALLOWLIST` | `monitor/src/privacy.rs:136-158` |
+| Summary text redaction | All summary text replaced with "Session ended" | `monitor/src/privacy.rs:352-355` |
+| Enhanced events pass-through | Activity, Agent, SessionMetrics, TokenUsage, etc. transmit as-is | `monitor/src/privacy.rs:326-371` |
 
-### Skill Tracking Privacy (Phase 5)
+### Recent Privacy Enhancements (Phase 9-10)
 
-| Aspect | Implementation | Location |
-|--------|----------------|----------|
-| History file monitoring | Watches `~/.claude/history.jsonl` for skill invocations | `monitor/src/trackers/skill_tracker.rs` |
-| Data extraction | Skill name, project path, timestamp, session ID | `SkillInvocationEvent` struct |
-| Command arguments excluded | Slash command args not transmitted | `skill_tracker.rs:56-68` (extract_skill_name function) |
-| Privacy-first design | Only basename metadata captured, no full paths | `skill_tracker.rs:22-25` |
-| Append-only processing | Tail-like behavior tracks file position | `skill_tracker.rs:81, 480` (offset tracking) |
-| Byte offset tracking | AtomicU64 with SeqCst ordering prevents re-reading | `skill_tracker.rs:405-413` |
+| Event Type | Privacy Status | Location |
+|-----------|----------------|----------|
+| ActivityPatternEvent | Hourly activity counts only (no code/content) | `monitor/src/trackers/stats_tracker.rs:199` |
+| ModelDistributionEvent | Per-model usage breakdown only (no prompts) | `monitor/src/trackers/stats_tracker.rs:200` |
+| SessionMetricsEvent | Aggregated session counts (no sensitive content) | `monitor/src/trackers/stats_tracker.rs:198` |
+| TokenUsageEvent | Token counts by model (no user data) | `monitor/src/trackers/stats_tracker.rs:197` |
 
-### Todo Tracking Privacy (Phase 6)
-
-| Aspect | Implementation | Location |
-|--------|----------------|----------|
-| Todo file monitoring | Watches `~/.claude/todos/` for file changes | `monitor/src/trackers/todo_tracker.rs:587-609` |
-| Data extraction | Task status counts only (completed, in_progress, pending) | `TodoProgressEvent` struct |
-| Task content excluded | Task descriptions never extracted or transmitted | `todo_tracker.rs:45-48` (privacy documentation) |
-| Filename validation | UUID pattern matching prevents arbitrary files | `todo_tracker.rs:504-506` |
-| Lenient parsing | Handles partially written files gracefully | `todo_tracker.rs:422-436` (parse_todo_file_lenient) |
-| Session tracking | Correlates with summary events for abandonment detection | `todo_tracker.rs:549-584` (abandonment detection) |
-| Metadata only principle | Only status counts and abandonment flag transmitted | `todo_tracker.rs:508-547` (event creation) |
-
-### Stats Tracking Privacy (Phase 8)
-
-| Aspect | Implementation | Location |
-|--------|----------------|----------|
-| Stats cache monitoring | Watches `~/.claude/stats-cache.json` for changes | `monitor/src/trackers/stats_tracker.rs:274-295` |
-| Data extraction | Aggregated metrics only (session counts, token usage by model) | `SessionMetricsEvent`, `TokenUsageEvent` structs |
-| No file content exposed | Only parsed metrics transmitted, not raw file contents | `stats_tracker.rs:175-207` (parse and emit) |
-| Metrics aggregation | Global stats (total sessions, total messages, tool usage) | `SessionMetricsEvent` - `types.rs:108-117` |
-| Per-model token tracking | Token usage breakdown by model name | `TokenUsageEvent` - `types.rs:92-103` |
-| Retry logic | Graceful handling when file is being written | `stats_tracker.rs:222-254` (with_retry function) |
-| Metadata only principle | Only aggregated counts transmitted, never user code or content | `types.rs:92-117` (StatsEvent variants) |
-
-### Data Handling Philosophy
-
-- **Privacy-first design**: All trackers extract only non-sensitive metadata
-- **Metadata extraction**: Only status counts, skill names, agent types, token aggregates - never content, prompts, or arguments
-- **No content logging**: Task content, prompts, command arguments, and file contents are never extracted or transmitted
-- **Type-safe privacy**: Privacy enforcement is built into struct definitions, not runtime validation
-- **File validation**: Strict filename pattern matching prevents reading unintended files
-- **Graceful degradation**: Lenient parsing continues on invalid entries rather than failing completely
-- **Aggregation approach**: Stats are aggregated into summary metrics before transmission
+All new events follow existing privacy patterns: metadata only, no sensitive content.
 
 ## Rate Limiting
 
-| Endpoint | Limit | Window | Per |
-|----------|-------|--------|-----|
-| POST /events | 100 requests/second | Rolling window | Source ID |
-| GET /ws | No limit | N/A | No rate limiting on WebSocket connections |
-| GET /health | No limit | N/A | No rate limiting on health checks |
+| Endpoint | Limit | Window | Tracked By |
+|----------|-------|--------|-----------|
+| POST /events | 100 requests/second | Per-source rolling | `X-Source-ID` header |
+| GET /ws | No rate limit | N/A | N/A |
+| GET /health | No rate limit | N/A | N/A |
 
-### Rate Limiter Implementation
+### Rate Limiter Details
 
 - **Algorithm**: Token bucket with per-source tracking
-- **Rate**: 100 tokens/second (configurable)
-- **Burst capacity**: 100 tokens (configurable)
+- **Rate**: 100 tokens/second (configurable via `RateLimiter::new()`)
+- **Burst**: 100 tokens initial capacity (configurable)
 - **Cleanup**: Stale entries removed after 60 seconds of inactivity
-- **Memory**: In-memory HashMap with RwLock for thread safety
-- **Configuration**: `RateLimiter::new()` in `rate_limit.rs`
+- **Implementation**: Thread-safe `RwLock<HashMap>` with background cleanup task
+- **Retry-After**: Returns `Retry-After` header on 429 response
 
 ## Secrets Management
 
 ### Environment Variables
 
-| Category | Variable | Required | Format |
-|----------|----------|----------|--------|
-| Public keys | `VIBETEA_PUBLIC_KEYS` | Yes (if auth enabled) | `source1:pubkey1,source2:pubkey2` (comma-separated) |
-| Token | `VIBETEA_SUBSCRIBER_TOKEN` | Yes (if auth enabled) | Any string value |
-| Port | `PORT` | No | Numeric, default 8080 |
-| Auth bypass | `VIBETEA_UNSAFE_NO_AUTH` | No | "true" to disable auth (dev only) |
-| Logging | `RUST_LOG` | No | Log level filter (default: info) |
-| Privacy allowlist | `VIBETEA_BASENAME_ALLOWLIST` | No | Comma-separated file extensions (e.g., `.rs,.ts,.md`) |
+| Variable | Required | Format | Usage |
+|----------|----------|--------|-------|
+| `VIBETEA_PUBLIC_KEYS` | Yes (if auth enabled) | `source1:pubkey1,source2:pubkey2` | Monitor public keys |
+| `VIBETEA_SUBSCRIBER_TOKEN` | Yes (if auth enabled) | Any string | WebSocket client token |
+| `PORT` | No | Numeric (default: 8080) | HTTP server port |
+| `VIBETEA_UNSAFE_NO_AUTH` | No | "true" to disable | Dev-only auth bypass |
+| `RUST_LOG` | No | Log filter (default: info) | Logging level |
+| `VIBETEA_BASENAME_ALLOWLIST` | No | `.rs,.ts,.md` comma-separated | Privacy extension filter |
 
 ### Secrets Storage
 
 | Environment | Method |
 |-------------|--------|
-| Development | Environment variables (set directly or via shell) |
-| CI/CD | GitHub Actions secrets or equivalent |
-| Production | Environment variable injection at deployment time |
-| Monitor keys | Stored locally in `~/.vibetea/` with 0600 permissions |
+| Development | Environment variables (shell/Docker) |
+| CI/CD | GitHub Actions secrets or vault |
+| Production | Container orchestrator (Kubernetes, AWS Secrets Manager) |
+| Monitor local | File-based key storage in `~/.vibetea/` |
+
+### Configuration Validation
+
+- Public key format: Base64 decode + 32-byte Ed25519 key validation
+- Empty token rejection: `validate_token()` rejects empty strings
+- Startup validation: Server fails fast on missing required secrets
+- Warning logging: `VIBETEA_UNSAFE_NO_AUTH=true` logged as warning
 
 ## Security Headers
 
-VibeTea server does not directly manage security headers. These must be configured at the reverse proxy/load balancer level:
+VibeTea server does not directly set security headers. Configure at reverse proxy/load balancer:
 
-| Header | Recommended Value | Purpose |
-|--------|-------------------|---------|
+| Header | Recommended | Purpose |
+|--------|-------------|---------|
 | Content-Security-Policy | `default-src 'self'` | XSS protection |
 | X-Frame-Options | `DENY` | Clickjacking protection |
 | X-Content-Type-Options | `nosniff` | MIME sniffing protection |
@@ -216,32 +186,57 @@ VibeTea server does not directly manage security headers. These must be configur
 
 ## CORS Configuration
 
-VibeTea is a WebSocket/HTTP API server designed for backend-to-backend communication. CORS configuration should be set at the reverse proxy level based on:
+VibeTea is designed for backend-to-backend communication. Configure CORS at reverse proxy level:
 
 | Setting | Recommendation |
 |---------|-----------------|
-| Allowed origins | Restrict to known monitor/client sources |
+| Allowed origins | Restrict to known client IPs |
 | Allowed methods | POST (events), GET (WebSocket, health) |
 | Allowed headers | Content-Type, X-Source-ID, X-Signature |
-| Credentials | Not applicable (token in query param or env var) |
+| Credentials | Not applicable (auth via headers) |
 
 ## Audit Logging
 
-| Event | Logged Data | Location |
-|-------|-------------|----------|
-| Signature verification failure | Source ID, error type | `routes.rs:294` (warn level) |
-| Rate limit exceeded | Source ID, retry_after | `routes.rs:314-318` (info level) |
-| Invalid event format | Source ID, parse error | `routes.rs:332` (debug level) |
-| Source mismatch | Authenticated source, event source | `routes.rs:350-355` (warn level) |
-| WebSocket connection | Filter configuration | `routes.rs:494-497` (info level) |
-| WebSocket disconnection | N/A | `routes.rs:578` (info level) |
-| Configuration errors | Error message | `main.rs:53` (error level) |
-| Server startup | Port, auth mode, public key count | `main.rs:74-79` (info level) |
-| File watcher initialization | History file path | `skill_tracker.rs:474-476` (info level) |
-| Todo watcher initialization | Todos directory path | `todo_tracker.rs:712-716` (info level) |
-| Stats watcher initialization | Stats cache file path | `stats_tracker.rs:306-310` (info level) |
+| Event | Logged Data | Level | Location |
+|-------|-------------|-------|----------|
+| Signature verification failure | source, error type | warn | `routes.rs:294` |
+| Rate limit exceeded | source, retry_after_secs | info | `routes.rs:314-318` |
+| Invalid event format | source, parse error | debug | `routes.rs:332` |
+| Event source mismatch | authenticated source, event source | warn | `routes.rs:350-355` |
+| WebSocket connection | filter parameters | info | `routes.rs:494-497` |
+| Unknown source | source_id attempted | warn | `routes.rs:294` |
+| Configuration error | error details | error | `main.rs:53` |
+| Server startup | port, auth mode, key count | info | `main.rs:74-79` |
 
-All logging is structured JSON output via `tracing` crate.
+All logging is structured JSON via `tracing` crate, configurable via `RUST_LOG`.
+
+## Security Control Summary
+
+### Strengths
+
+1. **Ed25519 RFC 8032 Strict Verification**: `verify_strict()` ensures RFC 8032 compliance, preventing signature malleability attacks
+2. **Constant-Time Token Comparison**: `subtle::ConstantTimeEq` prevents timing attacks on token validation
+3. **Privacy-First Architecture**: Comprehensive privacy pipeline ensures no code, prompts, or commands transmitted
+4. **Per-Source Rate Limiting**: Token bucket algorithm with independent limits per source
+5. **Configuration Validation**: Required secrets validated on startup with fast failure
+6. **Type-Safe JSON Parsing**: Serde deserialization enforces event schema
+7. **Source Validation**: Event.source field cross-checked against X-Source-ID header
+8. **Request Size Limits**: 1 MB maximum body size prevents resource exhaustion
+9. **Structured Logging**: Production-ready JSON logging with configurable levels
+10. **File Watcher Security**: UUID pattern matching prevents reading unintended files in todo tracker
+
+### Attack Vectors & Mitigations
+
+| Vector | Risk | Mitigation |
+|--------|------|-----------|
+| Signature forgery | High | Ed25519 is cryptographically secure; `verify_strict()` prevents malleability |
+| Timing attacks on token | Medium | Constant-time comparison via `subtle::ConstantTimeEq` |
+| Token guessing | Low | No rate limiting on WebSocket auth attempts (deployment concern) |
+| Malformed signatures | Low | Base64 validation + length checks before crypto operations |
+| Source spoofing | Low | Cross-validation of X-Source-ID header and event.source field |
+| Resource exhaustion | Low | Rate limiting (100 req/sec per source) + 1 MB body size limit |
+| Privacy breach via events | Low | Privacy pipeline strips all sensitive data before transmission |
+| Configuration misconfiguration | Medium | Startup validation fails fast; warnings for unsafe mode |
 
 ---
 

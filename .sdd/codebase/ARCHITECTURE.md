@@ -36,7 +36,7 @@ The system follows a **hub-and-spoke architecture** where the Server acts as a c
   - Cryptographic signing of events (Ed25519)
   - Event buffering and exponential backoff retry
   - Graceful shutdown with event flushing
-  - Enhanced tracking of specialized events (agent spawns, skill invocations, token usage, session metrics, todo progress, file changes)
+  - Enhanced tracking of specialized events (agent spawns, skill invocations, token usage, session metrics, activity patterns, model distribution, todo progress, file changes)
 - **Dependencies**:
   - Monitors depend on **Server** (via HTTP POST to `/events`)
   - Monitors depend on local Claude Code installation (`~/.claude/`)
@@ -80,7 +80,7 @@ Claude Code → Monitor → Server → Client:
 1. JSONL line written to `~/.claude/projects/<uuid>.jsonl` or skill invocation to `~/.claude/history.jsonl` or todo change to `~/.claude/todos/<uuid>-agent-<uuid>.json` or stats update to `~/.claude/stats-cache.json`
 2. File watcher detects change via inotify/FSEvents
 3. Parser extracts event metadata (no code/prompts)
-4. Enhanced trackers extract specialized event types (agent spawns, skill invocations, token usage, session metrics, todo progress, file changes)
+4. Enhanced trackers extract specialized event types (agent spawns, skill invocations, token usage, session metrics, activity patterns, model distribution, todo progress, file changes)
 5. Privacy pipeline sanitizes payload
 6. Sender signs with Ed25519, buffers, and retries on failure
 7. POST /events sent to Server with X-Source-ID and X-Signature headers
@@ -90,7 +90,7 @@ Claude Code → Monitor → Server → Client:
 11. Zustand store adds event (FIFO eviction at 1000 limit)
 12. React renders updated event list, session overview, heatmap
 
-### Enhanced Tracking Flow (Phase 4-8)
+### Enhanced Tracking Flow (Phase 4-10)
 
 Five parallel tracking pipelines within Monitor:
 
@@ -120,7 +120,7 @@ SkillTracker.process_file_changes()
 Main event loop: sender.queue() + sender.flush()
 ```
 
-**Pipeline 3: Stats Tracker (stats-cache.json → SessionMetricsEvent + TokenUsageEvent) (Phase 8)**
+**Pipeline 3: Stats Tracker (stats-cache.json → SessionMetricsEvent + TokenUsageEvent + ActivityPatternEvent + ModelDistributionEvent) (Phase 8-10)**
 ```
 stats-cache.json → StatsTracker
   ↓
@@ -128,9 +128,11 @@ WatchEvent (Create/Modify via notify crate)
   ↓
 StatsTracker.process_file_changes() [debounced 200ms]
   ├→ read_stats_with_retry() (JSON deserialization with 3 retries)
-  ├→ emit_stats_events() [emits BOTH event types]
+  ├→ emit_stats_events() [emits FOUR event types]:
   │  ├→ SessionMetricsEvent (once per file read: total_sessions, total_messages, total_tool_usage, longest_session)
-  │  └→ TokenUsageEvent (once per model: model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+  │  ├→ TokenUsageEvent (once per model: model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
+  │  ├→ ActivityPatternEvent (Phase 9: hourly activity distribution with hour_counts 0-23)
+  │  └→ ModelDistributionEvent (Phase 10: per-model usage summary with model_usage mapping)
   ↓
 Main event loop: sender.queue()
 ```
@@ -173,7 +175,7 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
    - `SessionParser` extracts timestamp, tool name, action
    - `agent_tracker` detects Task tool_use and extracts agent metadata
    - `SkillTracker` detects history.jsonl changes and parses skill invocations
-   - `StatsTracker` detects stats-cache.json changes and parses both session metrics and token usage
+   - `StatsTracker` detects stats-cache.json changes and parses session metrics, token usage, activity patterns, and model distribution
    - `TodoTracker` detects todos/ changes and parses todo progress
    - `FileHistoryTracker` detects file changes and tracks line deltas
    - `PrivacyPipeline` removes sensitive fields (code, prompts, task content)
@@ -231,14 +233,16 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 | Interface | Purpose | Implementations |
 |-----------|---------|-----------------|
 | `Event` | Core event struct with type + payload | JSON serialization via `serde` |
-| `EventPayload` | Tagged union of event variants | Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, TodoProgress, SessionMetrics, FileChange, ProjectActivity, etc. |
-| `EventType` | Enum discriminator | 14+ variants (Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution, TodoProgress, FileChange, ProjectActivity) |
+| `EventPayload` | Tagged union of event variants | Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, TodoProgress, SessionMetrics, ActivityPattern, ModelDistribution, FileChange, ProjectActivity, etc. |
+| `EventType` | Enum discriminator | 15+ variants (Session, Activity, Tool, Agent, Summary, Error, AgentSpawn, SkillInvocation, TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution, TodoProgress, FileChange, ProjectActivity) |
 | `ParsedEventKind` | Parser output enum | SessionStarted, Activity, ToolStarted, ToolCompleted, Summary, AgentSpawned |
 | `AgentSpawnEvent` | Task tool agent spawn metadata | session_id, agent_type, description, timestamp |
 | `SkillInvocationEvent` | Skill/slash command invocation metadata | session_id, skill_name, project, timestamp |
 | `TokenUsageEvent` | Per-model token consumption | model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens |
 | `SessionMetricsEvent` | Global session statistics (Phase 8) | total_sessions, total_messages, total_tool_usage, longest_session |
-| `StatsEvent` | Union of stats tracker events (Phase 8) | TokenUsage, SessionMetrics |
+| `ActivityPatternEvent` | Hourly activity distribution (Phase 9) | hour_counts (HashMap<String, u64> for hours 0-23) |
+| `ModelDistributionEvent` | Per-model usage breakdown (Phase 10) | model_usage (HashMap<String, TokenUsageSummary>) |
+| `StatsEvent` | Union of stats tracker events (Phase 8-10) | TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution |
 | `TodoProgressEvent` | Todo list progress per session | session_id, completed, in_progress, pending, abandoned |
 | `FileChangeEvent` | File edit line deltas | session_id, file_hash, version, lines_added, lines_removed, lines_modified, timestamp |
 | `TaskToolInput` | Parsed Task tool input | subagent_type, description (prompt excluded for privacy) |
@@ -295,7 +299,7 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 | **Event Buffer** | `VecDeque<Event>` (max configurable) | FIFO eviction, flushed on graceful shutdown |
 | **Session Parsers** | `HashMap<PathBuf, SessionParser>` | Keyed by file path, created on first write, removed on file delete |
 | **Skill Tracker State** | `SkillTracker` instance | Maintains byte offset for history.jsonl, processes immediately (no debounce) |
-| **Stats Tracker State** | `StatsTracker` instance | Watches stats-cache.json with 200ms debounce, emits both SessionMetricsEvent and TokenUsageEvent |
+| **Stats Tracker State** | `StatsTracker` instance | Watches stats-cache.json with 200ms debounce, emits SessionMetricsEvent, TokenUsageEvent, ActivityPatternEvent, and ModelDistributionEvent |
 | **Todo Tracker State** | `TodoTracker` instance | Maintains ended sessions set, debounces file changes, processes immediately (Phase 6) |
 | **File History Tracker State** | `FileHistoryTracker` instance | Tracks file versions and computes line deltas |
 | **Retry State** | `Sender` internal | Tracks backoff attempt count per send operation |
@@ -311,7 +315,7 @@ All pipelines feed into the same `sender.queue()` for batching and transmission.
 | **Graceful Shutdown** | Signal handlers + timeout | `server/src/main.rs`, `monitor/src/main.rs` |
 | **Retry Logic** | Exponential backoff with jitter | `monitor/src/sender.rs`, `client/src/hooks/useWebSocket.ts` |
 
-## Enhanced Tracking Subsystem (Phase 4-8)
+## Enhanced Tracking Subsystem (Phase 4-10)
 
 New modular tracking architecture in `monitor/src/trackers/`:
 
@@ -342,18 +346,22 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Architecture**: Uses `notify` crate for file changes; maintains byte offset for efficient tailing; processes immediately without debounce
 - **Data Source**: `~/.claude/history.jsonl` (append-only format with JSON entries)
 
-### stats_tracker Module (Phase 8)
+### stats_tracker Module (Phase 8-10)
 
-- **Purpose**: Monitor token usage and session metrics from stats-cache.json
+- **Purpose**: Monitor token usage, session metrics, activity patterns, and model distribution from stats-cache.json
 - **Location**: `monitor/src/trackers/stats_tracker.rs`
 - **Key Components**:
   - `StatsTracker`: Main tracker instance managing file watch and debouncing
   - `StatsCache`: Parsed contents of stats-cache.json with aggregated metrics
   - `ModelTokens`: Per-model token usage (input, output, cache_read, cache_creation)
-  - `StatsEvent`: Enum with two variants (TokenUsage, SessionMetrics)
-  - `emit_stats_events()`: Reads file and emits both event types in sequence
+  - `StatsEvent`: Enum with four variants (TokenUsage, SessionMetrics, ActivityPattern, ModelDistribution)
+  - `emit_stats_events()`: Reads file and emits all four event types in sequence
 - **Data Source**: `~/.claude/stats-cache.json` with structure: totalSessions, totalMessages, totalToolUsage, longestSession, hourCounts, modelUsage
-- **Event Emission**: Emits one `SessionMetricsEvent` per file read, followed by one `TokenUsageEvent` per model
+- **Event Emission**:
+  - One `SessionMetricsEvent` per file read (global counters)
+  - One `TokenUsageEvent` per model (model-specific token counts)
+  - One `ActivityPatternEvent` per file read (Phase 9: hourly distribution)
+  - One `ModelDistributionEvent` per file read (Phase 10: model usage summary)
 - **Integration**: Spawned as independent async task in `main.rs`; results queued via `sender.queue()`
 - **Architecture**:
   - Uses `notify` crate for file changes (non-recursive directory watch)
@@ -365,6 +373,8 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Output**:
   - `StatsEvent::SessionMetrics` → converted to Event with `EventType::SessionMetrics` and `EventPayload::SessionMetrics`
   - `StatsEvent::TokenUsage` → converted to Event with `EventType::TokenUsage` and `EventPayload::TokenUsage`
+  - `StatsEvent::ActivityPattern` → converted to Event with `EventType::ActivityPattern` and `EventPayload::ActivityPattern`
+  - `StatsEvent::ModelDistribution` → converted to Event with `EventType::ModelDistribution` and `EventPayload::ModelDistribution`
 - **Testing**: Comprehensive test suite covering JSON parsing, event emission, debouncing, retries, and tracker lifecycle
 
 ### todo_tracker Module (Phase 6)
@@ -408,6 +418,27 @@ New modular tracking architecture in `monitor/src/trackers/`:
 ### Future Tracker Modules (Planned)
 
 - `project_tracker`: Active project session tracking
+
+## Phase 9-10 Enhancements Summary
+
+### Phase 9: ActivityPatternEvent Emission
+- **Change**: `StatsTracker` now emits `ActivityPatternEvent` in addition to `SessionMetricsEvent` and `TokenUsageEvent`
+- **Data**: `hour_counts` HashMap mapping hour strings ("0" through "23") to activity counts
+- **Source**: Parsed from `stats-cache.json` hourCounts field
+- **Purpose**: Enable visualization of activity distribution across 24-hour periods
+- **Implementation**: Emitted once per file read; keys are strings for JSON deserialization compatibility
+
+### Phase 10: ModelDistributionEvent Emission
+- **Change**: `StatsTracker` now emits `ModelDistributionEvent` alongside other stats events
+- **Data**: `model_usage` HashMap mapping model names to `TokenUsageSummary` (per-model token counts)
+- **Source**: Parsed from `stats-cache.json` modelUsage field
+- **Purpose**: Enable per-model usage tracking and analytics across Claude models
+- **Implementation**: Emitted once per file read; provides comprehensive model distribution snapshot
+
+### Server Route Handler Updates
+- `POST /events` handler now receives all four event types from `StatsTracker`
+- Main event loop in `monitor/src/main.rs` forwards events through sender
+- Client WebSocket subscribers receive events with `EventType::ActivityPattern` and `EventType::ModelDistribution` discriminators
 
 ## Design Decisions
 
@@ -462,14 +493,15 @@ New modular tracking architecture in `monitor/src/trackers/`:
 - **Independent lifecycle**: Can be enabled/disabled without affecting core tracking
 - **Abandonment detection**: Correlates todo state with session lifecycle for accurate reporting
 
-### Why Separate Stats Tracker? (Phase 8)
+### Why Separate Stats Tracker? (Phase 8-10)
 
 - **Different data source**: stats-cache.json separate from session and history files
 - **Global scope**: Tracks system-wide metrics, not session-specific
 - **Debounced updates**: File changes coalesced (200ms optimal for rapid updates)
-- **Dual event emission**: Single file read produces two event types for better flexibility
+- **Multi-event emission**: Single file read produces four event types for comprehensive metrics
 - **Retry resilience**: Built-in retry logic for file read failures (file may be mid-write)
 - **Independent lifecycle**: Can be enabled/disabled without affecting core tracking
+- **Enhanced analytics**: ActivityPattern and ModelDistribution events enable advanced dashboard features
 
 ---
 
