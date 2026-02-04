@@ -516,14 +516,9 @@ impl Default for SetupFormState {
 /// ```
 /// use vibetea_monitor::tui::app::{DashboardState, ConnectionStatus, EventStats};
 ///
-/// let state = DashboardState {
-///     session_name: "my-workstation".to_string(),
-///     public_key: "Ij9dK...base64...".to_string(),
-///     connection_status: ConnectionStatus::Connected,
-///     stats: EventStats::default(),
-/// };
-///
-/// assert_eq!(state.session_name, "my-workstation");
+/// let state = DashboardState::default();
+/// assert!(state.session_name.is_empty());
+/// assert!(state.event_buffer.is_empty());
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct DashboardState {
@@ -552,6 +547,53 @@ pub struct DashboardState {
     /// Updated as events are sent to the server, used for the stats
     /// footer display.
     pub stats: EventStats,
+
+    /// Bounded event buffer for display events (FR-011).
+    ///
+    /// Stores the most recent events for display in the event stream widget.
+    /// Older events are automatically evicted when the buffer reaches capacity.
+    pub event_buffer: EventBuffer,
+
+    /// Scroll state for event stream navigation (FR-011).
+    ///
+    /// Tracks the current scroll position and auto-scroll behavior
+    /// for the event stream widget.
+    pub scroll: ScrollState,
+}
+
+impl DashboardState {
+    /// Pushes a display event to the event buffer and updates scroll state.
+    ///
+    /// This method adds a new event to the buffer and updates the scroll state's
+    /// total event count. If auto-scroll is enabled, the view will automatically
+    /// show the newest events.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The display event to add to the buffer
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::{DashboardState, DisplayEvent, DisplayEventType};
+    ///
+    /// let mut dashboard = DashboardState::default();
+    ///
+    /// let event = DisplayEvent::new(
+    ///     "evt_123".to_string(),
+    ///     DisplayEventType::Session,
+    ///     "Session started".to_string(),
+    /// );
+    ///
+    /// dashboard.push_event(event);
+    ///
+    /// assert_eq!(dashboard.event_buffer.len(), 1);
+    /// assert_eq!(dashboard.scroll.total_events(), 1);
+    /// ```
+    pub fn push_event(&mut self, event: DisplayEvent) {
+        self.event_buffer.push(event);
+        self.scroll.update_total_events(self.event_buffer.len());
+    }
 }
 
 /// Theme configuration for the TUI.
@@ -1157,14 +1199,95 @@ impl AppState {
         // Transition to dashboard
         self.screen = Screen::Dashboard;
 
-        // Store credentials in dashboard state
+        // Store credentials in dashboard state, preserving event_buffer and scroll
         self.dashboard = DashboardState {
             session_name: self.setup.session_name.trim().to_string(),
             public_key: crypto.public_key_base64(),
+            event_buffer: std::mem::take(&mut self.dashboard.event_buffer),
+            scroll: std::mem::take(&mut self.dashboard.scroll),
             ..Default::default()
         };
 
         Ok(())
+    }
+
+    /// Handles a watcher event by converting it to a display event and adding to the buffer.
+    ///
+    /// This method converts a [`crate::types::Event`] from the file watcher into a
+    /// [`DisplayEvent`] and pushes it to the dashboard's event buffer. The scroll
+    /// state is automatically updated to reflect the new event count.
+    ///
+    /// # Auto-Scroll Behavior
+    ///
+    /// If auto-scroll is enabled on the scroll state, the view will automatically
+    /// stay at the bottom to show the newest events (FR-011).
+    ///
+    /// # Arguments
+    ///
+    /// * `event` - The watcher event to process
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use uuid::Uuid;
+    /// use vibetea_monitor::tui::app::AppState;
+    /// use vibetea_monitor::types::{Event, EventType, EventPayload, SessionAction};
+    ///
+    /// let mut state = AppState::new();
+    ///
+    /// let event = Event::new(
+    ///     "monitor-1".to_string(),
+    ///     EventType::Session,
+    ///     EventPayload::Session {
+    ///         session_id: Uuid::new_v4(),
+    ///         action: SessionAction::Started,
+    ///         project: "my-project".to_string(),
+    ///     },
+    /// );
+    ///
+    /// state.handle_watch_event(event);
+    ///
+    /// assert_eq!(state.dashboard.event_buffer.len(), 1);
+    /// assert_eq!(state.dashboard.scroll.total_events(), 1);
+    /// ```
+    pub fn handle_watch_event(&mut self, event: Event) {
+        let display_event = DisplayEvent::from(&event);
+        self.dashboard.push_event(display_event);
+    }
+
+    /// Handles a terminal resize event by updating the scroll state's visible height.
+    ///
+    /// This method updates the scroll state to reflect the new terminal dimensions,
+    /// which affects scroll calculations and event visibility. The visible height
+    /// for the event stream is typically the terminal height minus chrome (header,
+    /// footer, borders, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - New terminal width in columns (reserved for future layout use)
+    /// * `height` - New terminal height in rows
+    ///
+    /// # Note
+    ///
+    /// The actual visible height for the event stream should account for UI chrome.
+    /// This method stores the raw terminal height; the caller is responsible for
+    /// calculating the effective visible height if needed.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use vibetea_monitor::tui::app::AppState;
+    ///
+    /// let mut state = AppState::new();
+    ///
+    /// // Terminal resized to 80x24
+    /// state.handle_resize(80, 24);
+    ///
+    /// // The visible height is updated (actual visible area depends on layout)
+    /// assert_eq!(state.dashboard.scroll.visible_height(), 24);
+    /// ```
+    pub fn handle_resize(&mut self, _width: u16, height: u16) {
+        self.dashboard.scroll.update_visible_height(height as usize);
     }
 }
 
@@ -1602,7 +1725,7 @@ pub const DEFAULT_EVENT_BUFFER_CAPACITY: usize = 1000;
 /// // The first event was evicted
 /// assert_eq!(buffer.get(0).unwrap().id, "evt_2");
 /// ```
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EventBuffer {
     /// Internal storage using VecDeque for efficient front/back operations.
     events: VecDeque<DisplayEvent>,
@@ -2998,6 +3121,10 @@ mod tests {
         assert_eq!(state.connection_status, ConnectionStatus::Disconnected);
         assert_eq!(state.stats.events_sent, 0);
         assert_eq!(state.stats.events_failed, 0);
+        // Verify new fields
+        assert!(state.event_buffer.is_empty());
+        assert_eq!(state.scroll.total_events(), 0);
+        assert!(state.scroll.auto_scroll());
     }
 
     #[test]
@@ -3010,6 +3137,7 @@ mod tests {
                 events_sent: 10,
                 events_failed: 2,
             },
+            ..Default::default()
         };
         let cloned = state.clone();
         assert_eq!(cloned.session_name, "test-session");
@@ -3026,6 +3154,7 @@ mod tests {
             public_key: "my-key".to_string(),
             connection_status: ConnectionStatus::Connecting,
             stats: EventStats::default(),
+            ..Default::default()
         };
         let debug_str = format!("{:?}", state);
         assert!(debug_str.contains("DashboardState"));
@@ -3033,6 +3162,196 @@ mod tests {
         assert!(debug_str.contains("public_key"));
         assert!(debug_str.contains("connection_status"));
         assert!(debug_str.contains("stats"));
+        assert!(debug_str.contains("event_buffer"));
+        assert!(debug_str.contains("scroll"));
+    }
+
+    #[test]
+    fn dashboard_state_push_event_adds_to_buffer() {
+        let mut state = DashboardState::default();
+        assert!(state.event_buffer.is_empty());
+
+        let event = DisplayEvent::new(
+            "evt_test123".to_string(),
+            DisplayEventType::Session,
+            "Test session started".to_string(),
+        );
+
+        state.push_event(event);
+
+        assert_eq!(state.event_buffer.len(), 1);
+        assert_eq!(state.scroll.total_events(), 1);
+    }
+
+    #[test]
+    fn dashboard_state_push_event_updates_scroll_total() {
+        let mut state = DashboardState::default();
+
+        for i in 0..5 {
+            let event = DisplayEvent::new(
+                format!("evt_{}", i),
+                DisplayEventType::Tool,
+                format!("Event {}", i),
+            );
+            state.push_event(event);
+        }
+
+        assert_eq!(state.event_buffer.len(), 5);
+        assert_eq!(state.scroll.total_events(), 5);
+    }
+
+    #[test]
+    fn dashboard_state_push_event_preserves_auto_scroll() {
+        let mut state = DashboardState::default();
+        assert!(state.scroll.auto_scroll());
+
+        let event = DisplayEvent::new(
+            "evt_1".to_string(),
+            DisplayEventType::Activity,
+            "Heartbeat".to_string(),
+        );
+        state.push_event(event);
+
+        // Auto-scroll should remain enabled
+        assert!(state.scroll.auto_scroll());
+        // Offset should stay at 0 (showing newest)
+        assert_eq!(state.scroll.offset(), 0);
+    }
+
+    // =============================================================================
+    // AppState Watch Event and Resize Tests
+    // =============================================================================
+
+    #[test]
+    fn app_state_handle_watch_event_converts_and_stores() {
+        use crate::types::{Event, EventPayload, EventType, SessionAction};
+        use uuid::Uuid;
+
+        let mut state = AppState::new();
+        assert!(state.dashboard.event_buffer.is_empty());
+
+        let event = Event::new(
+            "test-monitor".to_string(),
+            EventType::Session,
+            EventPayload::Session {
+                session_id: Uuid::new_v4(),
+                action: SessionAction::Started,
+                project: "test-project".to_string(),
+            },
+        );
+
+        state.handle_watch_event(event);
+
+        assert_eq!(state.dashboard.event_buffer.len(), 1);
+        assert_eq!(state.dashboard.scroll.total_events(), 1);
+    }
+
+    #[test]
+    fn app_state_handle_watch_event_preserves_event_type() {
+        use crate::types::{Event, EventPayload, EventType, ToolStatus};
+        use uuid::Uuid;
+
+        let mut state = AppState::new();
+
+        let event = Event::new(
+            "test-monitor".to_string(),
+            EventType::Tool,
+            EventPayload::Tool {
+                session_id: Uuid::new_v4(),
+                tool: "Read".to_string(),
+                status: ToolStatus::Completed,
+                context: Some("main.rs".to_string()),
+                project: None,
+            },
+        );
+
+        state.handle_watch_event(event);
+
+        // Check that the event was converted with correct type
+        let stored_event = state.dashboard.event_buffer.iter().next().unwrap();
+        assert_eq!(stored_event.event_type, DisplayEventType::Tool);
+    }
+
+    #[test]
+    fn app_state_handle_watch_event_multiple_events() {
+        use crate::types::{Event, EventPayload, EventType};
+        use uuid::Uuid;
+
+        let mut state = AppState::new();
+
+        for i in 0..10 {
+            let event = Event::new(
+                "test-monitor".to_string(),
+                EventType::Activity,
+                EventPayload::Activity {
+                    session_id: Uuid::new_v4(),
+                    project: Some(format!("project-{}", i)),
+                },
+            );
+            state.handle_watch_event(event);
+        }
+
+        assert_eq!(state.dashboard.event_buffer.len(), 10);
+        assert_eq!(state.dashboard.scroll.total_events(), 10);
+    }
+
+    #[test]
+    fn app_state_handle_resize_updates_visible_height() {
+        let mut state = AppState::new();
+        assert_eq!(state.dashboard.scroll.visible_height(), 0);
+
+        state.handle_resize(80, 24);
+
+        assert_eq!(state.dashboard.scroll.visible_height(), 24);
+    }
+
+    #[test]
+    fn app_state_handle_resize_updates_on_size_change() {
+        let mut state = AppState::new();
+
+        state.handle_resize(80, 24);
+        assert_eq!(state.dashboard.scroll.visible_height(), 24);
+
+        state.handle_resize(120, 40);
+        assert_eq!(state.dashboard.scroll.visible_height(), 40);
+
+        state.handle_resize(60, 10);
+        assert_eq!(state.dashboard.scroll.visible_height(), 10);
+    }
+
+    #[test]
+    fn app_state_handle_resize_clamps_scroll_offset() {
+        use crate::types::{Event, EventPayload, EventType};
+        use uuid::Uuid;
+
+        let mut state = AppState::new();
+
+        // Add some events
+        for i in 0..20 {
+            let event = Event::new(
+                "test".to_string(),
+                EventType::Activity,
+                EventPayload::Activity {
+                    session_id: Uuid::new_v4(),
+                    project: Some(format!("proj-{}", i)),
+                },
+            );
+            state.handle_watch_event(event);
+        }
+
+        // Set small visible height
+        state.handle_resize(80, 5);
+        assert_eq!(state.dashboard.scroll.visible_height(), 5);
+
+        // Scroll to top
+        state.dashboard.scroll.scroll_to_top();
+        let offset_after_scroll = state.dashboard.scroll.offset();
+        assert!(offset_after_scroll > 0);
+
+        // Now resize to larger - offset should be clamped
+        state.handle_resize(80, 30);
+        // With 20 events and 30 visible, max offset is 0
+        assert_eq!(state.dashboard.scroll.offset(), 0);
     }
 
     // =============================================================================
