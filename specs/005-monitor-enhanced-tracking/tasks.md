@@ -339,18 +339,18 @@
 **Independent Test**: Run Claude Code sessions, verify monitor captures message counts, tool call counts, session duration.
 
 ### Phase Start
-- [ ] T176 [GIT] Verify working tree is clean before starting Phase 8
-- [ ] T177 [GIT] Pull and rebase on origin/main if needed
-- [ ] T178 [US6] Create retro/P8.md for this phase
+- [x] T176 [GIT] Verify working tree is clean before starting Phase 8
+- [x] T177 [GIT] Pull and rebase on origin/main if needed
+- [x] T178 [US6] Create retro/P8.md for this phase
 
 ### Implementation for User Story 6
-- [ ] T179 [GIT] Commit: initialize phase 8 retro
-- [ ] T180 [US6] Extend StatsCache struct with session metrics fields in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T181 [GIT] Commit: extend StatsCache with session metrics
-- [ ] T182 [US6] Implement SessionMetricsEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
-- [ ] T183 [GIT] Commit: implement SessionMetricsEvent emission
-- [ ] T184 [US6] Add client store handler for session_metrics events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
-- [ ] T185 [GIT] Commit: add client session_metrics handler
+- [x] T179 [GIT] Commit: initialize phase 8 retro
+- [x] T180 [US6] Extend StatsCache struct with session metrics fields in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T181 [GIT] Commit: extend StatsCache with session metrics
+- [x] T182 [US6] Implement SessionMetricsEvent emission in monitor/src/trackers/stats_tracker.rs (use devs:rust-dev agent)
+- [x] T183 [GIT] Commit: implement SessionMetricsEvent emission
+- [x] T184 [US6] Add client store handler for session_metrics events in client/src/hooks/useEventStore.ts (use devs:typescript-dev agent)
+- [x] T185 [GIT] Commit: add client session_metrics handler
 - [ ] T186 [US6] Run /sdd:map incremental for Phase 8 changes
 - [ ] T187 [GIT] Commit: update codebase documents for phase 8
 - [ ] T188 [US6] Review retro/P8.md and extract critical learnings to CLAUDE.md (conservative)
