@@ -768,7 +768,9 @@ function isQuerySuccessResponse(value: unknown): value is QuerySuccessResponse {
 /**
  * Validates that aggregates are sorted by date DESC, then hour DESC
  */
-function isSortedDescByDateAndHour(aggregates: readonly HourlyAggregate[]): boolean {
+function isSortedDescByDateAndHour(
+  aggregates: readonly HourlyAggregate[],
+): boolean {
   if (aggregates.length <= 1) {
     return true;
   }
@@ -907,7 +909,10 @@ function simulateRequestHandlerWithMockedDb(
   const responseBody: QuerySuccessResponse = {
     aggregates: sortedAggregates,
     meta: {
-      totalCount: sortedAggregates.reduce((sum, agg) => sum + agg.eventCount, 0),
+      totalCount: sortedAggregates.reduce(
+        (sum, agg) => sum + agg.eventCount,
+        0,
+      ),
       daysRequested: params.days,
       fetchedAt: new Date().toISOString(),
     },
@@ -1065,7 +1070,10 @@ describe("Query Aggregation Integration Tests", () => {
       const body: QuerySuccessResponse = await response.json();
 
       assertEquals(body.aggregates[0].date, "2024-01-15");
-      assertEquals(body.aggregates[body.aggregates.length - 1].date, "2024-01-10");
+      assertEquals(
+        body.aggregates[body.aggregates.length - 1].date,
+        "2024-01-10",
+      );
     });
 
     it("for same date, latest hour appears first", async () => {
@@ -1135,7 +1143,10 @@ describe("Query Aggregation Integration Tests", () => {
   describe("Meta Information Validation", () => {
     it("includes totalCount in meta", async () => {
       const mockData = createMockAggregates({ count: 5 });
-      const expectedTotal = mockData.reduce((sum, agg) => sum + agg.eventCount, 0);
+      const expectedTotal = mockData.reduce(
+        (sum, agg) => sum + agg.eventCount,
+        0,
+      );
 
       const request = createMockRequest({
         authHeader: `Bearer ${TEST_SUBSCRIBER_TOKEN}`,
@@ -1165,7 +1176,10 @@ describe("Query Aggregation Integration Tests", () => {
         authHeader: `Bearer ${TEST_SUBSCRIBER_TOKEN}`,
       });
 
-      const response30 = simulateRequestHandlerWithMockedDb(request30, mockData);
+      const response30 = simulateRequestHandlerWithMockedDb(
+        request30,
+        mockData,
+      );
       const body30: QuerySuccessResponse = await response30.json();
 
       assertEquals(body30.meta.daysRequested, 30);
@@ -1185,7 +1199,11 @@ describe("Query Aggregation Integration Tests", () => {
 
       // Validate ISO format
       const fetchedAt = new Date(body.meta.fetchedAt);
-      assertEquals(isNaN(fetchedAt.getTime()), false, "fetchedAt should be valid ISO date");
+      assertEquals(
+        isNaN(fetchedAt.getTime()),
+        false,
+        "fetchedAt should be valid ISO date",
+      );
 
       // Validate timestamp is within request window
       assertEquals(

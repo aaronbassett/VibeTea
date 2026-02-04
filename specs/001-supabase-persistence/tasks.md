@@ -218,8 +218,8 @@
 - [x] T117 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
-- [ ] T118 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T119 [GIT] Create/update PR to main with phase summary
+- [x] T118 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T119 [GIT] Create/update PR to main with phase summary
 - [ ] T120 [GIT] Verify all CI checks pass
 - [ ] T121 [GIT] Report PR ready status
 
