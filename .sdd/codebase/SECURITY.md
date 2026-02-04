@@ -116,16 +116,33 @@ The monitor implements a comprehensive privacy pipeline to ensure no sensitive d
 | Summary text redaction | All summary text replaced with "Session ended" | `monitor/src/privacy.rs:352-355` |
 | Enhanced events pass-through | Activity, Agent, SessionMetrics, TokenUsage, etc. transmit as-is | `monitor/src/privacy.rs:326-371` |
 
-### Recent Privacy Enhancements (Phase 9-10)
+### Privacy Guarantees for Enhanced Events (Phase 9-10)
 
-| Event Type | Privacy Status | Location |
-|-----------|----------------|----------|
-| ActivityPatternEvent | Hourly activity counts only (no code/content) | `monitor/src/trackers/stats_tracker.rs:199` |
-| ModelDistributionEvent | Per-model usage breakdown only (no prompts) | `monitor/src/trackers/stats_tracker.rs:200` |
-| SessionMetricsEvent | Aggregated session counts (no sensitive content) | `monitor/src/trackers/stats_tracker.rs:198` |
-| TokenUsageEvent | Token counts by model (no user data) | `monitor/src/trackers/stats_tracker.rs:197` |
+All new events from Phase 9 and 10 transmit metadata only with no sensitive content:
 
-All new events follow existing privacy patterns: metadata only, no sensitive content.
+| Event Type | Privacy Status | Data Transmitted | Location |
+|-----------|----------------|-----------------|----------|
+| ActivityPatternEvent | Metadata-only | Hourly activity counts (0-23 as string keys) | `monitor/src/trackers/stats_tracker.rs:492-507` |
+| ModelDistributionEvent | Metadata-only | Model names + aggregated token counts | `monitor/src/trackers/stats_tracker.rs:509-538` |
+| SessionMetricsEvent | Metadata-only | Global session counts, message counts, tool usage counts | `monitor/src/trackers/stats_tracker.rs:471-490` |
+| TokenUsageEvent | Metadata-only | Model name + token counts by type | `monitor/src/trackers/stats_tracker.rs:540-561` |
+
+All events follow established privacy patterns: **no code, prompts, commands, or user content transmitted**.
+
+### ActivityPatternEvent Privacy Details
+
+- **hour_counts**: Map of hour (0-23 as string) to activity count
+- **No PII**: Only aggregated hourly metrics
+- **No content**: Zero chance of code or prompt extraction
+- **Type-safe**: ActivityPatternEvent struct contains only hour_counts field
+
+### ModelDistributionEvent Privacy Details
+
+- **model_usage**: Map of model name to TokenUsageSummary
+- **TokenUsageSummary fields**: input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
+- **No PII**: Only token counts aggregated by model
+- **No content**: Zero chance of prompt or output extraction
+- **Type-safe**: ModelDistributionEvent struct contains only model_usage field
 
 ## Rate Limiting
 
@@ -217,13 +234,15 @@ All logging is structured JSON via `tracing` crate, configurable via `RUST_LOG`.
 1. **Ed25519 RFC 8032 Strict Verification**: `verify_strict()` ensures RFC 8032 compliance, preventing signature malleability attacks
 2. **Constant-Time Token Comparison**: `subtle::ConstantTimeEq` prevents timing attacks on token validation
 3. **Privacy-First Architecture**: Comprehensive privacy pipeline ensures no code, prompts, or commands transmitted
-4. **Per-Source Rate Limiting**: Token bucket algorithm with independent limits per source
-5. **Configuration Validation**: Required secrets validated on startup with fast failure
-6. **Type-Safe JSON Parsing**: Serde deserialization enforces event schema
-7. **Source Validation**: Event.source field cross-checked against X-Source-ID header
-8. **Request Size Limits**: 1 MB maximum body size prevents resource exhaustion
-9. **Structured Logging**: Production-ready JSON logging with configurable levels
-10. **File Watcher Security**: UUID pattern matching prevents reading unintended files in todo tracker
+4. **Metadata-Only Enhanced Events**: Phase 9-10 events transmit only aggregated statistics (hourly counts, model names, token counts)
+5. **Per-Source Rate Limiting**: Token bucket algorithm with independent limits per source
+6. **Configuration Validation**: Required secrets validated on startup with fast failure
+7. **Type-Safe JSON Parsing**: Serde deserialization enforces event schema
+8. **Source Validation**: Event.source field cross-checked against X-Source-ID header
+9. **Request Size Limits**: 1 MB maximum body size prevents resource exhaustion
+10. **Structured Logging**: Production-ready JSON logging with configurable levels
+11. **File Watcher Security**: UUID pattern matching prevents reading unintended files in todo tracker
+12. **Type-Safe Privacy Enforcement**: Privacy struct fields prevent sensitive data extraction at compile-time
 
 ### Attack Vectors & Mitigations
 
@@ -235,7 +254,7 @@ All logging is structured JSON via `tracing` crate, configurable via `RUST_LOG`.
 | Malformed signatures | Low | Base64 validation + length checks before crypto operations |
 | Source spoofing | Low | Cross-validation of X-Source-ID header and event.source field |
 | Resource exhaustion | Low | Rate limiting (100 req/sec per source) + 1 MB body size limit |
-| Privacy breach via events | Low | Privacy pipeline strips all sensitive data before transmission |
+| Privacy breach via events | Low | Privacy pipeline + type-safe event structs prevent sensitive data transmission |
 | Configuration misconfiguration | Medium | Startup validation fails fast; warnings for unsafe mode |
 
 ---

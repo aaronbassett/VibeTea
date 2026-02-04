@@ -148,14 +148,14 @@
 - `components/` - React components
   - `ConnectionStatus.tsx` - Visual WebSocket connection indicator
   - `TokenForm.tsx` - Token management with localStorage persistence
-  - `EventStream.tsx` - Virtual scrolling for 1000+ events with auto-scroll
+  - `EventStream.tsx` - Virtual scrolling for 1000+ events with auto-scroll (Phase 10: activity_pattern and model_distribution event handlers)
   - `Heatmap.tsx` - Activity heatmap with 7/30-day views and color scale
   - `SessionOverview.tsx` - Session cards with real-time activity indicators
 - `hooks/` - Custom React hooks
   - `useEventStore.ts` - Zustand store for event state with session timeout management
   - `useWebSocket.ts` - WebSocket management with auto-reconnect
   - `useSessionTimeouts.ts` - Periodic session state transitions
-- `types/events.ts` - Discriminated union event types matching server schema
+- `types/events.ts` - Discriminated union event types matching server schema (Phase 10: added ActivityPatternPayload, ModelDistributionPayload with type guards)
 - `utils/formatting.ts` - Timestamp and duration formatting (5 functions)
 - `__tests__/` - Test suite with 33+ test cases
 
@@ -166,7 +166,7 @@
 - `rate_limit.rs` - Per-source token bucket rate limiting (100 events/sec)
 - `routes.rs` - HTTP endpoints (POST /events, GET /ws, GET /health)
 - `error.rs` - Comprehensive error types and handling
-- `types.rs` - Event types and data models
+- `types.rs` - Event types and data models (Phase 10: ActivityPatternEvent, ModelDistributionEvent)
 - `main.rs` - Server binary entry point
 
 ### Monitor (`monitor/src`)
@@ -199,11 +199,11 @@
 
 ## Phase 10 - Enhanced Activity Pattern and Model Distribution Tracking (Complete)
 
-**Status**: Implementation complete - ActivityPatternEvent and ModelDistributionEvent emission
+**Status**: Implementation complete - ActivityPatternEvent and ModelDistributionEvent emission and visualization
 
 ### Enhanced Module: `monitor/src/trackers/stats_tracker.rs` (1400+ lines)
 
-**Phase 9 & 10 Additions**:
+**Phase 10 Additions**:
 
 1. **New Event Types** (in StatsEvent enum):
    - `ActivityPattern(ActivityPatternEvent)` - Hourly activity distribution
@@ -235,23 +235,29 @@
    - TokenUsageEvent for each model (individual metrics)
    - ModelDistributionEvent (aggregated by model)
 
-**Main Event Loop Integration** (`monitor/src/main.rs`):
-- Event handlers for new event types added
-- `StatsEvent::ActivityPattern` processing (line 548)
-- `StatsEvent::ModelDistribution` processing (line 559)
-- Conversion to EventPayload for transmission
-
-**Event Types** (`server/src/types.rs`):
+### Server Type Additions (`server/src/types.rs`):
 - `EventType::ActivityPattern` - New enum variant
 - `EventType::ModelDistribution` - New enum variant
-- `EventPayload::ActivityPattern(ActivityPatternEvent)` - Activity pattern payload
-- `EventPayload::ModelDistribution(ModelDistributionEvent)` - Model distribution payload
+- `ActivityPatternEvent` - Struct with `hour_counts: HashMap<String, u64>`
+- `ModelDistributionEvent` - Struct with `model_usage: HashMap<String, TokenUsageSummary>`
+- `TokenUsageSummary` - New struct for per-model token breakdown
 
-**Test Coverage** (Phase 10):
-- ActivityPatternEvent equality and clone tests
-- ModelDistributionEvent equality and clone tests
-- Event emission tests for both new types
-- Integration tests with stats_tracker emission
+### Client Type Additions (`client/src/types/events.ts`):
+- `'activity_pattern'` - New EventType variant
+- `'model_distribution'` - New EventType variant
+- `ActivityPatternPayload` - Interface with `hourCounts: Record<string, number>`
+- `ModelDistributionPayload` - Interface with `modelUsage: Record<string, TokenUsageSummary>`
+- `isActivityPatternEvent()` - Type guard function
+- `isModelDistributionEvent()` - Type guard function
+- Event mapping entries in `EventPayloadMap`
+
+### Client Event Display (`client/src/components/EventStream.tsx`):
+- **Icon**: activity_pattern uses 📈 emoji, model_distribution uses 🤖 emoji
+- **Colors**: activity_pattern uses teal-600 styling, model_distribution uses orange-600 styling
+- **Event Descriptions**:
+  - activity_pattern: "Activity pattern: {N} hours tracked"
+  - model_distribution: "Model distribution: {N} model(s) used"
+- **Case handlers** in `getEventDescription()` for both new event types
 
 ## Key Features & Capabilities
 

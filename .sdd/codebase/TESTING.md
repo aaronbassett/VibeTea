@@ -221,6 +221,98 @@ describe('formatTimestamp', () => {
 });
 ```
 
+**Pattern: Event handler testing for new event types (Phase 9-10)**
+
+From `EventStream.tsx` `getEventDescription()` function (Phase 9-10):
+
+```typescript
+/**
+ * Test that ActivityPattern events are described correctly.
+ * Phase 9: Hourly activity distribution events.
+ */
+describe('getEventDescription', () => {
+  it('describes activity_pattern events with hour count', () => {
+    const event: VibeteaEvent<'activity_pattern'> = {
+      id: 'evt_test_activity123456789',
+      source: 'monitor',
+      timestamp: new Date().toISOString(),
+      type: 'activity_pattern',
+      payload: {
+        hourCounts: {
+          '9': 50,
+          '14': 100,
+          '17': 75,
+        },
+      },
+    };
+
+    const description = getEventDescription(event);
+    expect(description).toBe('Activity pattern: 3 hours tracked');
+  });
+
+  /**
+   * Test that ModelDistribution events are described correctly.
+   * Phase 10: Model usage distribution events.
+   */
+  it('describes model_distribution events with model count', () => {
+    const event: VibeteaEvent<'model_distribution'> = {
+      id: 'evt_test_models123456789',
+      source: 'monitor',
+      timestamp: new Date().toISOString(),
+      type: 'model_distribution',
+      payload: {
+        modelUsage: {
+          'claude-sonnet-4-20250514': {
+            inputTokens: 1500000,
+            outputTokens: 300000,
+            cacheReadTokens: 800000,
+            cacheCreationTokens: 100000,
+          },
+          'claude-opus-4-20250514': {
+            inputTokens: 500000,
+            outputTokens: 150000,
+            cacheReadTokens: 200000,
+            cacheCreationTokens: 50000,
+          },
+        },
+      },
+    };
+
+    const description = getEventDescription(event);
+    expect(description).toBe('Model distribution: 2 models used');
+  });
+
+  it('pluralizes model count correctly for single model', () => {
+    const event: VibeteaEvent<'model_distribution'> = {
+      id: 'evt_test_single_model123456789',
+      source: 'monitor',
+      timestamp: new Date().toISOString(),
+      type: 'model_distribution',
+      payload: {
+        modelUsage: {
+          'claude-opus-4-20250514': {
+            inputTokens: 500000,
+            outputTokens: 150000,
+            cacheReadTokens: 200000,
+            cacheCreationTokens: 50000,
+          },
+        },
+      },
+    };
+
+    const description = getEventDescription(event);
+    expect(description).toBe('Model distribution: 1 model used');
+  });
+});
+```
+
+Key patterns for Phase 9-10 event handlers:
+- **ActivityPatternEvent**: Count non-empty hours in `hourCounts` object
+- **ModelDistributionEvent**: Count entries in `modelUsage` dictionary
+- **Proper pluralization**: Handle singular/plural forms correctly
+- **Type-safe access**: Use object keys and length checks for nested data
+
+
 ### Rust Unit Tests
 
 **Pattern: Module-level test organization with helper functions**

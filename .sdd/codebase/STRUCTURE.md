@@ -20,11 +20,11 @@ VibeTea/
 │   │   ├── sender.rs          # HTTP client with retry and buffering
 │   │   ├── types.rs           # Event type definitions
 │   │   ├── error.rs           # Error types
-│   │   ├── trackers/          # Enhanced tracking modules (Phase 4-8)
+│   │   ├── trackers/          # Enhanced tracking modules (Phase 4-10)
 │   │   │   ├── mod.rs         # Tracker module exports
 │   │   │   ├── agent_tracker.rs     # Task tool agent spawn detection
 │   │   │   ├── skill_tracker.rs     # Skill/slash command invocation tracking (Phase 5)
-│   │   │   ├── stats_tracker.rs     # Token usage and session metrics (Phase 8)
+│   │   │   ├── stats_tracker.rs     # Token usage, session metrics, activity patterns, model distribution (Phase 8-10)
 │   │   │   ├── todo_tracker.rs      # Todo list progress tracking (Phase 6)
 │   │   │   └── file_history_tracker.rs # File edit tracking (Phase 8+)
 │   │   └── utils/             # Shared utilities (debouncing, tokenization, etc.)
@@ -59,7 +59,7 @@ VibeTea/
 │   │   ├── components/
 │   │   │   ├── ConnectionStatus.tsx   # WebSocket connection indicator
 │   │   │   ├── TokenForm.tsx          # Authentication token input
-│   │   │   ├── EventStream.tsx        # Virtualized event list
+│   │   │   ├── EventStream.tsx        # Virtualized event list with activity_pattern and model_distribution handlers (Phase 9-10)
 │   │   │   ├── SessionOverview.tsx    # Active sessions table
 │   │   │   └── Heatmap.tsx           # Activity over time visualization
 │   │   ├── hooks/
@@ -67,7 +67,7 @@ VibeTea/
 │   │   │   ├── useEventStore.ts      # Zustand store (state + selectors)
 │   │   │   └── useSessionTimeouts.ts # Session state machine (Active → Inactive → Ended)
 │   │   ├── types/
-│   │   │   └── events.ts             # TypeScript event interfaces
+│   │   │   └── events.ts             # TypeScript event interfaces (ActivityPatternPayload, ModelDistributionPayload added Phase 9-10)
 │   │   ├── utils/
 │   │   │   └── formatting.ts         # Timestamp, event type formatting
 │   │   ├── __tests__/
@@ -109,12 +109,12 @@ VibeTea/
 | `privacy.rs` | Remove code, prompts, sensitive data | `PrivacyPipeline`, `PrivacyConfig` |
 | `crypto.rs` | Ed25519 keypair (generate, load, save) | `Crypto` |
 | `sender.rs` | HTTP POST to server with retry/buffering | `Sender`, `SenderConfig`, `RetryPolicy` |
-| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `TodoProgressEvent` |
+| `types.rs` | Event schema (shared with server) | `Event`, `EventPayload`, `EventType`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent`, `TodoProgressEvent` |
 | `error.rs` | Error types | `MonitorError`, custom errors |
 | `trackers/mod.rs` | Tracker module organization | Exports `agent_tracker`, `skill_tracker`, `stats_tracker`, `todo_tracker`, `file_history_tracker` |
 | `trackers/agent_tracker.rs` | Task tool agent spawn parsing | `TaskToolInput`, `parse_task_tool_use()`, `try_extract_agent_spawn()` |
 | `trackers/skill_tracker.rs` (Phase 5) | Skill/slash command parsing from history.jsonl | `SkillTracker`, `parse_history_entry()`, `create_skill_invocation_event()` |
-| `trackers/stats_tracker.rs` (Phase 8) | Token usage and session metrics from stats-cache.json | `StatsTracker`, `StatsCache`, `ModelTokens`, `StatsEvent`, `TokenUsageEvent`, `SessionMetricsEvent` |
+| `trackers/stats_tracker.rs` (Phase 8-10) | Token usage, session metrics, activity patterns, model distribution from stats-cache.json | `StatsTracker`, `StatsCache`, `ModelTokens`, `StatsEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent` |
 | `trackers/todo_tracker.rs` (Phase 6) | Todo list progress and abandonment detection | `TodoTracker`, `TodoEntry`, `TodoStatus`, `TodoProgressEvent`, `parse_todo_file()`, `count_todo_statuses()`, `is_abandoned()` |
 | `trackers/file_history_tracker.rs` (Phase 8+) | File edit history tracking | `FileHistoryTracker`, `FileChangeEvent` |
 | `utils/mod.rs` | Utility module exports | Exports `debounce`, `tokenize`, `session_filename` |
@@ -143,13 +143,13 @@ VibeTea/
 | `main.tsx` | ReactDOM.createRoot() | — |
 | `components/ConnectionStatus.tsx` | Status badge (connecting/connected/disconnected) | `ConnectionStatus` component |
 | `components/TokenForm.tsx` | Input for auth token, localStorage persistence | `TokenForm` component |
-| `components/EventStream.tsx` | Virtualized list of events with filtering | `EventStream` component |
+| `components/EventStream.tsx` | Virtualized list of events with filtering; handles activity_pattern and model_distribution events (Phase 9-10) | `EventStream` component |
 | `components/SessionOverview.tsx` | Table of active sessions with stats | `SessionOverview` component |
 | `components/Heatmap.tsx` | Activity heatmap binned by time | `Heatmap` component |
 | `hooks/useWebSocket.ts` | WebSocket lifecycle, reconnection with backoff | `useWebSocket()` hook |
 | `hooks/useEventStore.ts` | Zustand store, event buffer, session state, filters | `useEventStore()` hook |
 | `hooks/useSessionTimeouts.ts` | Session state machine (Active → Inactive → Ended) | `useSessionTimeouts()` hook |
-| `types/events.ts` | TypeScript interfaces (VibeteaEvent, Session, etc.) | `VibeteaEvent`, `Session` |
+| `types/events.ts` | TypeScript interfaces with ActivityPatternPayload and ModelDistributionPayload (Phase 9-10) | `VibeteaEvent`, `Session`, `ActivityPatternPayload`, `ModelDistributionPayload` |
 | `utils/formatting.ts` | Date/time/event type formatting | `formatTimestamp()`, `formatEventType()` |
 | `__tests__/` | Vitest unit + integration tests | — |
 
@@ -160,7 +160,7 @@ VibeTea/
 Self-contained CLI with these responsibilities:
 1. **Watch** files via `FileWatcher` (both session JSONL and history.jsonl and todos/ directory and stats-cache.json)
 2. **Parse** JSONL via `SessionParser`
-3. **Extract enhanced events** via `trackers` (agent spawns, skill invocations, token usage, session metrics, todo progress, file changes)
+3. **Extract enhanced events** via `trackers` (agent spawns, skill invocations, token usage, session metrics, activity patterns, model distribution, todo progress, file changes)
 4. **Filter** events via `PrivacyPipeline`
 5. **Sign** events via `Crypto`
 6. **Send** to server via `Sender`
@@ -173,7 +173,7 @@ monitor/src/main.rs
 ├── watcher.rs → sender.rs
 │   ├─ session JSONL files
 │   ├─ history.jsonl (Phase 5)
-│   ├─ stats-cache.json (Phase 8)
+│   ├─ stats-cache.json (Phase 8-10)
 │   ├─ todos/ directory (Phase 6)
 │   └─ project files (Phase 8+)
 │   ↓
@@ -186,9 +186,9 @@ monitor/src/main.rs
 │   ├→ extract_skill_name() (from utils/tokenize.rs)
 │   └→ create_skill_invocation_event()
 │   ↓
-├── trackers/stats_tracker.rs (Phase 8)
+├── trackers/stats_tracker.rs (Phase 8-10)
 │   ├→ read_stats_with_retry()
-│   ├→ emit_stats_events() [emits SessionMetricsEvent + TokenUsageEvent for each model]
+│   ├→ emit_stats_events() [emits SessionMetricsEvent + ActivityPatternEvent + ModelDistributionEvent + TokenUsageEvent for each model]
 │   └→ uses utils/debounce.rs for 200ms debouncing
 │   ↓
 ├── trackers/todo_tracker.rs (Phase 6)
@@ -247,10 +247,10 @@ client/src/App.tsx (root)
 ├── components/
 │   ├── TokenForm.tsx (auth)
 │   ├── ConnectionStatus.tsx (status badge)
-│   ├── EventStream.tsx (virtualized list)
+│   ├── EventStream.tsx (virtualized list with Phase 9-10 activity_pattern and model_distribution handlers)
 │   ├── SessionOverview.tsx (table)
 │   └── Heatmap.tsx (visualization)
-└── types/events.ts (TypeScript interfaces)
+└── types/events.ts (TypeScript interfaces with Phase 9-10 payload types)
 ```
 
 ## Where to Add New Code
@@ -285,7 +285,7 @@ use vibetea_monitor::sender::Sender;
 use vibetea_monitor::types::Event;
 use vibetea_monitor::trackers::agent_tracker;
 use vibetea_monitor::trackers::skill_tracker::SkillTracker;  // Phase 5
-use vibetea_monitor::trackers::stats_tracker::{StatsTracker, StatsEvent};  // Phase 8
+use vibetea_monitor::trackers::stats_tracker::{StatsTracker, StatsEvent};  // Phase 8-10
 use vibetea_monitor::trackers::todo_tracker::TodoTracker;    // Phase 6
 use vibetea_monitor::trackers::file_history_tracker::FileHistoryTracker;  // Phase 8+
 use vibetea_monitor::utils::tokenize::extract_skill_name;    // Phase 5
@@ -352,7 +352,7 @@ Files that are auto-generated or should not be manually edited:
 | Category | Pattern | Example |
 |----------|---------|---------|
 | Module names | `snake_case` | `parser.rs`, `privacy.rs`, `agent_tracker.rs`, `skill_tracker.rs`, `stats_tracker.rs`, `todo_tracker.rs`, `file_history_tracker.rs` |
-| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `TodoProgressEvent`, `FileChangeEvent` |
+| Type names | `PascalCase` | `Event`, `ParsedEvent`, `EventPayload`, `AgentSpawnEvent`, `SkillInvocationEvent`, `TokenUsageEvent`, `SessionMetricsEvent`, `ActivityPatternEvent`, `ModelDistributionEvent`, `TodoProgressEvent`, `FileChangeEvent` |
 | Function names | `snake_case` | `verify_signature()`, `calculate_backoff()`, `parse_task_tool_use()`, `extract_skill_name()`, `count_todo_statuses()`, `emit_stats_events()` |
 | Constant names | `UPPER_SNAKE_CASE` | `MAX_BODY_SIZE`, `EVENT_ID_PREFIX`, `DEFAULT_CHANNEL_CAPACITY`, `DEFAULT_DEBOUNCE_MS`, `STATS_DEBOUNCE_MS` |
 | Test functions | `#[test]` or `_test.rs` suffix | `privacy_test.rs`, `agent_tracker` has internal test module, `todo_tracker` has extensive test module, `stats_tracker` has comprehensive test module |
@@ -393,7 +393,7 @@ Files that are auto-generated or should not be manually edited:
 ✗ CANNOT import:  monitor code, server code (except via HTTP/WebSocket)
 ```
 
-## Enhanced Tracking Subsystem (Phase 4-8)
+## Enhanced Tracking Subsystem (Phase 4-10)
 
 ### Adding a New Tracker Module
 
@@ -423,33 +423,56 @@ pub fn create_project_event(...) -> ProjectActivityEvent { ... }
 mod tests { ... }
 ```
 
-### stats_tracker Module (Phase 8) - Concrete Example
+### stats_tracker Module (Phase 8-10) - Concrete Example
 
-The stats_tracker demonstrates the full pattern for a new tracker with system-wide metrics:
+The stats_tracker demonstrates the full pattern for a new tracker with multi-event emission:
 
 1. **Location**: `monitor/src/trackers/stats_tracker.rs`
 2. **Data Source**: `~/.claude/stats-cache.json` (JSON file with global metrics)
 3. **File Watching**: Uses `notify` crate for file monitoring with directory watch
 4. **Entry Point**: Spawned as async task in `main.rs` via `StatsTracker::new()`
-5. **Event Types**: Emits two variants via `StatsEvent` enum:
+5. **Event Types**: Emits four variants via `StatsEvent` enum:
    - `SessionMetricsEvent`: Global counters (total_sessions, total_messages, total_tool_usage, longest_session)
+   - `ActivityPatternEvent`: Hourly distribution (hour_counts: HashMap<String, u64>) - Phase 9
+   - `ModelDistributionEvent`: Per-model summary (model_usage: HashMap<String, TokenUsageSummary>) - Phase 10
    - `TokenUsageEvent`: Per-model token usage (model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens)
 6. **Helper Types**: Uses `StatsCache` and `ModelTokens` for JSON deserialization
 7. **Privacy**: Extracts only aggregated metrics; no code or personal data
 8. **Processing**:
    - Debounced at 200ms to coalesce rapid file updates
    - Emits one `SessionMetricsEvent` per file read (global metrics)
+   - Emits one `ActivityPatternEvent` per file read (if hourCounts non-empty)
+   - Emits one `ModelDistributionEvent` per file read (if modelUsage non-empty)
    - Emits one `TokenUsageEvent` per model in modelUsage section
 9. **Error Handling**: Includes retry logic (up to 3 retries with 100ms delays) for file read failures
 
 Key architectural patterns:
 - **File watching**: Non-recursive directory watch, single file matching, filtering
 - **Debouncing**: Coalesces rapid writes using `Debouncer<PathBuf, FileChangeEvent>`
-- **Dual event emission**: Single `emit_stats_events()` call produces two event types sequentially
+- **Multi-event emission**: Single `emit_stats_events()` call produces four event types sequentially
 - **Retry logic**: Handles file mid-write scenarios with exponential delays
 - **Async processing**: Spawned as background task, events sent via channel
 - **Privacy preservation**: No code or personal information exposed
 - **Testing**: Extensive unit tests covering parsing, event emission, debouncing, retries, and integration scenarios
+
+### Phase 9-10 Updates: ActivityPatternEvent and ModelDistributionEvent
+
+Phase 9 introduced `ActivityPatternEvent` (Phase 9) for hourly activity distribution:
+- Extracted from `hourCounts` field in stats-cache.json
+- Emitted once per stats file read (if non-empty)
+- Client handler in `EventStream.tsx` shows hour count summary
+
+Phase 10 introduced `ModelDistributionEvent` (Phase 10) for model usage summary:
+- Extracted from `modelUsage` field in stats-cache.json
+- Converted from `HashMap<String, ModelTokens>` to `HashMap<String, TokenUsageSummary>`
+- Emitted once per stats file read (if non-empty)
+- Client handler in `EventStream.tsx` shows model count summary
+
+Both events:
+- Are emission order: SessionMetrics → ActivityPattern → ModelDistribution → TokenUsage (per model)
+- Provide different aggregation levels for flexible client-side visualizations
+- Maintain backward compatibility (token_usage events unaffected)
+- Share 200ms debounce window for efficiency
 
 ### todo_tracker Module (Phase 6) - Concrete Example
 

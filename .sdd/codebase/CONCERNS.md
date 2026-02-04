@@ -34,6 +34,7 @@ Items to address when working in the area:
 | TD-062 | `monitor/src/trackers/todo_tracker.rs` | No metrics on debouncer queue size or processing latency | Observability gap | Low |
 | TD-065 | `monitor/src/trackers/stats_tracker.rs` | No validation that stats JSON matches expected structure | Robustness | Low |
 | TD-066 | `monitor/src/trackers/stats_tracker.rs` | Retry logic (with_retry) could mask transient file system issues | Debugging difficulty | Low |
+| TD-068 | `monitor/src/trackers/stats_tracker.rs` | No metrics on event emission rate or skipped events | Observability gap | Low |
 
 ### Low Priority
 
@@ -89,6 +90,7 @@ Known performance issues:
 | PERF-004 | `monitor/src/trackers/skill_tracker.rs` | File position tracking with atomic (SeqCst ordering) | Minimal overhead | Acceptable; critical for tail-like behavior |
 | PERF-005 | `monitor/src/trackers/todo_tracker.rs` | RwLock on ended_sessions set with read on every file change | Minimal overhead | Only affects high-frequency todo updates; typically acceptable |
 | PERF-006 | `monitor/src/trackers/stats_tracker.rs` | JSON parsing with retries and file I/O on every change | Minimal overhead | Only occurs when stats-cache.json is written (infrequent) |
+| PERF-007 | `monitor/src/trackers/stats_tracker.rs` | Multiple event emissions per stats file read (4 events: session_metrics, activity_pattern, model_distribution, token_usage per model) | Latency per read | Batch emissions or consolidate into single event if throughput becomes concern |
 
 ## Fragile Areas
 
@@ -103,7 +105,7 @@ Code areas that are brittle or risky to modify:
 | `monitor/src/trackers/agent_tracker.rs` | Privacy-critical: must never extract or transmit prompt content | Maintain type-safe design (no prompt field in struct); review any struct field additions |
 | `monitor/src/trackers/skill_tracker.rs` | File watching and offset tracking are fragile to filesystem changes | Handle file truncation gracefully; test with rapid appends and concurrent access |
 | `monitor/src/trackers/todo_tracker.rs` | File watching, debouncing, and session state tracking are interconnected | Ensure abandoned_sessions cleanup is implemented; add integration tests for rapid file changes |
-| `monitor/src/trackers/stats_tracker.rs` | File watching and event emission are critical for accuracy | Test with concurrent writes; ensure retry logic doesn't mask real issues |
+| `monitor/src/trackers/stats_tracker.rs` | File watching, event emission, and stats aggregation are critical for accuracy | Test with concurrent writes; ensure retry logic doesn't mask real issues; verify event emission ordering |
 
 ## Deprecated Code
 
@@ -132,6 +134,7 @@ Dependencies that may need attention:
 | `tokio` | Heavy dependency; ensure async patterns are correct | Monitor for performance regressions |
 | `axum` | HTTP framework; ensure HTTPS enforcement at proxy | Verify proxy configuration in deployment |
 | `notify` | File watcher library used by skill_tracker, todo_tracker, and stats_tracker | Monitor for issues with file system event reliability |
+| `serde_json` | JSON parsing with retries; deeply nested structures in stats-cache could cause issues | Verify recursion depth limits in serde config |
 
 ## Monitoring Gaps
 
@@ -148,6 +151,7 @@ Areas lacking proper observability:
 | `monitor/src/trackers/todo_tracker.rs` | Ended sessions count and cleanup frequency | Can't detect memory leaks in session tracking |
 | `monitor/src/trackers/stats_tracker.rs` | File watcher error count and parse retry frequency | Can't detect stats-cache.json accessibility issues |
 | `monitor/src/trackers/stats_tracker.rs` | Event emission rate and debouncer latency | Can't detect stats file update frequency |
+| `monitor/src/trackers/stats_tracker.rs` | Skipped events due to hour_counts/model_usage being empty | Can't measure coverage of activity pattern and model distribution events |
 
 ## Improvement Opportunities
 
@@ -162,6 +166,7 @@ Areas that could benefit from refactoring:
 | `monitor/src/trackers/` | Three/four separate tracker implementations | Unified tracker interface | Easier to add new trackers |
 | `monitor/src/trackers/todo_tracker.rs` | Abandoned sessions set with no cleanup | Implement periodic cleanup task | Prevent memory leaks |
 | `monitor/src/trackers/stats_tracker.rs` | Simple debounce; no coalescing of rapid changes | Batch stats emissions or use cumulative events | Reduce event volume on rapid updates |
+| `monitor/src/trackers/stats_tracker.rs` | Four separate event types per stats file read | Consolidated stats event with all data | Reduce API surface; simplify client handling |
 
 ## Potential Vulnerabilities to Review
 
@@ -190,6 +195,10 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 11. **Stats cache file validation**: File is read without validating that it belongs to the current user. Symlink attacks possible if `/tmp/stats-cache.json` is used.
 
 12. **Stats JSON nesting depth**: Claude Code stats cache could theoretically have deeply nested model usage maps; serde recursion depth should be verified.
+
+13. **ActivityPatternEvent hour_counts coverage**: If stats-cache.json lacks hour_counts field, ActivityPatternEvent is not emitted (empty map check at line 493). Verify client handles occasional absence gracefully.
+
+14. **ModelDistributionEvent model_usage coverage**: If stats-cache.json lacks model_usage field, ModelDistributionEvent is not emitted (empty map check at line 510). Verify client handles occasional absence gracefully.
 
 ## Privacy-Related Concerns
 
@@ -227,6 +236,14 @@ These are not confirmed vulnerabilities but areas that should be reviewed:
 | PRIV-013 | `monitor/src/trackers/stats_tracker.rs` | Model names transmitted but not model outputs | Implemented | TokenUsageEvent tracks usage by model name for insights without content |
 | PRIV-014 | `monitor/src/trackers/stats_tracker.rs` | Privacy-by-design in event struct definitions | Implemented | StatsEvent enum variant separation ensures metadata-only transmission |
 
+### Phase 9-10: Enhanced Tracking Privacy
+
+| ID | Area | Description | Status | Notes |
+|----|------|-------------|--------|-------|
+| PRIV-015 | `monitor/src/trackers/stats_tracker.rs` | ActivityPatternEvent contains only hourly counts | Implemented (Phase 9-10) | hour_counts map has no user code or session info |
+| PRIV-016 | `monitor/src/trackers/stats_tracker.rs` | ModelDistributionEvent contains only aggregated token counts | Implemented (Phase 9-10) | model_usage map contains TokenUsageSummary with counts only |
+| PRIV-017 | `monitor/src/trackers/stats_tracker.rs` | No ability to reverse-engineer user activity from events | Implemented | Hourly granularity prevents minute-level tracking; model names are non-sensitive |
+
 ### Privacy Design Patterns
 
 The trackers implement privacy-by-design:
@@ -249,8 +266,9 @@ This approach is more robust than runtime validation because it's impossible to 
 - No code injection vectors (no eval/exec)
 - Privacy controls built into type system (no prompt, content, or argument fields in tracking structs)
 - Command arguments and task content not extracted from file monitoring
-- Stats cache not used for sensitive data extraction
+- Stats cache used only for aggregated metrics extraction (token counts, session counts, hourly distribution)
 - All file watching includes strict filename validation (UUID pattern matching, stats-cache.json validation)
+- ActivityPatternEvent and ModelDistributionEvent follow established privacy patterns from Phase 8 stats tracker
 
 ---
 

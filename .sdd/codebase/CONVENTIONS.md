@@ -830,13 +830,13 @@ Type-safe extraction of event details using type assertions:
 /**
  * Get a brief description of the event payload.
  * Uses type assertions to safely access payload properties based on event type.
+ * Supports all event types including Phase 9-10 enhancements.
  */
 function getEventDescription(event: VibeteaEvent): string {
   const { type, payload } = event;
 
   switch (type) {
     case 'session': {
-      // Type assertion: payload is guaranteed to be VibeteaEvent<'session'>['payload']
       const sessionPayload = payload as VibeteaEvent<'session'>['payload'];
       return `Session ${sessionPayload.action}: ${sessionPayload.project}`;
     }
@@ -850,6 +850,33 @@ function getEventDescription(event: VibeteaEvent): string {
       const summaryPayload = payload as VibeteaEvent<'summary'>['payload'];
       const summary = summaryPayload.summary;
       return summary.length > 80 ? `${summary.slice(0, 80)}...` : summary;
+    }
+    // Phase 8-10 enhanced tracking
+    case 'token_usage': {
+      const tokenPayload = payload as VibeteaEvent<'token_usage'>['payload'];
+      const totalTokens = tokenPayload.inputTokens + tokenPayload.outputTokens;
+      return `Token usage: ${totalTokens.toLocaleString()} tokens (${tokenPayload.model})`;
+    }
+    case 'session_metrics': {
+      const metricsPayload = payload as VibeteaEvent<'session_metrics'>['payload'];
+      return `Metrics: ${metricsPayload.totalSessions} sessions, ${metricsPayload.totalMessages} messages`;
+    }
+    case 'activity_pattern': {
+      // Phase 9: Activity pattern tracking for hourly distribution
+      const patternPayload = payload as VibeteaEvent<'activity_pattern'>['payload'];
+      const hourCount = Object.keys(patternPayload.hourCounts).length;
+      return `Activity pattern: ${hourCount} hours tracked`;
+    }
+    case 'model_distribution': {
+      // Phase 10: Model usage distribution tracking
+      const distPayload = payload as VibeteaEvent<'model_distribution'>['payload'];
+      const modelCount = Object.keys(distPayload.modelUsage).length;
+      return `Model distribution: ${modelCount} model${modelCount !== 1 ? 's' : ''} used`;
+    }
+    case 'todo_progress': {
+      const todoPayload = payload as VibeteaEvent<'todo_progress'>['payload'];
+      const total = todoPayload.completed + todoPayload.inProgress + todoPayload.pending;
+      return `Todo progress: ${todoPayload.completed}/${total} completed${todoPayload.abandoned ? ' (abandoned)' : ''}`;
     }
     default:
       return 'Unknown event';
