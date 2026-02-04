@@ -1,7 +1,8 @@
 //! Stats cache tracker for monitoring Claude Code's token usage statistics.
 //!
 //! This module watches `~/.claude/stats-cache.json` for changes and emits
-//! [`TokenUsageEvent`]s for each model in the modelUsage section.
+//! [`StatsEvent`]s containing both [`SessionMetricsEvent`] and [`TokenUsageEvent`]
+//! data.
 //!
 //! # File Format
 //!
@@ -31,14 +32,14 @@
 //! debounce to coalesce rapid file updates. When a change is detected:
 //!
 //! 1. The JSON file is parsed with retry on failure (file may be mid-write)
-//! 2. A [`TokenUsageEvent`] is emitted for each model in modelUsage
+//! 2. A [`SessionMetricsEvent`] is emitted once per file read
+//! 3. A [`TokenUsageEvent`] is emitted for each model in modelUsage
 //!
 //! # Example
 //!
 //! ```no_run
 //! use tokio::sync::mpsc;
-//! use vibetea_monitor::trackers::stats_tracker::StatsTracker;
-//! use vibetea_monitor::types::TokenUsageEvent;
+//! use vibetea_monitor::trackers::stats_tracker::{StatsTracker, StatsEvent};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -46,7 +47,16 @@
 //!     let tracker = StatsTracker::new(tx)?;
 //!
 //!     while let Some(event) = rx.recv().await {
-//!         println!("Model: {}, Input: {}", event.model, event.input_tokens);
+//!         match event {
+//!             StatsEvent::SessionMetrics(metrics) => {
+//!                 println!("Sessions: {}, Messages: {}",
+//!                     metrics.total_sessions, metrics.total_messages);
+//!             }
+//!             StatsEvent::TokenUsage(usage) => {
+//!                 println!("Model: {}, Input: {}",
+//!                     usage.model, usage.input_tokens);
+//!             }
+//!         }
 //!     }
 //!
 //!     Ok(())
@@ -65,7 +75,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
-use crate::types::TokenUsageEvent;
+use crate::types::{SessionMetricsEvent, TokenUsageEvent};
 use crate::utils::debounce::Debouncer;
 
 /// Default debounce interval for stats file changes in milliseconds.
@@ -159,6 +169,21 @@ pub enum StatsTrackerError {
 /// Result type for stats tracker operations.
 pub type Result<T> = std::result::Result<T, StatsTrackerError>;
 
+/// Events emitted by the stats tracker.
+///
+/// The stats tracker emits two types of events:
+/// - [`TokenUsageEvent`] for each model's token consumption
+/// - [`SessionMetricsEvent`] for global session statistics
+///
+/// Callers can pattern match on this enum to handle each event type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatsEvent {
+    /// Token usage event for a specific model.
+    TokenUsage(TokenUsageEvent),
+    /// Global session metrics event.
+    SessionMetrics(SessionMetricsEvent),
+}
+
 /// Internal event used to signal a file change to the async processor.
 #[derive(Debug, Clone)]
 struct FileChangeEvent {
@@ -169,7 +194,7 @@ struct FileChangeEvent {
 
 /// Tracker for Claude Code's stats-cache.json file.
 ///
-/// Watches for file changes and emits [`TokenUsageEvent`]s when the file is
+/// Watches for file changes and emits [`StatsEvent`]s when the file is
 /// updated. Uses debouncing to coalesce rapid file changes.
 ///
 /// # Thread Safety
@@ -187,9 +212,9 @@ pub struct StatsTracker {
     /// Path to the stats-cache.json file.
     stats_path: PathBuf,
 
-    /// Channel sender for emitting token usage events.
+    /// Channel sender for emitting stats events.
     #[allow(dead_code)]
-    event_sender: mpsc::Sender<TokenUsageEvent>,
+    event_sender: mpsc::Sender<StatsEvent>,
 }
 
 impl StatsTracker {
@@ -199,7 +224,7 @@ impl StatsTracker {
     ///
     /// # Arguments
     ///
-    /// * `event_sender` - Channel for emitting [`TokenUsageEvent`]s
+    /// * `event_sender` - Channel for emitting [`StatsEvent`]s
     ///
     /// # Errors
     ///
@@ -207,7 +232,7 @@ impl StatsTracker {
     /// - The home directory cannot be determined
     /// - The `~/.claude` directory does not exist
     /// - The file system watcher cannot be initialized
-    pub fn new(event_sender: mpsc::Sender<TokenUsageEvent>) -> Result<Self> {
+    pub fn new(event_sender: mpsc::Sender<StatsEvent>) -> Result<Self> {
         let claude_dir = directories::BaseDirs::new()
             .map(|dirs| dirs.home_dir().join(".claude"))
             .ok_or_else(|| {
@@ -222,17 +247,14 @@ impl StatsTracker {
     /// # Arguments
     ///
     /// * `stats_path` - Path to the stats-cache.json file to watch
-    /// * `event_sender` - Channel for emitting [`TokenUsageEvent`]s
+    /// * `event_sender` - Channel for emitting [`StatsEvent`]s
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The parent directory of the stats file does not exist
     /// - The file system watcher cannot be initialized
-    pub fn with_path(
-        stats_path: PathBuf,
-        event_sender: mpsc::Sender<TokenUsageEvent>,
-    ) -> Result<Self> {
+    pub fn with_path(stats_path: PathBuf, event_sender: mpsc::Sender<StatsEvent>) -> Result<Self> {
         // Verify the parent directory exists (file may not exist yet)
         let watch_dir = stats_path
             .parent()
@@ -272,7 +294,7 @@ impl StatsTracker {
             let sender_for_init = event_sender.clone();
             let path_for_init = stats_path.clone();
             tokio::spawn(async move {
-                if let Err(e) = emit_token_events(&path_for_init, &sender_for_init).await {
+                if let Err(e) = emit_stats_events(&path_for_init, &sender_for_init).await {
                     warn!(
                         path = %path_for_init.display(),
                         error = %e,
@@ -304,7 +326,7 @@ impl StatsTracker {
     /// Returns an error if the file cannot be read or parsed, or if the
     /// event channel is closed.
     pub async fn refresh(&self) -> Result<()> {
-        emit_token_events(&self.stats_path, &self.event_sender).await
+        emit_stats_events(&self.stats_path, &self.event_sender).await
     }
 }
 
@@ -396,7 +418,7 @@ fn handle_notify_event(
 async fn process_debounced_events(
     mut rx: mpsc::Receiver<(PathBuf, FileChangeEvent)>,
     stats_path: PathBuf,
-    sender: mpsc::Sender<TokenUsageEvent>,
+    sender: mpsc::Sender<StatsEvent>,
 ) {
     debug!("Starting debounced event processor");
 
@@ -407,7 +429,7 @@ async fn process_debounced_events(
 
         debug!(path = %path.display(), "Processing debounced stats change");
 
-        if let Err(e) = emit_token_events(&path, &sender).await {
+        if let Err(e) = emit_stats_events(&path, &sender).await {
             warn!(
                 path = %path.display(),
                 error = %e,
@@ -419,12 +441,37 @@ async fn process_debounced_events(
     debug!("Debounced event processor shutting down");
 }
 
-/// Reads the stats cache file and emits token usage events.
+/// Reads the stats cache file and emits stats events.
+///
+/// Emits a [`SessionMetricsEvent`] once per read, followed by a
+/// [`TokenUsageEvent`] for each model in the modelUsage section.
 ///
 /// Includes retry logic in case the file is being written to.
-async fn emit_token_events(path: &Path, sender: &mpsc::Sender<TokenUsageEvent>) -> Result<()> {
+async fn emit_stats_events(path: &Path, sender: &mpsc::Sender<StatsEvent>) -> Result<()> {
     let stats = read_stats_with_retry(path).await?;
 
+    // Emit session metrics event first (once per stats-cache.json read)
+    let session_metrics = SessionMetricsEvent {
+        total_sessions: stats.total_sessions,
+        total_messages: stats.total_messages,
+        total_tool_usage: stats.total_tool_usage,
+        longest_session: stats.longest_session.clone(),
+    };
+
+    trace!(
+        total_sessions = stats.total_sessions,
+        total_messages = stats.total_messages,
+        total_tool_usage = stats.total_tool_usage,
+        longest_session = %stats.longest_session,
+        "Emitting session metrics event"
+    );
+
+    sender
+        .send(StatsEvent::SessionMetrics(session_metrics))
+        .await
+        .map_err(|_| StatsTrackerError::ChannelClosed)?;
+
+    // Emit token usage events for each model
     for (model, tokens) in stats.model_usage {
         let event = TokenUsageEvent {
             model: model.clone(),
@@ -442,7 +489,7 @@ async fn emit_token_events(path: &Path, sender: &mpsc::Sender<TokenUsageEvent>) 
         );
 
         sender
-            .send(event)
+            .send(StatsEvent::TokenUsage(event))
             .await
             .map_err(|_| StatsTrackerError::ChannelClosed)?;
     }
@@ -638,28 +685,52 @@ mod tests {
     }
 
     // =========================================================================
-    // Token Usage Event Emission Tests
+    // Stats Event Emission Tests
     // =========================================================================
 
     #[tokio::test]
-    async fn test_emit_token_events_for_each_model() {
+    async fn test_emit_stats_events_for_each_model() {
         let (_temp_dir, stats_path) = create_test_stats_file(SAMPLE_STATS);
 
         let (tx, mut rx) = mpsc::channel(100);
-        emit_token_events(&stats_path, &tx)
+        emit_stats_events(&stats_path, &tx)
             .await
             .expect("Should emit events");
 
-        // Should receive 2 events (one for each model)
+        // Should receive 3 events: 1 session metrics + 2 token usage (one for each model)
         let mut received = Vec::new();
         while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
             received.push(event);
         }
 
-        assert_eq!(received.len(), 2, "Should emit event for each model");
+        assert_eq!(
+            received.len(),
+            3,
+            "Should emit 1 session metrics + 2 token usage events"
+        );
+
+        // First event should be session metrics
+        let session_metrics = match &received[0] {
+            StatsEvent::SessionMetrics(m) => m,
+            _ => panic!("First event should be SessionMetrics"),
+        };
+        assert_eq!(session_metrics.total_sessions, 150);
+        assert_eq!(session_metrics.total_messages, 2500);
+        assert_eq!(session_metrics.total_tool_usage, 8000);
+        assert_eq!(session_metrics.longest_session, "00:45:30");
+
+        // Extract token usage events
+        let token_events: Vec<_> = received
+            .iter()
+            .filter_map(|e| match e {
+                StatsEvent::TokenUsage(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(token_events.len(), 2, "Should have 2 token usage events");
 
         // Find the sonnet event
-        let sonnet = received
+        let sonnet = token_events
             .iter()
             .find(|e| e.model == "claude-sonnet-4-20250514")
             .expect("Should have sonnet event");
@@ -669,7 +740,7 @@ mod tests {
         assert_eq!(sonnet.cache_creation_tokens, 100_000);
 
         // Find the opus event
-        let opus = received
+        let opus = token_events
             .iter()
             .find(|e| e.model == "claude-opus-4-20250514")
             .expect("Should have opus event");
@@ -678,18 +749,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_emit_no_events_for_empty_model_usage() {
+    async fn test_emit_session_metrics_only_for_empty_model_usage() {
         let json = r#"{"totalSessions": 10, "modelUsage": {}}"#;
         let (_temp_dir, stats_path) = create_test_stats_file(json);
 
         let (tx, mut rx) = mpsc::channel(100);
-        emit_token_events(&stats_path, &tx)
+        emit_stats_events(&stats_path, &tx)
             .await
             .expect("Should succeed");
 
-        // Should receive no events
-        let result = timeout(Duration::from_millis(50), rx.recv()).await;
-        assert!(result.is_err(), "Should timeout with no events");
+        // Should receive exactly 1 event (session metrics only)
+        let mut received = Vec::new();
+        while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
+            received.push(event);
+        }
+
+        assert_eq!(received.len(), 1, "Should emit only session metrics event");
+
+        // Verify it's a session metrics event
+        let session_metrics = match &received[0] {
+            StatsEvent::SessionMetrics(m) => m,
+            _ => panic!("Event should be SessionMetrics"),
+        };
+        assert_eq!(session_metrics.total_sessions, 10);
     }
 
     // =========================================================================
@@ -834,7 +916,7 @@ mod tests {
         let stats_path = temp_dir.path().join("nonexistent.json");
 
         let (tx, _rx) = mpsc::channel(100);
-        let result = emit_token_events(&stats_path, &tx).await;
+        let result = emit_stats_events(&stats_path, &tx).await;
 
         assert!(result.is_err(), "Should fail for missing file");
         assert!(matches!(result.unwrap_err(), StatsTrackerError::Io(_)));
@@ -845,7 +927,7 @@ mod tests {
         let (_temp_dir, stats_path) = create_test_stats_file("{ broken json");
 
         let (tx, _rx) = mpsc::channel(100);
-        let result = emit_token_events(&stats_path, &tx).await;
+        let result = emit_stats_events(&stats_path, &tx).await;
 
         assert!(result.is_err(), "Should fail for malformed JSON");
     }
@@ -886,7 +968,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(100);
         let _tracker = StatsTracker::with_path(stats_path, tx).expect("Should create tracker");
 
-        // Should receive initial events
+        // Should receive initial events: 1 session metrics + 2 token usage
         let mut events = Vec::new();
         while let Ok(Some(event)) = timeout(Duration::from_millis(200), rx.recv()).await {
             events.push(event);
@@ -894,9 +976,21 @@ mod tests {
 
         assert_eq!(
             events.len(),
-            2,
-            "Should receive initial events for 2 models"
+            3,
+            "Should receive 1 session metrics + 2 token usage events"
         );
+
+        // Verify we have the right event types
+        let session_metrics_count = events
+            .iter()
+            .filter(|e| matches!(e, StatsEvent::SessionMetrics(_)))
+            .count();
+        let token_usage_count = events
+            .iter()
+            .filter(|e| matches!(e, StatsEvent::TokenUsage(_)))
+            .count();
+        assert_eq!(session_metrics_count, 1, "Should have 1 session metrics");
+        assert_eq!(token_usage_count, 2, "Should have 2 token usage events");
     }
 
     #[tokio::test]
@@ -912,13 +1006,29 @@ mod tests {
         // Call refresh
         tracker.refresh().await.expect("Should refresh");
 
-        // Should receive new events
+        // Should receive new events: 1 session metrics + 2 token usage
         let mut events = Vec::new();
         while let Ok(Some(event)) = timeout(Duration::from_millis(100), rx.recv()).await {
             events.push(event);
         }
 
-        assert_eq!(events.len(), 2, "Refresh should emit events for 2 models");
+        assert_eq!(
+            events.len(),
+            3,
+            "Refresh should emit 1 session metrics + 2 token usage events"
+        );
+
+        // Verify we have the right event types
+        let session_metrics_count = events
+            .iter()
+            .filter(|e| matches!(e, StatsEvent::SessionMetrics(_)))
+            .count();
+        let token_usage_count = events
+            .iter()
+            .filter(|e| matches!(e, StatsEvent::TokenUsage(_)))
+            .count();
+        assert_eq!(session_metrics_count, 1, "Should have 1 session metrics");
+        assert_eq!(token_usage_count, 2, "Should have 2 token usage events");
     }
 
     // =========================================================================
@@ -975,5 +1085,194 @@ mod tests {
         let cloned = stats.clone();
 
         assert_eq!(stats, cloned);
+    }
+
+    // =========================================================================
+    // StatsEvent Enum Tests
+    // =========================================================================
+
+    #[test]
+    fn test_stats_event_enum_variants() {
+        let token_event = StatsEvent::TokenUsage(TokenUsageEvent {
+            model: "test-model".to_string(),
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_read_tokens: 25,
+            cache_creation_tokens: 10,
+        });
+
+        let session_event = StatsEvent::SessionMetrics(SessionMetricsEvent {
+            total_sessions: 42,
+            total_messages: 1000,
+            total_tool_usage: 500,
+            longest_session: "01:30:00".to_string(),
+        });
+
+        // Verify pattern matching works
+        match &token_event {
+            StatsEvent::TokenUsage(t) => {
+                assert_eq!(t.model, "test-model");
+                assert_eq!(t.input_tokens, 100);
+            }
+            _ => panic!("Expected TokenUsage variant"),
+        }
+
+        match &session_event {
+            StatsEvent::SessionMetrics(m) => {
+                assert_eq!(m.total_sessions, 42);
+                assert_eq!(m.total_messages, 1000);
+            }
+            _ => panic!("Expected SessionMetrics variant"),
+        }
+    }
+
+    #[test]
+    fn test_stats_event_equality() {
+        let a = StatsEvent::SessionMetrics(SessionMetricsEvent {
+            total_sessions: 10,
+            total_messages: 100,
+            total_tool_usage: 50,
+            longest_session: "00:10:00".to_string(),
+        });
+
+        let b = StatsEvent::SessionMetrics(SessionMetricsEvent {
+            total_sessions: 10,
+            total_messages: 100,
+            total_tool_usage: 50,
+            longest_session: "00:10:00".to_string(),
+        });
+
+        let c = StatsEvent::SessionMetrics(SessionMetricsEvent {
+            total_sessions: 20, // different
+            total_messages: 100,
+            total_tool_usage: 50,
+            longest_session: "00:10:00".to_string(),
+        });
+
+        let d = StatsEvent::TokenUsage(TokenUsageEvent {
+            model: "model".to_string(),
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_tokens: 2,
+            cache_creation_tokens: 1,
+        });
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d); // Different variants
+    }
+
+    #[test]
+    fn test_stats_event_clone() {
+        let original = StatsEvent::SessionMetrics(SessionMetricsEvent {
+            total_sessions: 42,
+            total_messages: 1000,
+            total_tool_usage: 500,
+            longest_session: "01:00:00".to_string(),
+        });
+
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn test_stats_event_debug() {
+        let event = StatsEvent::SessionMetrics(SessionMetricsEvent {
+            total_sessions: 42,
+            total_messages: 1000,
+            total_tool_usage: 500,
+            longest_session: "01:00:00".to_string(),
+        });
+
+        // Verify Debug trait is implemented and produces output
+        let debug_str = format!("{:?}", event);
+        assert!(debug_str.contains("SessionMetrics"));
+        assert!(debug_str.contains("42"));
+    }
+
+    // =========================================================================
+    // SessionMetricsEvent Field Mapping Tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_session_metrics_fields_from_stats_cache() {
+        // Test with specific values to ensure proper field mapping
+        let json = r#"{
+            "totalSessions": 999,
+            "totalMessages": 12345,
+            "totalToolUsage": 6789,
+            "longestSession": "12:34:56",
+            "modelUsage": {}
+        }"#;
+        let (_temp_dir, stats_path) = create_test_stats_file(json);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        emit_stats_events(&stats_path, &tx)
+            .await
+            .expect("Should emit events");
+
+        let event = timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .expect("Should receive event")
+            .expect("Should have event");
+
+        let metrics = match event {
+            StatsEvent::SessionMetrics(m) => m,
+            _ => panic!("Expected SessionMetrics"),
+        };
+
+        assert_eq!(metrics.total_sessions, 999);
+        assert_eq!(metrics.total_messages, 12345);
+        assert_eq!(metrics.total_tool_usage, 6789);
+        assert_eq!(metrics.longest_session, "12:34:56");
+    }
+
+    #[tokio::test]
+    async fn test_session_metrics_defaults_for_missing_fields() {
+        // Empty JSON object should produce default values
+        let json = "{}";
+        let (_temp_dir, stats_path) = create_test_stats_file(json);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        emit_stats_events(&stats_path, &tx)
+            .await
+            .expect("Should emit events");
+
+        let event = timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .expect("Should receive event")
+            .expect("Should have event");
+
+        let metrics = match event {
+            StatsEvent::SessionMetrics(m) => m,
+            _ => panic!("Expected SessionMetrics"),
+        };
+
+        assert_eq!(metrics.total_sessions, 0);
+        assert_eq!(metrics.total_messages, 0);
+        assert_eq!(metrics.total_tool_usage, 0);
+        assert_eq!(metrics.longest_session, "");
+    }
+
+    #[tokio::test]
+    async fn test_session_metrics_emitted_before_token_events() {
+        let (_temp_dir, stats_path) = create_test_stats_file(SAMPLE_STATS);
+
+        let (tx, mut rx) = mpsc::channel(100);
+        emit_stats_events(&stats_path, &tx)
+            .await
+            .expect("Should emit events");
+
+        // First event should always be SessionMetrics
+        let first_event = timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .expect("Should receive event")
+            .expect("Should have event");
+
+        assert!(
+            matches!(first_event, StatsEvent::SessionMetrics(_)),
+            "First event should be SessionMetrics, got {:?}",
+            first_event
+        );
     }
 }

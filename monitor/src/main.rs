@@ -33,11 +33,11 @@ use vibetea_monitor::privacy::{PrivacyConfig, PrivacyPipeline};
 use vibetea_monitor::sender::{Sender, SenderConfig};
 use vibetea_monitor::trackers::file_history_tracker::FileHistoryTracker;
 use vibetea_monitor::trackers::skill_tracker::SkillTracker;
-use vibetea_monitor::trackers::stats_tracker::StatsTracker;
+use vibetea_monitor::trackers::stats_tracker::{StatsEvent, StatsTracker};
 use vibetea_monitor::trackers::todo_tracker::TodoTracker;
 use vibetea_monitor::types::{
     AgentSpawnEvent, Event, EventPayload, EventType, FileChangeEvent, SessionAction,
-    SkillInvocationEvent, TodoProgressEvent, TokenUsageEvent, ToolStatus,
+    SkillInvocationEvent, TodoProgressEvent, ToolStatus,
 };
 use vibetea_monitor::watcher::{FileWatcher, WatchEvent};
 
@@ -239,11 +239,11 @@ async fn run_monitor() -> Result<()> {
         "File watcher initialized"
     );
 
-    // Create channel for token usage events from stats tracker
-    let (token_tx, mut token_rx) = mpsc::channel::<TokenUsageEvent>(config.buffer_size);
+    // Create channel for stats events (session metrics + token usage) from stats tracker
+    let (stats_tx, mut stats_rx) = mpsc::channel::<StatsEvent>(config.buffer_size);
 
-    // Initialize stats tracker for token usage monitoring
-    let _stats_tracker = match StatsTracker::new(token_tx) {
+    // Initialize stats tracker for session metrics and token usage monitoring
+    let _stats_tracker = match StatsTracker::new(stats_tx) {
         Ok(tracker) => {
             info!(
                 stats_path = %tracker.stats_path().display(),
@@ -346,10 +346,10 @@ async fn run_monitor() -> Result<()> {
                 ).await;
             }
 
-            // Process token usage events from stats tracker
-            Some(token_event) = token_rx.recv() => {
-                process_token_usage_event(
-                    token_event,
+            // Process stats events (session metrics + token usage) from stats tracker
+            Some(stats_event) = stats_rx.recv() => {
+                process_stats_event(
+                    stats_event,
                     &mut sender,
                     &config.source_id,
                 ).await;
@@ -513,25 +513,39 @@ async fn process_watch_event(
     }
 }
 
-/// Processes a token usage event from the stats tracker.
-async fn process_token_usage_event(
-    token_event: TokenUsageEvent,
-    sender: &mut Sender,
-    source_id: &str,
-) {
-    debug!(
-        model = %token_event.model,
-        input_tokens = token_event.input_tokens,
-        output_tokens = token_event.output_tokens,
-        "Processing token usage event"
-    );
-
-    // Convert to a full Event
-    let event = Event::new(
-        source_id.to_string(),
-        EventType::TokenUsage,
-        EventPayload::TokenUsage(token_event),
-    );
+/// Processes a stats event from the stats tracker.
+///
+/// Handles both [`SessionMetricsEvent`] and [`TokenUsageEvent`] variants.
+async fn process_stats_event(stats_event: StatsEvent, sender: &mut Sender, source_id: &str) {
+    let event = match stats_event {
+        StatsEvent::SessionMetrics(metrics) => {
+            debug!(
+                total_sessions = metrics.total_sessions,
+                total_messages = metrics.total_messages,
+                total_tool_usage = metrics.total_tool_usage,
+                longest_session = %metrics.longest_session,
+                "Processing session metrics event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::SessionMetrics,
+                EventPayload::SessionMetrics(metrics),
+            )
+        }
+        StatsEvent::TokenUsage(token_event) => {
+            debug!(
+                model = %token_event.model,
+                input_tokens = token_event.input_tokens,
+                output_tokens = token_event.output_tokens,
+                "Processing token usage event"
+            );
+            Event::new(
+                source_id.to_string(),
+                EventType::TokenUsage,
+                EventPayload::TokenUsage(token_event),
+            )
+        }
+    };
 
     // Queue event for sending
     let evicted = sender.queue(event);
@@ -541,7 +555,7 @@ async fn process_token_usage_event(
 
     // Try to flush buffered events
     if let Err(e) = sender.flush().await {
-        warn!(error = %e, "Failed to flush token usage events, will retry later");
+        warn!(error = %e, "Failed to flush stats events, will retry later");
     }
 }
 
