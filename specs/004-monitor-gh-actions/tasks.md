@@ -224,10 +224,10 @@
 - [x] T083 [GIT] Verify working tree is clean before starting Phase 6
 - [x] T084 [GIT] Pull and rebase on origin/main if needed
 - [x] T085 [US4] Create retro/P6.md for this phase
-- [ ] T086 [GIT] Commit: initialize phase 6 retro
+- [x] T086 [GIT] Commit: initialize phase 6 retro
 
 ### Implementation for User Story 4
-- [ ] T087 [US4] Create composite action in .github/actions/vibetea-monitor/action.yml
+- [x] T087 [US4] Create composite action in .github/actions/vibetea-monitor/action.yml
   - Required inputs: server-url, private-key (FR-008)
   - Optional inputs: source-id, version (FR-009)
   - Download binary step
