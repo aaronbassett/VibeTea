@@ -285,10 +285,10 @@
 **Independent Test**: Start monitor, verify credentials panel shows session name and base64 public key
 
 ### Phase Start
-- [ ] T139 [GIT] Verify working tree is clean before starting Phase 6
-- [ ] T140 [GIT] Pull and rebase on origin/main if needed
-- [ ] T141 [US4] Create retro/P6.md for this phase
-- [ ] T142 [GIT] Commit: initialize phase 6 retro
+- [x] T139 [GIT] Verify working tree is clean before starting Phase 6
+- [x] T140 [GIT] Pull and rebase on origin/main if needed
+- [x] T141 [US4] Create retro/P6.md for this phase
+- [x] T142 [GIT] Commit: initialize phase 6 retro
 
 ### Credentials Types
 - [x] T143 [US4] Implement Credentials struct in monitor/src/tui/app.rs (use devs:rust-dev agent)
@@ -307,9 +307,9 @@
 - [x] T152 [GIT] Commit: integrate credentials into dashboard
 
 ### Codebase Mapping and Retro
-- [ ] T153 [US4] Run /sdd:map incremental for Phase 6 changes
-- [ ] T154 [GIT] Commit: update codebase documents for phase 6
-- [ ] T155 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T153 [US4] Run /sdd:map incremental for Phase 6 changes
+- [x] T154 [GIT] Commit: update codebase documents for phase 6
+- [x] T155 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
 - [ ] T156 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
