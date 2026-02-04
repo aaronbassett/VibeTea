@@ -358,7 +358,9 @@ export const useEventStore = create<EventStore>()((set) => ({
     } catch (error) {
       // Network error or other fetch failure
       const errorMessage =
-        error instanceof Error ? error.message : 'Failed to fetch historic data';
+        error instanceof Error
+          ? error.message
+          : 'Failed to fetch historic data';
 
       set({
         historicDataStatus: 'error',

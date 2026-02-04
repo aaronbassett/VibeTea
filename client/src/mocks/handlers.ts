@@ -6,11 +6,7 @@
  */
 
 import { http, HttpResponse } from 'msw';
-import {
-  MOCK_BEARER_TOKEN,
-  createQueryResponse,
-  errorResponses,
-} from './data';
+import { MOCK_BEARER_TOKEN, createQueryResponse, errorResponses } from './data';
 
 /**
  * Extracts and validates the bearer token from Authorization header.

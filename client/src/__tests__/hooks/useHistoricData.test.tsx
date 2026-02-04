@@ -8,18 +8,9 @@
  */
 
 import { renderHook, act } from '@testing-library/react';
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createHourlyAggregate,
-} from '../../mocks/data';
+import { createHourlyAggregate } from '../../mocks/data';
 import { useHistoricData } from '../../hooks/useHistoricData';
 import { useEventStore } from '../../hooks/useEventStore';
 import type { HourlyAggregate } from '../../types/events';
@@ -371,7 +362,11 @@ describe('useHistoricData - Manual Refetch', () => {
 
     useEventStore.setState({
       historicData: [
-        createHourlyAggregate({ date: '2026-02-01', hour: 10, eventCount: 100 }),
+        createHourlyAggregate({
+          date: '2026-02-01',
+          hour: 10,
+          eventCount: 100,
+        }),
       ],
       historicDataStatus: 'success',
       historicDataFetchedAt: freshTime,
@@ -505,7 +500,10 @@ describe('useHistoricData - Edge Cases', () => {
     const { result } = renderHook(() => useHistoricData(7));
 
     // fetchedAt should be a number (timestamp) after successful fetch
-    expect(typeof result.current.fetchedAt === 'number' || result.current.fetchedAt === null).toBe(true);
+    expect(
+      typeof result.current.fetchedAt === 'number' ||
+        result.current.fetchedAt === null
+    ).toBe(true);
 
     // After successful mock, it should be a number
     if (result.current.status === 'success') {
