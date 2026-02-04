@@ -68,7 +68,8 @@ monitor/src/
 └── trackers/
     ├── agent_tracker.rs   # Agent spawn detection (Phase 4) with 28+ tests
     ├── skill_tracker.rs   # Skill invocation tracking (Phase 5) with 20+ tests
-    └── todo_tracker.rs    # Todo list monitoring (Phase 6) with 79 tests
+    ├── todo_tracker.rs    # Todo list monitoring (Phase 6) with 79 tests
+    └── stats_tracker.rs   # Token usage tracking (Phase 8) with tests
 ```
 
 **Test organization strategy**: Co-located `#[cfg(test)] mod tests` blocks at end of each module file.
@@ -344,13 +345,13 @@ Key patterns for Phase 5 skill_tracker:
 - **Error cases**: Test missing fields, invalid JSON, malformed entries
 - **Event creation**: Verify timestamp conversion from ms to UTC DateTime
 
-### Todo Tracker Tests (Phase 6 - NEW)
+### Todo Tracker Tests (Phase 6)
 
 The `todo_tracker` module establishes comprehensive test patterns with 79 unit tests organized in marked sections:
 
 **Pattern: Organized test sections with clear task IDs**
 
-From `monitor/src/trackers/todo_tracker.rs` (lines 946-2344):
+From `monitor/src/trackers/todo_tracker.rs`:
 
 ```rust
 #[cfg(test)]
@@ -396,83 +397,6 @@ mod tests {
         let counts = TodoStatusCounts { completed: 2, in_progress: 0, pending: 3 };
         assert!(is_abandoned(&counts, true));  // Session ended + incomplete = abandoned
     }
-
-    // =========================================================================
-    // Todo Entry Parsing Tests
-    // =========================================================================
-
-    #[test]
-    fn parse_entry_valid_completed() {
-        let json: serde_json::Value = serde_json::from_str(
-            r#"{"content": "Fix bug", "status": "completed", "activeForm": null}"#,
-        ).unwrap();
-        let entry = parse_todo_entry(&json).unwrap();
-        assert_eq!(entry.content, "Fix bug");
-        assert_eq!(entry.status, TodoStatus::Completed);
-    }
-
-    // =========================================================================
-    // Async Integration Tests with File System
-    // =========================================================================
-
-    #[tokio::test]
-    async fn test_tracker_creation_with_valid_directory() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let (tx, _rx) = mpsc::channel(100);
-        let result = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx);
-        assert!(result.is_ok(), "Should create tracker for valid directory");
-        assert_eq!(result.unwrap().todos_dir(), temp_dir.path());
-    }
-
-    #[tokio::test]
-    async fn test_tracker_detects_new_todo_file() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let (tx, mut rx) = mpsc::channel(100);
-        let _tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
-            .expect("Should create tracker");
-
-        // Give watcher time to start
-        sleep(TokioDuration::from_millis(50)).await;
-
-        // Create a new todo file
-        let session_id = "6e45a55c-3124-4cc8-ad85-040a5c316009";
-        create_test_todo_file(&temp_dir, session_id, SAMPLE_TODO);
-
-        // Should receive a todo progress event
-        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
-        assert!(result.is_ok(), "Should receive event for new todo file");
-
-        let event = result.unwrap().unwrap();
-        assert_eq!(event.session_id, session_id);
-        assert!(!event.abandoned);
-    }
-
-    #[tokio::test]
-    async fn test_tracker_abandonment_detection() {
-        let temp_dir = TempDir::new().expect("Failed to create temp dir");
-        let session_id = "f1e2d3c4-b5a6-0987-fedc-ba9876543210";
-
-        let (tx, mut rx) = mpsc::channel(100);
-        let tracker = TodoTracker::with_path(temp_dir.path().to_path_buf(), tx)
-            .expect("Should create tracker");
-
-        // Mark the session as ended BEFORE creating the file
-        tracker.mark_session_ended(session_id).await;
-
-        // Create a todo file with incomplete tasks
-        let incomplete_todo = r#"[
-            {"content": "Task 1", "status": "completed", "activeForm": null},
-            {"content": "Task 2", "status": "pending", "activeForm": null}
-        ]"#;
-        create_test_todo_file(&temp_dir, session_id, incomplete_todo);
-
-        // Should receive an event with abandoned=true
-        let result = timeout(TokioDuration::from_millis(500), rx.recv()).await;
-        assert!(result.is_ok(), "Should receive event");
-
-        let event = result.unwrap().unwrap();
-        assert!(event.abandoned, "Should be marked as abandoned");
-    }
 }
 ```
 
@@ -485,6 +409,105 @@ Key patterns for Phase 6 todo_tracker:
 - **Realistic test data**: Uses actual JSON format matching `~/.claude/todos/` structure
 - **Privacy verification**: Tests validate that only status counts/metadata captured, not task content
 - **Abandonment logic**: Tests verify the combination of session end + incomplete tasks = abandoned
+
+### Stats Tracker Tests (Phase 8)
+
+The `stats_tracker` module watches `~/.claude/stats-cache.json` and emits token usage events:
+
+**Pattern: File parsing with retry logic and event emission**
+
+From `monitor/src/trackers/stats_tracker.rs`:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_stats_cache_with_valid_json() {
+        let json_str = r#"{
+            "totalSessions": 150,
+            "totalMessages": 2500,
+            "totalToolUsage": 8000,
+            "longestSession": "00:45:30",
+            "hourCounts": { "0": 10, "1": 5 },
+            "modelUsage": {
+                "claude-sonnet-4-20250514": {
+                    "inputTokens": 1500000,
+                    "outputTokens": 300000,
+                    "cacheReadInputTokens": 800000,
+                    "cacheCreationInputTokens": 100000
+                }
+            }
+        }"#;
+
+        let cache: StatsCache = serde_json::from_str(json_str).expect("should parse");
+        assert_eq!(cache.total_sessions, 150);
+        assert_eq!(cache.total_messages, 2500);
+        assert_eq!(cache.total_tool_usage, 8000);
+    }
+
+    #[test]
+    fn model_tokens_uses_serde_defaults() {
+        // Stats cache JSON may be missing fields; serde(default) handles this
+        let json_str = r#"{ "inputTokens": 1000 }"#;
+        let tokens: ModelTokens = serde_json::from_str(json_str).expect("should parse");
+
+        assert_eq!(tokens.input_tokens, 1000);
+        assert_eq!(tokens.output_tokens, 0);  // default
+        assert_eq!(tokens.cache_read_input_tokens, 0);  // default
+    }
+
+    #[test]
+    fn stats_event_enum_pattern_matching() {
+        let metrics_event = SessionMetricsEvent {
+            total_sessions: 42,
+            total_messages: 1234,
+            total_tool_usage: 567,
+            longest_session: "sess_longest".to_string(),
+        };
+
+        let stats_event = StatsEvent::SessionMetrics(metrics_event.clone());
+
+        match stats_event {
+            StatsEvent::SessionMetrics(evt) => {
+                assert_eq!(evt.total_sessions, 42);
+            }
+            StatsEvent::TokenUsage(_) => panic!("expected SessionMetrics"),
+        }
+    }
+
+    #[test]
+    fn token_usage_event_from_model_tokens() {
+        let model_tokens = ModelTokens {
+            input_tokens: 5000,
+            output_tokens: 2500,
+            cache_read_input_tokens: 1000,
+            cache_creation_input_tokens: 500,
+        };
+
+        let event = TokenUsageEvent {
+            model: "claude-3-opus".to_string(),
+            input_tokens: model_tokens.input_tokens,
+            output_tokens: model_tokens.output_tokens,
+            cache_read_tokens: model_tokens.cache_read_input_tokens,
+            cache_creation_tokens: model_tokens.cache_creation_input_tokens,
+        };
+
+        assert_eq!(event.model, "claude-3-opus");
+        assert_eq!(event.input_tokens, 5000);
+        assert_eq!(event.cache_read_tokens, 1000);
+    }
+}
+```
+
+Key patterns for Phase 8 stats_tracker:
+- **Lenient JSON parsing**: All fields use `#[serde(default)]` for missing or extra fields
+- **camelCase mapping**: Uses `#[serde(rename_all = "camelCase")]` to match Claude Code JSON format
+- **Event emission pattern**: Tests verify StatsEvent enum matching for both TokenUsage and SessionMetrics
+- **Model iteration**: Tests verify events emitted per model in stats cache
+- **File retry logic**: Debouncing and retry handling for mid-write file reads
+- **Error handling**: Tests for file watcher init, parse failures, and channel closure
 
 ### Integration Tests
 
@@ -586,6 +609,38 @@ fn create_test_todo_file(dir: &TempDir, session_id: &str, content: &str) -> Path
 }
 ```
 
+### Phase 8 Stats Tracker Fixtures
+
+```rust
+fn create_test_stats_cache() -> StatsCache {
+    let mut model_usage = HashMap::new();
+    model_usage.insert(
+        "claude-sonnet-4-20250514".to_string(),
+        ModelTokens {
+            input_tokens: 1500000,
+            output_tokens: 300000,
+            cache_read_input_tokens: 800000,
+            cache_creation_input_tokens: 100000,
+        },
+    );
+
+    StatsCache {
+        total_sessions: 150,
+        total_messages: 2500,
+        total_tool_usage: 8000,
+        longest_session: "00:45:30".to_string(),
+        hour_counts: {
+            let mut counts = HashMap::new();
+            counts.insert("0".to_string(), 10);
+            counts.insert("9".to_string(), 25);
+            counts.insert("17".to_string(), 50);
+            counts
+        },
+        model_usage,
+    }
+}
+```
+
 ## Coverage Requirements
 
 ### Target Coverage
@@ -623,6 +678,7 @@ Critical path tests that verify basic functionality:
 - `agent_tracker.rs`: Task tool input parsing works (Phase 4)
 - `skill_tracker.rs`: History entry parsing works (Phase 5)
 - `todo_tracker.rs`: Todo file parsing and abandonment detection works (Phase 6)
+- `stats_tracker.rs`: Stats cache JSON parsing and event creation works (Phase 8)
 
 ### Regression Tests
 
@@ -652,7 +708,7 @@ cargo test --workspace --test-threads=1
 # Run specific test
 cargo test --workspace test_name
 
-# Run monitor tests only (includes todo_tracker)
+# Run monitor tests only (includes todo_tracker and stats_tracker)
 cargo test -p vibetea-monitor --test-threads=1
 ```
 
@@ -666,7 +722,7 @@ The CI workflow would run:
 
 2. Rust tests (Cargo)
    - Server tests with `--test-threads=1`
-   - Monitor tests with `--test-threads=1` (includes todo_tracker)
+   - Monitor tests with `--test-threads=1` (includes todo_tracker and stats_tracker)
    - All tests must pass
 
 3. Code quality checks

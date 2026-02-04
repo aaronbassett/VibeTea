@@ -76,8 +76,8 @@
 | Type | Convention | Example |
 |------|------------|---------|
 | Modules | snake_case | `config.rs`, `error.rs`, `types.rs`, `watcher.rs`, `parser.rs`, `privacy.rs`, `crypto.rs`, `sender.rs`, `main.rs`, `trackers/` |
-| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent`, `HistoryEntry`, `SkillInvocationEvent` |
-| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS` |
+| Types | PascalCase | `Config`, `Event`, `ServerError`, `MonitorError`, `PrivacyConfig`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent`, `HistoryEntry`, `SkillInvocationEvent`, `StatsEvent` |
+| Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT`, `DEFAULT_BUFFER_SIZE`, `SENSITIVE_TOOLS`, `PRIVATE_KEY_FILE`, `SHUTDOWN_TIMEOUT_SECS`, `STATS_DEBOUNCE_MS` |
 | Test modules | `#[cfg(test)] mod tests` | In same file as implementation |
 
 #### Code Elements
@@ -86,8 +86,8 @@
 |------|------------|---------|
 | Functions | snake_case | `from_env()`, `generate_event_id()`, `parse_jsonl_line()`, `extract_basename()`, `parse_args()`, `parse_task_tool_use()`, `try_extract_agent_spawn()`, `parse_history_entry()`, `create_skill_invocation_event()` |
 | Constants | SCREAMING_SNAKE_CASE | `DEFAULT_PORT = 8080`, `SEED_LENGTH = 32`, `MAX_RETRY_DELAY_SECS = 60`, `STATS_DEBOUNCE_MS = 200` |
-| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent`, `HistoryEntry`, `SkillTracker` |
-| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command`, `ParsedEventKind`, `HistoryParseError`, `SkillTrackerError` |
+| Structs | PascalCase | `Config`, `Event`, `PrivacyPipeline`, `Crypto`, `Sender`, `Command`, `TaskToolInput`, `AgentSpawnEvent`, `HistoryEntry`, `SkillTracker`, `StatsTracker`, `StatsCache` |
+| Enums | PascalCase | `EventType`, `SessionAction`, `ServerError`, `CryptoError`, `SenderError`, `Command`, `ParsedEventKind`, `HistoryParseError`, `SkillTrackerError`, `StatsEvent`, `StatsTrackerError` |
 | Methods | snake_case | `.new()`, `.to_string()`, `.from_env()`, `.process()`, `.generate()`, `.load()`, `.save()`, `.sign()`, `.parse()` |
 | Lifetimes | Single lowercase letter | `'a`, `'static` |
 
@@ -129,6 +129,7 @@ Client error handling uses:
 | JSONL parsing errors | String-based variants | `MonitorError::Parse(String)` |
 | History.jsonl parsing (Phase 5) | Enum with specific variants | `HistoryParseError::InvalidJson`, `HistoryParseError::MissingDisplay`, `HistoryParseError::MissingTimestamp` |
 | Skill tracker errors (Phase 5) | Enum with watcher/channel variants | `SkillTrackerError::WatcherError`, `SkillTrackerError::ChannelError` |
+| Stats tracker errors (Phase 8) | Enum with watcher/parse/channel variants | `StatsTrackerError::WatcherInit`, `StatsTrackerError::Parse`, `StatsTrackerError::ChannelClosed` |
 
 ### Error Response Format
 
@@ -244,6 +245,28 @@ pub enum HistoryParseError {
 
     #[error("missing required field: sessionId")]
     MissingSessionId,
+}
+```
+
+**Stats Tracker Example** (`monitor/src/trackers/stats_tracker.rs` - Phase 8):
+
+```rust
+#[derive(Error, Debug)]
+pub enum StatsTrackerError {
+    #[error("failed to create watcher: {0}")]
+    WatcherInit(#[from] notify::Error),
+
+    #[error("failed to read stats cache: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("failed to parse stats cache: {0}")]
+    Parse(#[from] serde_json::Error),
+
+    #[error("claude directory not found: {0}")]
+    ClaudeDirectoryNotFound(PathBuf),
+
+    #[error("failed to send event: channel closed")]
+    ChannelClosed,
 }
 ```
 
@@ -1635,6 +1658,143 @@ Key conventions in skill_tracker module (Phase 5):
 - **Comprehensive documentation**: Module-level docs with examples and format specifications
 - **20+ unit tests**: Covering entry parsing, skill extraction, event creation, error cases
 
+### Stats Tracker Pattern (Rust - Phase 8)
+
+The stats_tracker module (`monitor/src/trackers/stats_tracker.rs`) watches `~/.claude/stats-cache.json` for Claude Code token usage statistics:
+
+```rust
+//! Stats cache tracker for monitoring Claude Code's token usage statistics.
+//!
+//! This module watches `~/.claude/stats-cache.json` for changes and emits
+//! [`StatsEvent`]s containing both [`SessionMetricsEvent`] and [`TokenUsageEvent`]
+//! data.
+//!
+//! # File Format
+//!
+//! The stats-cache.json file has the following structure:
+//!
+//! ```json
+//! {
+//!   "totalSessions": 150,
+//!   "totalMessages": 2500,
+//!   "totalToolUsage": 8000,
+//!   "longestSession": "00:45:30",
+//!   "hourCounts": { "0": 10, "1": 5, ..., "23": 50 },
+//!   "modelUsage": {
+//!     "claude-sonnet-4-20250514": {
+//!       "inputTokens": 1500000,
+//!       "outputTokens": 300000,
+//!       "cacheReadInputTokens": 800000,
+//!       "cacheCreationInputTokens": 100000
+//!     }
+//!   }
+//! }
+//! ```
+//!
+//! # Architecture
+//!
+//! The tracker uses the [`notify`] crate to watch for file changes, with a 200ms
+//! debounce to coalesce rapid file updates. When a change is detected:
+//!
+//! 1. The JSON file is parsed with retry on failure (file may be mid-write)
+//! 2. A [`SessionMetricsEvent`] is emitted once per file read
+//! 3. A [`TokenUsageEvent`] is emitted for each model in modelUsage
+
+/// Token usage data for a single model as stored in stats-cache.json.
+///
+/// Field names match the camelCase JSON format used by Claude Code.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelTokens {
+    /// Number of input tokens consumed by this model.
+    #[serde(default)]
+    pub input_tokens: u64,
+
+    /// Number of output tokens generated by this model.
+    #[serde(default)]
+    pub output_tokens: u64,
+
+    /// Number of tokens read from the prompt cache.
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+
+    /// Number of tokens written to the prompt cache.
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+}
+
+/// Parsed contents of Claude Code's stats-cache.json file.
+///
+/// All fields use camelCase to match the JSON format produced by Claude Code.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatsCache {
+    /// Total number of sessions.
+    #[serde(default)]
+    pub total_sessions: u64,
+
+    /// Total number of messages across all sessions.
+    #[serde(default)]
+    pub total_messages: u64,
+
+    /// Total number of tool invocations.
+    #[serde(default)]
+    pub total_tool_usage: u64,
+
+    /// Duration of the longest session (format: "HH:MM:SS").
+    #[serde(default)]
+    pub longest_session: String,
+
+    /// Activity counts by hour of day (0-23).
+    /// Keys are string representations of hours.
+    #[serde(default)]
+    pub hour_counts: HashMap<String, u64>,
+
+    /// Token usage broken down by model.
+    #[serde(default)]
+    pub model_usage: HashMap<String, ModelTokens>,
+}
+
+/// Events emitted by the stats tracker.
+///
+/// The stats tracker emits two types of events:
+/// - [`TokenUsageEvent`] for each model's token consumption
+/// - [`SessionMetricsEvent`] for global session statistics
+///
+/// Callers can pattern match on this enum to handle each event type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StatsEvent {
+    /// Token usage event for a specific model.
+    TokenUsage(TokenUsageEvent),
+    /// Global session metrics event.
+    SessionMetrics(SessionMetricsEvent),
+}
+
+/// Tracker for Claude Code's stats-cache.json file.
+///
+/// Watches for file changes and emits [`StatsEvent`]s when the file is
+/// updated. Uses debouncing to coalesce rapid file changes.
+pub struct StatsTracker {
+    // File watching and debouncing internals
+}
+
+impl StatsTracker {
+    /// Creates a new stats tracker.
+    ///
+    /// Sets up file system watching for `~/.claude/stats-cache.json`.
+    pub fn new(tx: mpsc::Sender<StatsEvent>) -> Result<Self, StatsTrackerError> { ... }
+}
+```
+
+Key conventions in stats_tracker module (Phase 8):
+- **File watching with debounce**: Uses `notify` crate with 200ms debounce for rapid changes
+- **Retry on parse failure**: Handles file-mid-write issues with configurable retries
+- **Dual event emission**: Emits `SessionMetricsEvent` once per file read, `TokenUsageEvent` per model
+- **Lenient parsing**: All fields use `#[serde(default)]` for forward compatibility
+- **camelCase JSON mapping**: Uses `#[serde(rename_all = "camelCase")]` to match Claude Code format
+- **Error handling**: Specific errors for watcher init, I/O, parse, and channel failures
+- **Comprehensive documentation**: Module-level docs with JSON format examples and architecture overview
+
 ### CLI Pattern (Rust - Phase 6)
 
 The main binary (`monitor/src/main.rs`) implements a simple command-line interface with async runtime management:
@@ -1864,6 +2024,25 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::types::SkillInvocationEvent;
 use crate::utils::tokenize::extract_skill_name;
+```
+
+Example from `monitor/src/trackers/stats_tracker.rs` (Phase 8):
+
+```rust
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use notify::{
+    event::ModifyKind, Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
+use serde::Deserialize;
+use thiserror::Error;
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, trace, warn};
+
+use crate::types::{SessionMetricsEvent, TokenUsageEvent};
+use crate::utils::debounce::Debouncer;
 ```
 
 ## Comments & Documentation
@@ -2342,6 +2521,47 @@ pub struct HistoryEntry {
 }
 ```
 
+Example from `monitor/src/trackers/stats_tracker.rs` (Phase 8):
+
+```rust
+//! Stats cache tracker for monitoring Claude Code's token usage statistics.
+//!
+//! This module watches `~/.claude/stats-cache.json` for changes and emits
+//! [`StatsEvent`]s containing both [`SessionMetricsEvent`] and [`TokenUsageEvent`]
+//! data.
+//!
+//! # File Format
+//!
+//! The stats-cache.json file has the following structure:
+//!
+//! ```json
+//! {
+//!   "totalSessions": 150,
+//!   "totalMessages": 2500,
+//!   "totalToolUsage": 8000,
+//!   "longestSession": "00:45:30",
+//!   "hourCounts": { "0": 10, "1": 5, ..., "23": 50 },
+//!   "modelUsage": {
+//!     "claude-sonnet-4-20250514": {
+//!       "inputTokens": 1500000,
+//!       "outputTokens": 300000,
+//!       "cacheReadInputTokens": 800000,
+//!       "cacheCreationInputTokens": 100000
+//!     }
+//!   }
+//! }
+//! ```
+//!
+//! # Architecture
+//!
+//! The tracker uses the [`notify`] crate to watch for file changes, with a 200ms
+//! debounce to coalesce rapid file updates. When a change is detected:
+//!
+//! 1. The JSON file is parsed with retry on failure (file may be mid-write)
+//! 2. A [`SessionMetricsEvent`] is emitted once per file read
+//! 3. A [`TokenUsageEvent`] is emitted for each model in modelUsage
+```
+
 ## Git Conventions
 
 ### Commit Messages
@@ -2366,6 +2586,8 @@ Examples with Phase 9:
 - `feat(client): add Activity Heatmap component with color scale and accessibility`
 
 Examples with Phase 8:
+- `feat(monitor): add stats_tracker for monitoring token usage statistics`
+- `feat(monitor): emit SessionMetricsEvent and TokenUsageEvent from stats_tracker`
 - `feat(client): add virtual scrolling event stream with auto-scroll`
 - `feat(client): add formatting utilities for timestamps and durations`
 - `test(client): add 33 tests for formatting utility functions`

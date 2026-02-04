@@ -1,6 +1,6 @@
 # Technology Stack
 
-**Status**: Phase 6 Implementation In Progress - Todo list tracking with abandonment detection
+**Status**: Phase 8 Implementation Complete - Enhanced token and session metrics tracking
 **Generated**: 2026-02-04
 **Last Updated**: 2026-02-04
 
@@ -8,7 +8,7 @@
 
 | Component | Language   | Version | Purpose |
 |-----------|-----------|---------|---------|
-| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, skill tracking, todo tracking, HTTP transmission |
+| Monitor   | Rust      | 2021    | Native file watching, JSONL parsing, privacy filtering, event signing, skill tracking, todo tracking, stats tracking, HTTP transmission |
 | Server    | Rust      | 2021    | Async HTTP/WebSocket server for event distribution and rate limiting |
 | Client    | TypeScript | 5.x     | Type-safe React UI for session visualization and real-time monitoring |
 
@@ -32,10 +32,10 @@
 | anyhow             | 1.0     | Flexible error handling and context | Server, Monitor |
 | tracing            | 0.1     | Structured logging framework | Server, Monitor |
 | tracing-subscriber | 0.3     | Logging implementation with JSON and env-filter | Server, Monitor |
-| notify             | 8.0     | Cross-platform file system watching (inotify/FSEvents) | Monitor watcher, skill tracker, todo tracker |
+| notify             | 8.0     | Cross-platform file system watching (inotify/FSEvents) | Monitor watcher, skill tracker, todo tracker, stats tracker |
 | base64             | 0.22    | Base64 encoding/decoding for signatures and keys | Server, Monitor |
 | rand               | 0.9     | Cryptographically secure random number generation | Server, Monitor |
-| directories        | 6.0     | Platform-specific standard directory paths | Monitor config, todo tracker |
+| directories        | 6.0     | Platform-specific standard directory paths | Monitor config, todo tracker, stats tracker |
 | gethostname        | 1.0     | System hostname retrieval for monitor source ID | Monitor config |
 | subtle             | 2.6     | Constant-time comparison to prevent timing attacks | Server auth |
 | futures-util       | 0.3     | WebSocket stream utilities and async helpers | Server |
@@ -94,7 +94,7 @@
 |------|---------|
 | `Cargo.toml` (workspace) | Rust workspace configuration with shared dependencies and edition settings |
 | `server/Cargo.toml` | Server package manifest with axum HTTP framework |
-| `monitor/Cargo.toml` | Monitor package manifest with crypto, file watching, CLI, skill tracking, and todo tracking |
+| `monitor/Cargo.toml` | Monitor package manifest with crypto, file watching, CLI, skill tracking, todo tracking, and stats tracking |
 | `client/vite.config.ts` | Vite build configuration with React, Tailwind, compression, WebSocket proxy |
 | `client/tsconfig.json` | TypeScript strict mode configuration (ES2020 target) |
 | `client/eslint.config.js` | ESLint flat config with TypeScript support |
@@ -119,7 +119,7 @@
 | Monitor → Server | HTTPS POST | JSON | Ed25519 signature in X-Signature header |
 | Server → Client | WebSocket (ws/wss) | JSON | Bearer token in query parameter |
 | Client → Server | WebSocket (ws/wss) | JSON | Bearer token |
-| Monitor → File System | Native file I/O | JSONL | N/A (local file access with permissions) |
+| Monitor → File System | Native file I/O | JSONL, JSON | N/A (local file access with permissions) |
 
 ## Data Serialization
 
@@ -131,6 +131,7 @@
 | Claude Code Sessions | JSONL (JSON Lines) | Privacy-first parsing extracting metadata only |
 | History File | JSONL (JSON Lines) | One JSON object per line, append-only file |
 | Todo Files | JSON Array | Array of todo entries with status fields |
+| Stats Cache | JSON Object | Claude Code stats-cache.json with model usage data |
 | Cryptographic Keys | Base64 + raw bytes | Public keys base64-encoded, private keys raw 32-byte seeds |
 
 ## Build Output
@@ -179,9 +180,10 @@
 - `main.rs` - CLI entry point (init, run commands)
 - `trackers/` - Specialized tracking modules
   - `agent_tracker.rs` - Task tool agent spawn detection
-  - `stats_tracker.rs` - Token and session statistics
+  - `stats_tracker.rs` - Token and session statistics from stats-cache.json (1279 lines)
   - `skill_tracker.rs` - Skill/slash command tracking from history.jsonl (1837 lines)
   - `todo_tracker.rs` - Todo list progress and abandonment detection (2345 lines)
+  - `file_history_tracker.rs` - Line change tracking for edited files
 - `utils/` - Utility functions
   - `tokenize.rs` - Skill name extraction from display strings
   - `session_filename.rs` - Todo and session filename parsing
@@ -195,81 +197,90 @@
 | Client | CDN | Static files | Optimized builds with Brotli compression |
 | Monitor | Local | Native binary | Users download and run locally |
 
-## Phase 6 - Todo List Tracking (In Progress)
+## Phase 8 - Enhanced Token and Session Metrics Tracking (Complete)
 
-**Status**: Implementation in progress
+**Status**: Implementation complete
 
-### New Module: `monitor/src/trackers/todo_tracker.rs` (2345 lines)
+### New Module: `monitor/src/trackers/stats_tracker.rs` (1279 lines)
 
 **Core Types**:
-- `TodoProgressEvent` - Event emitted when todo list changes
-- `TodoEntry` - Individual todo item with content and status
-- `TodoStatus` - Enum: Completed, InProgress, Pending
-- `TodoStatusCounts` - Aggregated counts by status
-- `TodoTracker` - File watcher for `~/.claude/todos/`
-- `TodoTrackerConfig` - Configuration (debounce interval)
-- `TodoParseError` / `TodoTrackerError` - Comprehensive error handling
+- `StatsEvent` - Enum with two variants: `SessionMetrics` and `TokenUsage`
+- `SessionMetricsEvent` - Global session statistics from stats-cache.json
+- `TokenUsageEvent` - Per-model token consumption metrics
+- `StatsCache` - Deserialized stats-cache.json structure
+- `ModelTokens` - Per-model token counts and cache metrics
+- `StatsTracker` - File watcher for stats-cache.json
+- `StatsTrackerConfig` - Configuration (debounce interval)
+- `StatsTrackerError` - Comprehensive error types
 
 **Parsing Functions**:
-- `parse_todo_file()` - Strict JSON array parsing
-- `parse_todo_file_lenient()` - Lenient parsing skipping invalid entries
-- `parse_todo_entry()` - Single entry validation
-- `count_todo_statuses()` - Aggregate status counting
-- `extract_session_id_from_filename()` - UUID extraction from filename
+- `read_stats_with_retry()` - Reads JSON with retry logic (up to 3 attempts)
+- `read_stats()` - Synchronous file read and parse
+- `parse_stats_cache()` - Public helper for testing
+- `emit_stats_events()` - Creates and sends SessionMetricsEvent + TokenUsageEvents
 
-**Abandonment Detection**:
-- `is_abandoned()` - Determines if todo list abandoned (session ended + incomplete tasks)
-- `create_todo_progress_event()` - Constructs event with metadata
+**Event Emission**:
+- Emits `SessionMetricsEvent` once per stats-cache.json read
+- Emits `TokenUsageEvent` for each model in modelUsage section
+- Includes per-model metrics: input tokens, output tokens, cache read tokens, cache creation tokens
+- Includes session metrics: total_sessions, total_messages, total_tool_usage, longest_session
 
 **File Watching**:
-- Monitors `~/.claude/todos/` directory
-- Detects JSON file creation and modification
-- Debounces file changes (100ms default)
+- Monitors `~/.claude/stats-cache.json` for changes
+- 200ms debounce interval to coalesce rapid writes
+- Handles initial read if file exists on startup
+- Retries JSON parse with 100ms delays (up to 3 attempts)
 - Uses notify crate for cross-platform FSEvents/inotify
-- Maintains session ended state via RwLock<HashSet>
-- Lenient parsing handles partially-written files
 
-**Test Coverage**: 100+ comprehensive tests covering:
-- Filename parsing and validation (8 tests)
-- Status counting (6 tests)
-- Abandonment detection (6 tests)
-- Entry parsing (8 tests)
-- File parsing (8 tests)
-- Lenient parsing (4 tests)
-- TodoStatus traits (3 tests)
-- TodoStatusCounts methods (3 tests)
-- Error messages (2 tests)
-- Configuration (2 tests)
-- File operations and async (12+ tests)
-
-### Enhanced Utilities
-
-**`monitor/src/utils/debounce.rs`**:
-- `Debouncer<K, V>` - Generic debouncing implementation
-- Coalesces rapid file change notifications
-- Configurable duration (100ms default for todo files)
-
-**`monitor/src/utils/session_filename.rs`**:
-- `parse_todo_filename()` - Extract session ID from todo filename
-- Pattern: `<session-uuid>-agent-<session-uuid>.json`
-- Returns Option with parsed UUID string
-
-### Enhanced Integration
-
-**Main Event Loop** (`monitor/src/main.rs`):
-- TodoTracker initialization during startup
-- Todo event channel processing
-- Session ended tracking integration
+**Main Event Loop Integration** (`monitor/src/main.rs`):
+- StatsTracker initialization during startup (optional, warns on failure)
+- Dedicated channel for stats events: `mpsc::channel::<StatsEvent>`
+- Stats event processing in main select! loop
+- `process_stats_event()` handler converts to Event and queues for sending
+- Graceful handling if stats tracker unavailable
 
 **Event Types** (`monitor/src/types.rs`):
-- `EventType::TodoProgress` - New enum variant
-- `EventPayload::TodoProgress` - Payload wrapper with counts and abandoned flag
+- `EventType::SessionMetrics` - New enum variant
+- `EventType::TokenUsage` - New enum variant
+- `EventPayload::SessionMetrics(SessionMetricsEvent)` - Session metrics payload
+- `EventPayload::TokenUsage(TokenUsageEvent)` - Token usage payload
 
-**Privacy-First Approach**:
-- Only status counts extracted (completed, in_progress, pending)
-- Task content never read or transmitted
-- Session ended state tracked from summary events
-- Abandonment detection without exposing task details
+**Test Coverage**: 60+ comprehensive tests covering:
+- JSON parsing (7 tests)
+- Model token parsing (6 tests)
+- Empty/partial stats (3 tests)
+- Malformed JSON handling (3 tests)
+- Stats event emission (3 tests)
+- Token event ordering (2 tests)
+- Debounce timing (2 tests)
+- Parse retry logic (2 tests)
+- Missing/malformed files (3 tests)
+- Tracker creation (2 tests)
+- Initial read behavior (1 test)
+- Refresh method (1 test)
+- Error display (1 test)
+- Struct equality/clone (5 tests)
+- Enum variant tests (3 tests)
+- Field mapping tests (3 tests)
+
+**File Format** (`~/.claude/stats-cache.json`):
+```json
+{
+  "totalSessions": 150,
+  "totalMessages": 2500,
+  "totalToolUsage": 8000,
+  "longestSession": "00:45:30",
+  "hourCounts": { "0": 10, "1": 5, ..., "23": 50 },
+  "modelUsage": {
+    "claude-sonnet-4-20250514": {
+      "inputTokens": 1500000,
+      "outputTokens": 300000,
+      "cacheReadInputTokens": 800000,
+      "cacheCreationInputTokens": 100000
+    }
+  }
+}
+```
 
 ## Key Features & Capabilities
 
@@ -286,7 +297,7 @@
 - Task tool agent spawn detection and tracking
 - Skill/slash command invocation tracking (Phase 5)
 - Todo list progress and abandonment detection (Phase 6)
-- Token usage and statistics accumulation
+- Token usage and session statistics accumulation (Phase 8)
 - Real-time activity heatmaps
 
 ### Reliability
@@ -296,6 +307,7 @@
 - Lenient JSONL parsing
 - Debouncing for file change coalescing
 - Auto-reconnection with backoff
+- Parse retry logic for concurrent file writes
 
 ### Security
 - Ed25519 signatures on all events

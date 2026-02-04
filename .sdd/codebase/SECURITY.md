@@ -72,6 +72,7 @@ The authentication flow for event submission (POST /events):
 | Signatures | Base64 format and cryptographic verification | `ed25519_dalek` |
 | Event payload | Serde deserialization with typed fields | `Event` struct in `types.rs` |
 | Todo files | JSON array parsing with entry validation | `serde` with lenient fallback parsing in `todo_tracker.rs` |
+| Stats cache | JSON parsing with retry on failure | `serde` with graceful fallback in `stats_tracker.rs` |
 
 ### Sanitization
 
@@ -82,6 +83,7 @@ The authentication flow for event submission (POST /events):
 | Headers | Non-empty validation | `routes.rs:263-273` (X-Source-ID), `277-290` (X-Signature) |
 | Base64 data | Decoding validation | `auth.rs:204-206`, `218-220` |
 | Todo content | Never transmitted (metadata only) | `monitor/src/trackers/todo_tracker.rs:45-48` |
+| Stats cache file | Parsed with retries; invalid entries silently skipped | `monitor/src/trackers/stats_tracker.rs:175-207` |
 
 ## Data Protection
 
@@ -96,6 +98,7 @@ The authentication flow for event submission (POST /events):
 | Signatures | Base64-encoded, verified against message | Not stored |
 | Todo task content | Never extracted or transmitted | Files read locally, only counts emitted |
 | Todo file paths | Validated with UUID pattern matching | `monitor/src/trackers/todo_tracker.rs:504-506` |
+| Stats cache file | Read-only access; metrics aggregated | `monitor/src/trackers/stats_tracker.rs:33-86` |
 
 ### Cryptography
 
@@ -134,19 +137,32 @@ The authentication flow for event submission (POST /events):
 | Todo file monitoring | Watches `~/.claude/todos/` for file changes | `monitor/src/trackers/todo_tracker.rs:587-609` |
 | Data extraction | Task status counts only (completed, in_progress, pending) | `TodoProgressEvent` struct |
 | Task content excluded | Task descriptions never extracted or transmitted | `todo_tracker.rs:45-48` (privacy documentation) |
-| Filename validation | UUID pattern matching prevents arbitrary files | `todo_tracker.rs:862-866` |
+| Filename validation | UUID pattern matching prevents arbitrary files | `todo_tracker.rs:504-506` |
 | Lenient parsing | Handles partially written files gracefully | `todo_tracker.rs:422-436` (parse_todo_file_lenient) |
 | Session tracking | Correlates with summary events for abandonment detection | `todo_tracker.rs:549-584` (abandonment detection) |
 | Metadata only principle | Only status counts and abandonment flag transmitted | `todo_tracker.rs:508-547` (event creation) |
 
+### Stats Tracking Privacy (Phase 8)
+
+| Aspect | Implementation | Location |
+|--------|----------------|----------|
+| Stats cache monitoring | Watches `~/.claude/stats-cache.json` for changes | `monitor/src/trackers/stats_tracker.rs:274-295` |
+| Data extraction | Aggregated metrics only (session counts, token usage by model) | `SessionMetricsEvent`, `TokenUsageEvent` structs |
+| No file content exposed | Only parsed metrics transmitted, not raw file contents | `stats_tracker.rs:175-207` (parse and emit) |
+| Metrics aggregation | Global stats (total sessions, total messages, tool usage) | `SessionMetricsEvent` - `types.rs:108-117` |
+| Per-model token tracking | Token usage breakdown by model name | `TokenUsageEvent` - `types.rs:92-103` |
+| Retry logic | Graceful handling when file is being written | `stats_tracker.rs:222-254` (with_retry function) |
+| Metadata only principle | Only aggregated counts transmitted, never user code or content | `types.rs:92-117` (StatsEvent variants) |
+
 ### Data Handling Philosophy
 
-- **Privacy-first design**: TodoTracker and other trackers extract only non-sensitive metadata
-- **Metadata extraction**: Only status counts, skill names, agent types - never content, prompts, or arguments
-- **No content logging**: Task content, prompts, and command arguments are never extracted or transmitted
+- **Privacy-first design**: All trackers extract only non-sensitive metadata
+- **Metadata extraction**: Only status counts, skill names, agent types, token aggregates - never content, prompts, or arguments
+- **No content logging**: Task content, prompts, command arguments, and file contents are never extracted or transmitted
 - **Type-safe privacy**: Privacy enforcement is built into struct definitions, not runtime validation
 - **File validation**: Strict filename pattern matching prevents reading unintended files
 - **Graceful degradation**: Lenient parsing continues on invalid entries rather than failing completely
+- **Aggregation approach**: Stats are aggregated into summary metrics before transmission
 
 ## Rate Limiting
 
@@ -176,6 +192,7 @@ The authentication flow for event submission (POST /events):
 | Port | `PORT` | No | Numeric, default 8080 |
 | Auth bypass | `VIBETEA_UNSAFE_NO_AUTH` | No | "true" to disable auth (dev only) |
 | Logging | `RUST_LOG` | No | Log level filter (default: info) |
+| Privacy allowlist | `VIBETEA_BASENAME_ALLOWLIST` | No | Comma-separated file extensions (e.g., `.rs,.ts,.md`) |
 
 ### Secrets Storage
 
@@ -222,6 +239,7 @@ VibeTea is a WebSocket/HTTP API server designed for backend-to-backend communica
 | Server startup | Port, auth mode, public key count | `main.rs:74-79` (info level) |
 | File watcher initialization | History file path | `skill_tracker.rs:474-476` (info level) |
 | Todo watcher initialization | Todos directory path | `todo_tracker.rs:712-716` (info level) |
+| Stats watcher initialization | Stats cache file path | `stats_tracker.rs:306-310` (info level) |
 
 All logging is structured JSON output via `tracing` crate.
 

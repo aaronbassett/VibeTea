@@ -1,6 +1,6 @@
 # External Integrations
 
-**Status**: Phase 6 Implementation In Progress - Todo list tracking with abandonment detection
+**Status**: Phase 8 Implementation Complete - Enhanced token and session metrics tracking
 **Generated**: 2026-02-04
 **Last Updated**: 2026-02-04
 
@@ -240,6 +240,112 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - Pattern: `<session-uuid>-agent-<session-uuid>.json`
 - Returns Option<String> with first UUID
 
+### Claude Code Stats Cache (Phase 8)
+
+**Source**: `~/.claude/stats-cache.json`
+**Format**: JSON object with model usage and session metrics
+**Update Mechanism**: File system watcher via `notify` crate (inotify/FSEvents)
+
+**Stats Tracker Location**: `monitor/src/trackers/stats_tracker.rs` (1279 lines)
+
+**Purpose**: Track token usage per model and global session statistics
+
+**Stats Cache File Structure**:
+```json
+{
+  "totalSessions": 150,
+  "totalMessages": 2500,
+  "totalToolUsage": 8000,
+  "longestSession": "00:45:30",
+  "hourCounts": { "0": 10, "1": 5, ..., "23": 50 },
+  "modelUsage": {
+    "claude-sonnet-4-20250514": {
+      "inputTokens": 1500000,
+      "outputTokens": 300000,
+      "cacheReadInputTokens": 800000,
+      "cacheCreationInputTokens": 100000
+    },
+    "claude-opus-4-20250514": {
+      "inputTokens": 500000,
+      "outputTokens": 150000,
+      "cacheReadInputTokens": 200000,
+      "cacheCreationInputTokens": 50000
+    }
+  }
+}
+```
+
+**Fields**:
+- `totalSessions`: Total number of Claude Code sessions
+- `totalMessages`: Total messages across all sessions
+- `totalToolUsage`: Total tool invocations
+- `longestSession`: Duration string (HH:MM:SS format)
+- `hourCounts`: Activity distribution by hour of day (0-23)
+- `modelUsage`: Per-model token consumption with cache metrics
+
+**Privacy-First Approach**:
+- Only aggregate statistics extracted (never session/prompt content)
+- No model-specific information beyond model name
+- Cache metrics only (no raw data)
+- Session context derived from file name parsing only
+
+**Stats Tracker Module** (`monitor/src/trackers/stats_tracker.rs`):
+
+1. **Core Types**:
+   - `StatsEvent` - Enum with variants: `SessionMetrics`, `TokenUsage`
+   - `SessionMetricsEvent` - Global session statistics
+   - `TokenUsageEvent` - Per-model token consumption
+   - `StatsCache` - Deserialized stats-cache.json
+   - `ModelTokens` - Per-model token counts
+   - `StatsTracker` - File watcher for stats-cache.json
+   - `StatsTrackerError` - Comprehensive error types
+
+2. **Parsing Functions**:
+   - `read_stats_with_retry()` - Reads with retry logic (up to 3 attempts)
+   - `read_stats()` - Synchronous file read and parse
+   - `parse_stats_cache()` - Public helper for testing
+   - `emit_stats_events()` - Creates SessionMetricsEvent + TokenUsageEvents
+
+3. **Event Emission**:
+   - Emits `SessionMetricsEvent` once per stats-cache.json read
+   - Emits `TokenUsageEvent` for each model in modelUsage
+   - Per-model events include: input tokens, output tokens, cache read tokens, cache creation tokens
+
+4. **File Watching**:
+   - Monitors `~/.claude/stats-cache.json` for changes
+   - 200ms debounce interval to coalesce rapid writes
+   - Handles initial read if file exists on startup
+   - Retries JSON parse with 100ms delays (up to 3 attempts)
+   - Uses notify crate for cross-platform FSEvents/inotify
+   - Graceful degradation if file unavailable
+
+5. **Main Event Loop Integration**:
+   - StatsTracker initialization during startup (optional, warns on failure)
+   - Dedicated channel: `mpsc::channel::<StatsEvent>`
+   - Stats event processing in main select! loop
+   - `process_stats_event()` handler in main.rs converts to Event
+
+**Configuration**:
+- Default location: `~/.claude/stats-cache.json`
+- Debounce interval: 200ms
+- Parse retry delay: 100ms
+- Max retries: 3 attempts
+- No environment variables required (uses `directories` crate)
+
+**Test Coverage**: 60+ comprehensive tests covering:
+- JSON parsing (7 tests)
+- Model token parsing (6 tests)
+- Empty/partial stats (3 tests)
+- Malformed JSON handling (3 tests)
+- Stats event emission (3 tests)
+- Debounce timing (2 tests)
+- Parse retry logic (2 tests)
+- Missing/malformed files (3 tests)
+- Tracker creation (2 tests)
+- Initial read behavior (1 test)
+- Refresh method (1 test)
+- Enum/equality tests (10 tests)
+
 ## Privacy & Data Sanitization
 
 ### Privacy Pipeline Architecture
@@ -283,6 +389,8 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 | AgentSpawn | Pass through unchanged |
 | SkillInvocation | Pass through unchanged |
 | TodoProgress | Pass through unchanged (only counts) |
+| SessionMetrics | Pass through unchanged (aggregate data) |
+| TokenUsage | Pass through unchanged (aggregate data) |
 | Summary | Text replaced with "Session ended" |
 | Error | Pass through unchanged |
 
@@ -295,6 +403,12 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 - TodoProgressEvent contains only counts and abandonment flag
 - No task content or descriptions transmitted
 - Counts are aggregate, non-sensitive metadata
+
+**Stats Privacy**:
+- SessionMetricsEvent contains only aggregate counts
+- TokenUsageEvent contains per-model consumption metrics
+- No per-session data or user information
+- Cache metrics are transparent usage data
 
 ### Privacy Test Suite
 
@@ -358,7 +472,7 @@ All integrations use standard protocols (HTTPS, WebSocket) with cryptographic me
 
 ## External APIs
 
-There are no external third-party API integrations in Phase 6. The system is self-contained:
+There are no external third-party API integrations in Phase 8. The system is self-contained:
 - All data sources are local files
 - All services are internal (Monitor, Server, Client)
 - No SaaS dependencies or external service calls
@@ -498,15 +612,16 @@ There are no external third-party API integrations in Phase 6. The system is sel
 - ConnectionStatus component for visual feedback
 - useWebSocket hook with auto-reconnect
 
-### Monitor → File System (JSONL & Todo Watching)
+### Monitor → File System (JSONL, Todo, & Stats Watching)
 
 **Targets**:
 - `~/.claude/projects/**/*.jsonl` - Session events
 - `~/.claude/history.jsonl` - Skill invocations
 - `~/.claude/todos/*.json` - Todo lists
+- `~/.claude/stats-cache.json` - Token/session statistics
 
 **Mechanism**: `notify` crate file system events
-**Update Strategy**: Incremental line reading with position tracking (sessions/history), file debouncing (todos)
+**Update Strategy**: Incremental line reading with position tracking (sessions/history), file debouncing (todos/stats)
 
 **Session File Flow**:
 1. FileWatcher initialized with watch directory
@@ -537,13 +652,23 @@ There are no external third-party API integrations in Phase 6. The system is sel
 8. TodoProgressEvent emitted via mpsc channel
 9. Changes debounced at 100ms to coalesce rapid writes
 
+**Stats File Monitoring** (Phase 8):
+1. StatsTracker initialized with stats-cache.json path
+2. Watcher monitors `~/.claude/` directory
+3. File creation/modification detected
+4. File content read as JSON object
+5. SessionMetricsEvent created and emitted
+6. TokenUsageEvent created for each model
+7. Events emitted via mpsc channel
+8. Changes debounced at 200ms to coalesce rapid writes
+
 **Efficiency Features**:
 - Position tracking prevents re-reading (sessions/history)
 - Only new lines since last position extracted
 - BufReader with Seek for efficient iteration
 - Arc<RwLock<>> for thread-safe concurrent access
 - Atomic offset for lock-free reads in skill tracker
-- Debouncing prevents duplicate processing (todos)
+- Debouncing prevents duplicate processing (todos/stats)
 
 ## Development & Local Configuration
 
@@ -626,7 +751,7 @@ Event {
 }
 ```
 
-**Supported Event Types** (Phase 6):
+**Supported Event Types** (Phase 8):
 | Type | Payload | Purpose |
 |------|---------|---------|
 | `session` | sessionId, action, project | Session lifecycle |
@@ -636,6 +761,8 @@ Event {
 | `agent_spawn` | sessionId, agent_type, description | Task tool agents |
 | `skill_invocation` | sessionId, skill_name, project | Slash commands |
 | `todo_progress` | sessionId, completed, in_progress, pending, abandoned | Todo tracking |
+| `session_metrics` | total_sessions, total_messages, total_tool_usage, longest_session | Global stats |
+| `token_usage` | model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens | Per-model consumption |
 | `summary` | sessionId, summary | Session end |
 | `error` | sessionId, category | Error reporting |
 
@@ -656,7 +783,7 @@ Event {
 - Environment-based filtering
 - Structured context in logs
 
-**No External Service Integration** (Phase 6):
+**No External Service Integration** (Phase 8):
 - Logs to stdout/stderr only
 - Future: Integration with logging services (Datadog, ELK)
 
@@ -664,7 +791,7 @@ Event {
 
 ### Cryptographic Authentication
 
-**Ed25519 Signatures** (Phase 6):
+**Ed25519 Signatures** (Phase 8):
 - Library: `ed25519-dalek` crate (version 2.1)
 - Key generation: 32-byte seed via OS RNG
 - Signature verification: Base64-encoded public keys per source
@@ -693,6 +820,12 @@ Event {
 - Task content never read or transmitted
 - Abandonment flag is only metadata
 - Session correlation via session_id only
+
+**Stats Cache** (Phase 8):
+- Only aggregate statistics transmitted
+- No per-session or per-user data
+- Model names and consumption metrics only
+- Cache metrics for transparency
 
 ### Data in Transit
 
