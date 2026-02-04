@@ -17,8 +17,8 @@
 pub mod agent_tracker;
 pub mod skill_tracker;
 pub mod stats_tracker;
+pub mod todo_tracker;
 
 // Tracker modules will be added as they are implemented:
-// pub mod todo_tracker;
 // pub mod file_history_tracker;
 // pub mod project_tracker;
