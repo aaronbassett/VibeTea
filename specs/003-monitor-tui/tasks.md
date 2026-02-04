@@ -265,8 +265,8 @@
 ### Codebase Mapping and Retro
 - [x] T131 [US3] Run /sdd:map incremental for Phase 5 changes
 - [x] T132 [GIT] Commit: update codebase documents for phase 5
-- [ ] T133 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T134 [GIT] Commit: finalize phase 5 retro
+- [x] T133 [US3] Review retro/P5.md and extract critical learnings to CLAUDE.md (conservative)
+- [x] T134 [GIT] Commit: finalize phase 5 retro
 
 ### Phase Completion
 - [ ] T135 [GIT] Push branch to origin (ensure pre-push hooks pass)
