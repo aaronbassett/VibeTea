@@ -234,8 +234,8 @@
   - Start monitor in background step
   - Output monitor-pid
   - Graceful shutdown via SIGTERM (FR-010)
-- [ ] T088 [GIT] Commit: create vibetea-monitor composite action
-- [ ] T089 [US4] Update README.md with action usage examples
+- [x] T088 [GIT] Commit: create vibetea-monitor composite action
+- [x] T089 [US4] Update README.md with action usage examples
   - Basic usage
   - Custom source ID
   - Pinned version

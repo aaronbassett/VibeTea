@@ -209,6 +209,87 @@ jobs:
       # Monitor automatically shuts down when workflow ends
 ```
 
+### Using the Reusable GitHub Action
+
+For a simpler setup, use the pre-built VibeTea monitor action:
+
+**Basic Usage:**
+
+```yaml
+name: CI with VibeTea Monitoring
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Start VibeTea monitor
+      - name: Start VibeTea Monitor
+        uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+        with:
+          server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+          private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+
+      # Your CI steps here (Claude Code PR review, tests, etc.)
+      - name: Run Tests
+        run: cargo test
+
+      # Graceful shutdown (recommended)
+      - name: Stop VibeTea Monitor
+        if: always()
+        run: |
+          if [ -n "$VIBETEA_MONITOR_PID" ]; then
+            kill -TERM $VIBETEA_MONITOR_PID 2>/dev/null || true
+            sleep 2
+          fi
+```
+
+**Custom Source ID:**
+
+```yaml
+- name: Start VibeTea Monitor
+  uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    source-id: "pr-${{ github.event.pull_request.number }}"
+```
+
+**Pinned Version:**
+
+```yaml
+- name: Start VibeTea Monitor
+  uses: aaronbassett/VibeTea/.github/actions/vibetea-monitor@main
+  with:
+    server-url: ${{ secrets.VIBETEA_SERVER_URL }}
+    private-key: ${{ secrets.VIBETEA_PRIVATE_KEY }}
+    version: "v0.1.0"
+```
+
+**Action Inputs:**
+
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `server-url` | Yes | - | VibeTea server URL |
+| `private-key` | Yes | - | Base64-encoded Ed25519 private key |
+| `source-id` | No | `github-<repo>-<run_id>` | Custom event source identifier |
+| `version` | No | `latest` | Monitor version to download |
+| `shutdown-timeout` | No | `5` | Seconds to wait for graceful shutdown |
+
+**Action Outputs:**
+
+| Output | Description |
+|--------|-------------|
+| `monitor-pid` | Process ID of the running monitor |
+| `monitor-started` | Whether the monitor started successfully (`true`/`false`) |
+
 ### Environment Variables
 
 When running in GitHub Actions, the monitor uses these environment variables:
