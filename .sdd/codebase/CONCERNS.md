@@ -25,28 +25,27 @@
 | SEC-008 | Export-key stdout purity | Diagnostic/error messages must be stderr-only to enable safe piping | Low | Export-key explicitly prints errors to stderr; only key goes to stdout | Mitigated (Phase 4) |
 | SEC-009 | GitHub Actions secret exposure | Private key accessible in GitHub Actions environment; potential exposure via leaked logs | Medium | Use GitHub secret masking; never log VIBETEA_PRIVATE_KEY; minimize output from monitor process | Mitigated (Phase 5) |
 | SEC-010 | Composite action error handling | Action warns on network failure but continues workflow; potential silent monitoring failures | Medium | Document in README; monitor logs for warnings; consider explicit failure modes | Mitigated (Phase 6) |
-| SEC-011 | Project slug path decoding | Directory names with dashes cannot be reliably decoded (e.g., `my-project` becomes `my/project`) | Low | Document limitation; recommend camelCase or underscores for project directory names | Open |
-| SEC-012 | Project path traversal | Decoded project paths not validated; may produce nonsensical or system paths | Low | Paths used for display only, not filesystem operations; not a security risk | Open |
-| SEC-013 | Session file state race | File may be deleted after event detection but before processing | Low | Handled gracefully: missing file treated as session completion | Mitigated |
+| SEC-011 | Key backup operation atomicity (Phase 9) | Private key backed up successfully but public key rename fails leaves orphaned backup | Medium | Best-effort restore implemented; consider explicit rollback transaction | Open |
+| SEC-012 | Key option display logic (Phase 9) | Conditional rendering based on `existing_keys_found` may allow invalid state if flag not properly set | Low | State machine should enforce invariant; current approach adequate | Mitigated |
 
-## Security Improvements (Phase 3-11)
+## Security Improvements (Phase 3-9)
 
 ### Phase 3 Features
 
 | ID | Feature | Implementation | Status | Location |
 |----|---------|-----------------|--------|----------|
 | FR-019 | Never log private key value | Private key seed never converted to string for logging | Implemented | `monitor/src/crypto.rs` - no logging of sensitive values |
-| FR-020 | Memory zeroing for key material | Zeroize crate wipes intermediate buffers after SigningKey construction | Implemented | `monitor/src/crypto.rs:114,157,169,221,233,287` |
+| FR-020 | Memory zeroing for key material | Zeroize crate wipes intermediate buffers after SigningKey construction | Implemented | `monitor/src/crypto.rs:120,173,235,289` |
 | FR-021 | Standard Base64 RFC 4648 | All key encoding uses standard (not URL-safe) base64 | Implemented | `monitor/src/crypto.rs:152,216` uses `BASE64_STANDARD` |
-| FR-022 | Validate key material is exactly 32 bytes | Strict validation on load/decode, clear error messages | Implemented | `monitor/src/crypto.rs:155-162,219-226,276-283` |
+| FR-022 | Validate key material is exactly 32 bytes | Strict validation on load/decode, clear error messages | Implemented | `monitor/src/crypto.rs:161-168,219-226,276-283` |
 
 ### Phase 4 Features
 
 | ID | Feature | Implementation | Status | Location |
 |----|---------|-----------------|--------|----------|
-| FR-003 | Export-key command | CLI subcommand outputs base64-encoded private key + single newline | Implemented | `monitor/src/main.rs:101-109, 181-202` |
-| FR-023 | Stderr for diagnostics | All diagnostic/error messages go to stderr; stdout is key-only | Implemented | `monitor/src/main.rs:196-199` - errors print to eprintln! |
-| FR-026 | Exit code semantics | 0 for success, 1 for configuration error (missing key) | Implemented | `monitor/src/main.rs:199` |
+| FR-003 | Export-key command | CLI subcommand outputs base64-encoded private key + single newline | Implemented | `monitor/src/main.rs` |
+| FR-023 | Stderr for diagnostics | All diagnostic/error messages go to stderr; stdout is key-only | Implemented | `monitor/src/main.rs` - errors print to eprintln! |
+| FR-026 | Exit code semantics | 0 for success, 1 for configuration error (missing key) | Implemented | `monitor/src/main.rs` |
 | FR-027 | Integration tests | Tests verify exported key roundtrips via `VIBETEA_PRIVATE_KEY` | Implemented | `monitor/tests/key_export_test.rs:148-221` |
 | FR-028 | Signature consistency | Ed25519 deterministic; tests verify identical signatures after export-import | Implemented | `monitor/tests/key_export_test.rs:229-264` |
 
@@ -68,17 +67,13 @@
 | FR-035 | Non-blocking action errors | Network/config failures log warnings but don't fail workflow | Implemented | `.github/actions/vibetea-monitor/action.yml:101-120` |
 | FR-036 | Dynamic source ID interpolation | Action default source ID uses repo and run_id for uniqueness | Implemented | `.github/actions/vibetea-monitor/action.yml:96` |
 
-### Phase 11 Features
+### Phase 9 Features
 
 | ID | Feature | Implementation | Status | Location |
 |----|---------|-----------------|--------|----------|
-| FR-037 | Project activity tracking | ProjectTracker monitors `~/.claude/projects/` for session JSONL changes | Implemented | `monitor/src/trackers/project_tracker.rs` |
-| FR-038 | Privacy-first project tracking | Only transmits project path, session ID, and activity status; no code/prompts | Implemented | `monitor/src/trackers/project_tracker.rs:238-246` |
-| FR-039 | Summary event detection | Session activity determined by presence of summary event in JSONL | Implemented | `monitor/src/trackers/project_tracker.rs:157-173` |
-| FR-040 | UUID filename validation | Session files must match UUID format (8-4-4-4-12 hex digits) | Implemented | `monitor/src/trackers/project_tracker.rs:751-772` |
-| FR-041 | Project slug parsing | Reverse transforms slug format (dashes to slashes) for path reconstruction | Implemented | `monitor/src/trackers/project_tracker.rs:119-123` |
-| FR-042 | File system watching | Uses notify crate for efficient recursive directory watching | Implemented | `monitor/src/trackers/project_tracker.rs:531-553` |
-| FR-043 | Initial project scan | Configurable full scan of projects directory on startup | Implemented | `monitor/src/trackers/project_tracker.rs:405-413` |
+| FR-015 | Key backup on generation | `backup_existing_keys()` backs up prior keys with timestamp suffix | Implemented | `monitor/src/crypto.rs:404-440` |
+| FR-037 | Key option conditional display | Setup form shows key option based on `existing_keys_found` flag | Implemented | `monitor/src/tui/widgets/setup_form.rs:309-353` |
+| FR-038 | Generate with backup API | `generate_with_backup()` method provides high-level backup + generate | Implemented | `monitor/src/crypto.rs:480-489` |
 
 ## Technical Debt
 
@@ -88,6 +83,7 @@
 |----|------|-------------|--------|--------|--------|
 | TD-001 | Cleanup task | Rate limiter cleanup task in main.rs never terminates; cleanup_handle is dropped without cancellation | Cleanup runs until server shutdown | Low | Open |
 | TD-002 | Error handling | Some auth errors (InvalidPublicKey) could reveal server configuration details in logs | Debugging difficulty | Low | Open |
+| TD-011 | Key backup filesystem (Phase 9) | Backup operation not atomic at filesystem level; private key rename succeeds but public key fails | Data inconsistency risk | Medium | Open |
 
 ### Medium Priority
 
@@ -96,17 +92,17 @@
 | TD-003 | Configuration validation | VIBETEA_PUBLIC_KEYS parsing doesn't validate that decoded base64 is exactly 32 bytes | Confusing error messages at runtime | Low | Open |
 | TD-004 | Type safety | EventPayload uses untagged enum which could be fragile with certain JSON structures | API contract ambiguity | Medium | Open |
 | TD-005 | Logging | Some debug/trace logs are verbose and could impact performance under load | Performance in high-traffic scenarios | Low | Open |
-| TD-006 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
-| TD-007 | Composite action cleanup | Post-job cleanup requires manual SIGTERM step; no automatic cleanup mechanism | Potential zombie processes | Medium | Open |
-| TD-010 | Project slug ambiguity | Slug format cannot distinguish between path separators and dashes in directory names | Path reconstruction ambiguity | Medium | Open |
-| TD-011 | Project tracker scanning | Manual scan_projects() requires awaiting but doesn't feed results to external channels | Developer friction | Low | Open |
+| TD-008 | Export-key path handling | Currently requires --path flag; no automatic .env file detection for fallback keys | Developer friction | Low | Open |
+| TD-009 | Composite action cleanup | Post-job cleanup requires manual SIGTERM step; no automatic cleanup mechanism | Potential zombie processes | Medium | Open |
+| TD-012 | Key option logic (Phase 9) | Complex conditional rendering based on `existing_keys_found` flag; hard to reason about state | Maintenance burden | Low | Open |
 
 ### Low Priority
 
 | ID | Area | Description | Impact | Effort | Status |
 |----|------|-------------|--------|--------|--------|
-| TD-008 | Documentation | VIBETEA_PRIVATE_KEY environment variable now documented in SECURITY.md | Developer confusion | Low | Resolved |
-| TD-009 | Error response codes | Health endpoint always returns 200 even during degradation; no status codes for partial failure | Monitoring complexity | Low | Open |
+| TD-006 | Documentation | VIBETEA_PRIVATE_KEY environment variable now documented in SECURITY.md | Developer confusion | Low | Resolved |
+| TD-007 | Error response codes | Health endpoint always returns 200 even during degradation; no status codes for partial failure | Monitoring complexity | Low | Open |
+| TD-013 | Key backup duplication (Phase 9) | `load_with_fallback()` duplicates env var decoding logic | Code duplication | Low | Open |
 
 ## Known Bugs
 
@@ -114,7 +110,7 @@
 |----|-------------|------------|----------|--------|
 | BUG-001 | EnvGuard in tests modifies global env var state; tests must use `#[serial]` to avoid race conditions | Use `#[serial]` decorator on all env-var-touching tests | Medium | Mitigated in code |
 | BUG-002 | WebSocket client lagging causes skipped events (lagged count logged but events discarded) | No workaround; clients must reconnect to resume from current position | Medium | Documented in trace log |
-| BUG-003 | ProjectTracker initial scan is async and may miss file events during startup | Configure scan_on_init to false if using external discovery; startup delay allows watcher to initialize | Low | Documented |
+| BUG-003 | Export-key command integration tests expected to FAIL (implementation pending) | Implement CLI subcommand per `key_export_test.rs` spec | Medium | Pending (Phase 4) |
 
 ## Fragile Areas
 
@@ -123,13 +119,14 @@
 | `server/src/auth.rs` | Critical security-sensitive code; base64/length validation is subtle | Extensive test coverage (43 tests); use RFC 8032 strict verification |
 | `server/src/routes.rs` | High complexity with multiple auth paths and error cases | Test all auth combinations; validate error responses |
 | `monitor/src/crypto.rs` | Cryptographic key handling; file permissions and memory management matter | Tests verify file permissions on Unix; tests verify zeroization; regenerate if compromised |
+| `monitor/src/crypto.rs:404-440` | Key backup operation; filesystem atomicity is critical (Phase 9) | Backup test suite verifies permissions preserved; restore-on-failure mitigates public key issues |
+| `monitor/src/tui/widgets/setup_form.rs:309-353` | Key option conditional display depends on `existing_keys_found` flag (Phase 9) | Test both branches (keys found vs not found); ensure state consistency |
 | `server/src/config.rs` | Configuration parsing with environment variables; tests required `#[serial]` | Never modify without running full test suite with `--test-threads=1` |
 | `monitor/tests/env_key_test.rs` | Environment variable tests must serialize to avoid race conditions | All tests use `#[serial]` decorator (24 env-var-touching tests) |
 | `monitor/tests/key_export_test.rs` | Export-key tests modify env vars and spawn subprocesses; must use `#[serial]` | All tests use `#[serial]` decorator (15 export-key tests) |
 | `monitor/src/main.rs` | New export-key logic handles private key material and must not log it | Verify stdout purity in tests; all key writes are stderr only |
 | `.github/workflows/ci-with-monitor.yml` | Workflow manages private key and process; signal handling is critical | Test with dry-run first; ensure SIGTERM properly terminates and flushes |
 | `.github/actions/vibetea-monitor/action.yml` | Composite action manages binary download and monitor process lifecycle | Ensure secret masking works; test with actual GitHub Actions runner |
-| `monitor/src/trackers/project_tracker.rs` | File watching with channel-based event delivery; concurrent file changes may arrive out-of-order | Comprehensive unit tests (1822 lines) verify all edge cases; async processing handles file deletion gracefully |
 
 ## Deprecated Code
 
@@ -142,6 +139,7 @@
 | Location | TODO | Priority | Status |
 |----------|------|----------|--------|
 | `monitor/tests/privacy_test.rs:319` | TODO regex in test assertion for security match | Medium | Open |
+| `monitor/tests/key_export_test.rs:29` | Implement `export-key` CLI subcommand | High | In progress (Phase 4) |
 
 ## Dependency Concerns
 
@@ -152,8 +150,8 @@
 | `ed25519_dalek` | Cryptographic library; monitor for security advisories | Subscribe to GitHub security alerts | Open |
 | `tokio` | Runtime; heavy async dependency with many transitive deps | Keep updated; monitor for CVEs | Open |
 | `base64` | Decoding; generally stable but validate error handling | No immediate action needed | Resolved |
-| `zeroize` | New dependency for memory safety; critical for security | Monitor for updates and best practices | Open |
-| `notify` | File system watcher (Phase 11); platform-specific behavior varies | Test on macOS, Linux, Windows; verify recursive watching works correctly | Open |
+| `zeroize` | Critical for memory safety; wipes sensitive key material | Monitor for updates and best practices | Open |
+| `chrono` | Used for backup timestamp generation (Phase 9) | Monitor for updates; generally stable | Open |
 
 ## Performance Concerns
 
@@ -164,8 +162,7 @@
 | PERF-003 | JSON serialization | Every event serialized per WebSocket subscriber | CPU under high load | No mitigation; consider compression |
 | PERF-004 | GitHub Actions binary download | Release binary download on every workflow run | Network overhead | Consider caching binary or building from source |
 | PERF-005 | Composite action overhead | Action adds step overhead for binary download and validation | Minimal workflow slowdown | Overhead is ~5-10 seconds per workflow; acceptable for CI |
-| PERF-006 | Project tracker file scanning | Initial scan reads all project directories and session files synchronously | Slow startup with many projects | Async processing; consider pagination for very large project directories |
-| PERF-007 | Session file I/O | Full file read to check for summary event on every change | I/O overhead with large session files | Consider caching last-seen summary position or file metadata |
+| PERF-006 | Filesystem operations (Phase 9) | Key backup involves multiple rename calls; may impact startup time | Brief UI lag on setup | Acceptable: one-time operation; run on dedicated thread if needed |
 
 ## Monitoring Gaps
 
@@ -178,8 +175,7 @@
 | Export-key usage | No audit trail of key exports | Can't track which systems have exported keys | Consider adding telemetry or structured logging |
 | GitHub Actions monitor | No metrics on monitor process uptime/failures in CI | Can't detect if monitoring silently fails | Consider structured logging to Actions output |
 | Composite action usage | No telemetry on adoption or failure rates | Can't track action usage patterns | Could add optional telemetry to action |
-| Project tracker state | No visibility into tracked projects or sessions | Can't monitor project activity dashboard | Consider periodic sync status events |
-| Project scan performance | No metrics on scan duration or file processing time | Can't detect performance degradation | Consider adding timing instrumentation |
+| Key backup operations (Phase 9) | No metrics on successful/failed backups | Can't detect if key rotation is working | Consider adding structured logging |
 
 ## Improvement Opportunities
 
@@ -194,9 +190,7 @@
 | Export-key defaults | Explicit --path flag required | Auto-discovery of ~/.vibetea or env var | Smoother UX for end users |
 | GitHub Actions integration | Manual secret setup | Documentation or automated secret creation script | Easier onboarding for CI/CD |
 | Composite action | Basic functionality | Advanced features (log output, retry logic) | Better debugging and resilience |
-| Project slug format | Ambiguous with dashes in names | UUID-based project identifiers or encoded separators | Reliable path reconstruction |
-| Session file reading | Full file read every time | Seek to end and check last N lines or file metadata | Improved performance with large sessions |
-| Project tracker initial load | Synchronous blocking scan | Incremental async scanning with progress reporting | Better startup time with many projects |
+| Key backup atomicity (Phase 9) | Best-effort restore | Transactional backup with rollback | Guarantee consistency |
 
 ## Security Debt Items
 
@@ -209,7 +203,7 @@
 | DEBT-005 | Key export audit | No record of when/where keys are exported | Implement export logging with timestamp/system info | Open |
 | DEBT-006 | GitHub Actions secret usage | Monitor process has access to private key; potential logging risk | Implement log filtering to never output env vars | Phase 5 risk |
 | DEBT-007 | Composite action versioning | Action pinned to @main; no semantic versioning | Implement version tags and GitHub releases | Phase 6 opportunity |
-| DEBT-008 | Project activity auditing | No audit trail of which projects/sessions are monitored | Consider opt-in telemetry or privacy dashboard | Phase 11 opportunity |
+| DEBT-008 | Key backup retention (Phase 9) | No automatic cleanup of old backup files | Implement retention policy (e.g., keep last N backups) | Open |
 
 ## Potential Attack Vectors
 
@@ -230,10 +224,8 @@
 | GitHub Actions log leakage | Private key is env var, subject to accidental logging | Partially mitigated by GitHub secret masking (Phase 5) |
 | Composite action binary tampering | Binary downloaded from GitHub releases without signature verification | Partially mitigated by HTTPS; recommend checksum verification |
 | Man-in-the-middle on binary download | Binary download from GitHub releases via HTTP curl | Mitigated by HTTPS (curl -fsSL) |
-| Project path directory traversal | Decoded paths not validated but only used for display | Not a risk (display only) |
-| Session file race condition | File deleted between event notification and processing | Mitigated by treating missing file as session completion |
-| Project slug poisoning | Directory names with dashes decoded ambiguously | Low risk (display only; validated filenames) |
-| JSONL parsing DoS | Malformed JSON in session file could consume CPU | Low risk (fast-fail parsing; no recursive structures) |
+| Key backup file leakage | Backup files have same permissions as originals (0600) | Mitigated by file permissions |
+| Backup restore collision | Backup timestamp could theoretically collide if gen twice per second | Mitigated by timestamp format; highly unlikely |
 
 ---
 
