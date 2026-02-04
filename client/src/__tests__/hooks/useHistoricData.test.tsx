@@ -7,7 +7,7 @@
  * @vitest-environment happy-dom
  */
 
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import {
   afterEach,
   beforeEach,
