@@ -270,8 +270,8 @@
 - [x] T104 [P] Run cargo fmt -p vibetea-monitor
 - [x] T105 [GIT] Commit: lint and format cleanup
 - [x] T106 Run full test suite: cargo test -p vibetea-monitor -- --test-threads=1
-- [ ] T107 [GIT] Commit: verify all tests pass
-- [ ] T108 Validate quickstart.md scenarios manually
+- [x] T107 [GIT] Commit: verify all tests pass
+- [x] T108 Validate quickstart.md scenarios manually
 - [ ] T109 [GIT] Commit: quickstart validation complete
 
 ### Phase Completion
