@@ -310,11 +310,11 @@
 - [x] T153 [US4] Run /sdd:map incremental for Phase 6 changes
 - [x] T154 [GIT] Commit: update codebase documents for phase 6
 - [x] T155 [US4] Review retro/P6.md and extract critical learnings to CLAUDE.md (conservative)
-- [ ] T156 [GIT] Commit: finalize phase 6 retro
+- [x] T156 [GIT] Commit: finalize phase 6 retro
 
 ### Phase Completion
-- [ ] T157 [GIT] Push branch to origin (ensure pre-push hooks pass)
-- [ ] T158 [GIT] Create/update PR to main with phase summary
+- [x] T157 [GIT] Push branch to origin (ensure pre-push hooks pass)
+- [x] T158 [GIT] Create/update PR to main with phase summary
 - [ ] T159 [GIT] Verify all CI checks pass
 - [ ] T160 [GIT] Report PR ready status
 

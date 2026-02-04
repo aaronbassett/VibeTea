@@ -145,8 +145,8 @@ fn render_dashboard_screen(frame: &mut Frame, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(h_height),        // Header
-            Constraint::Min(1),                  // Event stream (fills remaining space)
+            Constraint::Length(h_height),           // Header
+            Constraint::Min(1),                     // Event stream (fills remaining space)
             Constraint::Length(CREDENTIALS_HEIGHT), // Credentials
         ])
         .split(area);

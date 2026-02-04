@@ -158,7 +158,10 @@ impl<'a> CredentialsWidget<'a> {
     fn session_line(&self) -> Line<'a> {
         Line::from(vec![
             Span::styled(SESSION_LABEL, self.theme.text_secondary),
-            Span::styled(self.credentials.session_name.clone(), self.theme.text_primary),
+            Span::styled(
+                self.credentials.session_name.clone(),
+                self.theme.text_primary,
+            ),
         ])
     }
 
@@ -203,10 +206,7 @@ impl Widget for CredentialsWidget<'_> {
 
         // Build the content lines
         let available_width = inner.width as usize;
-        let lines = vec![
-            self.session_line(),
-            self.public_key_line(available_width),
-        ];
+        let lines = vec![self.session_line(), self.public_key_line(available_width)];
 
         // Render the paragraph within the inner area
         let paragraph = Paragraph::new(lines);
@@ -439,12 +439,18 @@ mod tests {
         let content: String = buf.content.iter().map(|cell| cell.symbol()).collect();
 
         // Should contain title
-        assert!(content.contains("Credentials"), "Should show Credentials title");
+        assert!(
+            content.contains("Credentials"),
+            "Should show Credentials title"
+        );
         // Should contain session name
         assert!(content.contains("Session:"), "Should show Session label");
         assert!(content.contains("test-session"), "Should show session name");
         // Should contain public key
-        assert!(content.contains("Public Key:"), "Should show Public Key label");
+        assert!(
+            content.contains("Public Key:"),
+            "Should show Public Key label"
+        );
     }
 
     #[test]
